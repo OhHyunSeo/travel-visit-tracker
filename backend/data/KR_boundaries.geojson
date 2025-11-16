@@ -1,0 +1,290 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "KR-11-680",
+      "properties": {
+        "name": "Gangnam-gu",
+        "admin_level": 8,
+        "country_code": "KR"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [127.047, 37.495],
+          [127.047, 37.517],
+          [127.070, 37.517],
+          [127.070, 37.495],
+          [127.047, 37.495]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "KR-11-650",
+      "properties": {
+        "name": "Seocho-gu",
+        "admin_level": 8,
+        "country_code": "KR"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [127.010, 37.470],
+          [127.010, 37.495],
+          [127.047, 37.495],
+          [127.047, 37.470],
+          [127.010, 37.470]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "KR-11-230",
+      "properties": {
+        "name": "Songpa-gu",
+        "admin_level": 8,
+        "country_code": "KR"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [127.070, 37.495],
+          [127.070, 37.520],
+          [127.120, 37.520],
+          [127.120, 37.495],
+          [127.070, 37.495]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "KR-11-545",
+      "properties": {
+        "name": "Gangdong-gu",
+        "admin_level": 8,
+        "country_code": "KR"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [127.120, 37.520],
+          [127.120, 37.550],
+          [127.150, 37.550],
+          [127.150, 37.520],
+          [127.120, 37.520]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "KR-11-440",
+      "properties": {
+        "name": "Mapo-gu",
+        "admin_level": 8,
+        "country_code": "KR"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [126.900, 37.540],
+          [126.900, 37.570],
+          [126.940, 37.570],
+          [126.940, 37.540],
+          [126.900, 37.540]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "KR-11-380",
+      "properties": {
+        "name": "Eunpyeong-gu",
+        "admin_level": 8,
+        "country_code": "KR"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [126.910, 37.600],
+          [126.910, 37.640],
+          [126.950, 37.640],
+          [126.950, 37.600],
+          [126.910, 37.600]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "KR-11-305",
+      "properties": {
+        "name": "Gangbuk-gu",
+        "admin_level": 8,
+        "country_code": "KR"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [127.010, 37.630],
+          [127.010, 37.650],
+          [127.040, 37.650],
+          [127.040, 37.630],
+          [127.010, 37.630]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "KR-11-260",
+      "properties": {
+        "name": "Jungnang-gu",
+        "admin_level": 8,
+        "country_code": "KR"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [127.070, 37.590],
+          [127.070, 37.610],
+          [127.100, 37.610],
+          [127.100, 37.590],
+          [127.070, 37.590]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "KR-11-200",
+      "properties": {
+        "name": "Seongdong-gu",
+        "admin_level": 8,
+        "country_code": "KR"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [127.030, 37.550],
+          [127.030, 37.570],
+          [127.060, 37.570],
+          [127.060, 37.550],
+          [127.030, 37.550]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "KR-11-170",
+      "properties": {
+        "name": "Yongsan-gu",
+        "admin_level": 8,
+        "country_code": "KR"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [126.970, 37.525],
+          [126.970, 37.545],
+          [127.000, 37.545],
+          [127.000, 37.525],
+          [126.970, 37.525]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "KR-11-140",
+      "properties": {
+        "name": "Jung-gu",
+        "admin_level": 8,
+        "country_code": "KR"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [126.975, 37.555],
+          [126.975, 37.575],
+          [127.005, 37.575],
+          [127.005, 37.555],
+          [126.975, 37.555]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "KR-11-110",
+      "properties": {
+        "name": "Jongno-gu",
+        "admin_level": 8,
+        "country_code": "KR"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [126.960, 37.570],
+          [126.960, 37.600],
+          [127.000, 37.600],
+          [127.000, 37.570],
+          [126.960, 37.570]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "KR-11-590",
+      "properties": {
+        "name": "Dongjak-gu",
+        "admin_level": 8,
+        "country_code": "KR"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [126.970, 37.490],
+          [126.970, 37.515],
+          [127.010, 37.515],
+          [127.010, 37.490],
+          [126.970, 37.490]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "KR-11-500",
+      "properties": {
+        "name": "Gwanak-gu",
+        "admin_level": 8,
+        "country_code": "KR"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [126.940, 37.460],
+          [126.940, 37.490],
+          [126.980, 37.490],
+          [126.980, 37.460],
+          [126.940, 37.460]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "KR-11-620",
+      "properties": {
+        "name": "Geumcheon-gu",
+        "admin_level": 8,
+        "country_code": "KR"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [126.890, 37.445],
+          [126.890, 37.470],
+          [126.930, 37.470],
+          [126.930, 37.445],
+          [126.890, 37.445]
+        ]]
+      }
+    }
+  ]
+}

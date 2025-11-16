@@ -1,0 +1,121 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.buildlog/
+.history
+.svn/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# VS Code
+.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+/build/
+
+# Flutter specific
+travel_visit_tracker/build/
+travel_visit_tracker/.dart_tool/
+travel_visit_tracker/.flutter-plugins
+travel_visit_tracker/.flutter-plugins-dependencies
+travel_visit_tracker/.packages
+travel_visit_tracker/pubspec.lock
+
+# iOS specific
+travel_visit_tracker/ios/Pods/
+travel_visit_tracker/ios/.symlinks/
+travel_visit_tracker/ios/Flutter/Flutter.framework
+travel_visit_tracker/ios/Flutter/Flutter.podspec
+travel_visit_tracker/ios/Flutter/Generated.xcconfig
+travel_visit_tracker/ios/Flutter/app.flx
+travel_visit_tracker/ios/Flutter/app.zip
+travel_visit_tracker/ios/Flutter/flutter_assets/
+travel_visit_tracker/ios/Flutter/flutter_export_environment.sh
+travel_visit_tracker/ios/ServiceDefinitions.json
+travel_visit_tracker/ios/Runner/GeneratedPluginRegistrant.*
+travel_visit_tracker/ios/.generated/
+travel_visit_tracker/ios/Flutter/ephemeral/
+travel_visit_tracker/ios/Podfile.lock
+
+# Android specific
+travel_visit_tracker/android/app/debug
+travel_visit_tracker/android/app/profile
+travel_visit_tracker/android/app/release
+travel_visit_tracker/android/.gradle/
+travel_visit_tracker/android/captures/
+travel_visit_tracker/android/gradlew
+travel_visit_tracker/android/gradlew.bat
+travel_visit_tracker/android/local.properties
+travel_visit_tracker/android/**/GeneratedPluginRegistrant.java
+travel_visit_tracker/android/key.properties
+*.jks
+
+# Web specific
+travel_visit_tracker/web/
+
+# Node.js / Backend
+backend/node_modules/
+backend/uploads/
+backend/npm-debug.log*
+backend/yarn-debug.log*
+backend/yarn-error.log*
+backend/.env
+backend/.env.local
+backend/.env.production
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Testing
+coverage/
+*.coverage
+.nyc_output
+
+# Kiro specific
+.kiro/
+
+# Sensitive data
+*.pem
+*.key
+*.p12
+*.mobileprovision
+google-services.json
+GoogleService-Info.plist
+
+# Large GeoJSON files (optional - uncomment if files are too large)
+# backend/data/*.geojson
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# OS specific
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
