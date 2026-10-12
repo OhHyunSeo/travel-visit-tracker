@@ -57,7 +57,7 @@ node --env-file=.env server.js
 # 다른 터미널에서: curl http://127.0.0.1:3000/health
 ```
 
-환경 변수를 셸에 설정했다면 `npm --prefix backend start` 또는 `npm --prefix backend run dev`를 사용할 수 있습니다. 서버는 `.env`를 자동 로드하지 않습니다. 별도 빌드나 자동 테스트 스크립트는 없으며 `node --check backend/server.js`와 격리된 API smoke check로 검증합니다. 기본 JWT 문자열은 개발용 fallback이므로 실제 서비스에 사용하지 않습니다. 상세 API는 [백엔드 README](backend/README.md)를 참고합니다.
+환경 변수를 셸에 설정했다면 `npm --prefix backend start` 또는 `npm --prefix backend run dev`를 사용할 수 있습니다. 서버는 `.env`를 자동 로드하지 않습니다. 별도 빌드는 없으며 `node --check backend/server.js`와 `npm --prefix backend test`의 임시 DB·합성 사진 HTTP 통합 검사로 검증합니다. JWT 비밀값은 명시적으로 설정해야 하며 이전 기본 문자열과 짧은 값은 시작 단계에서 거절합니다. 사진 업로드와 조회 모두 인증 사용자 소유권을 적용합니다. 상세 API는 [백엔드 README](backend/README.md)를 참고합니다.
 
 ## Codex Cloud 설정
 
@@ -78,9 +78,10 @@ GitHub 저장소: [OhHyunSeo/travel-visit-tracker](https://github.com/OhHyunSeo/
 | --- | --- | --- |
 | `CI`, `EXPO_NO_TELEMETRY` | 비대화형 검사·Expo 텔레메트리 비활성화 | 권장, 검증 스크립트에 포함 |
 | `APPLE_TEAM_ID` | 로컬 iPhone 서명 팀, `travel_visit_tracker/.env.example` 참고 | 불필요, PC `.env.local`에서만 설정 |
-| `PORT` | 백엔드 포트, 기본 3000 | 백엔드 실행 시 선택 |
+| `PORT`, `HOST` | 백엔드 포트·바인딩, 기본 3000·루프백 | 백엔드 실행 시 선택 |
 | `NODE_ENV` | 백엔드 실행 모드 | 백엔드 실행 시 선택 |
-| `JWT_SECRET` | 백엔드 JWT 서명용 임의 비밀 값 | 백엔드 인증 시험 시만 필요 |
+| `JWT_SECRET` | 백엔드 JWT 서명용 임의 비밀 값, 최소 32바이트 | 실제 서버 실행 시 필수; 자동 시험은 임시 값 사용 |
+| `DB_PATH`, `UPLOADS_DIR`, `CORS_ORIGINS` | 서버 영속 저장 경로·브라우저 origin | 서버 실행 시 선택 |
 
 백엔드 인증 시험에는 운영 비밀 값 대신 새 테스트용 `JWT_SECRET`을 사용합니다. 이는 프로세스가 직접 읽어야 하는 값이므로 현재 Cloud UI에서는 개인 **Environment variable**로 공급하며, HTTPS 프록시 치환용 **Network secret**에 넣지 않습니다. OpenAI API 키와 Expo/EAS 배포 토큰은 현재 검사에 필요하지 않습니다. 현재 Expo 앱은 `EXPO_PUBLIC_API_URL`도 읽지 않습니다. 향후 `EXPO_PUBLIC_*`에는 공개 가능한 값만 둡니다.
 

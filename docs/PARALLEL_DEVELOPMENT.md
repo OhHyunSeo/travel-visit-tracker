@@ -6,7 +6,7 @@
 
 | 담당 | 수정 담당 | 진행 기록 |
 | --- | --- | --- |
-| 공통·iOS 채팅 | `app/`, `src/domain/`, `src/storage/`, `src/store/`, 공통 `src/services/`, `app.config.ts`, iOS 설정, 루트 진행·계획·정책 문서 | `PROGRESS.md`, `docs/RESUME.md` |
+| 공통·iOS 채팅 | `app/`, `src/domain/`, `src/storage/`, `src/store/`, 공통 `src/services/`, `app.config.ts`, `backend/`, 공통 검증 스크립트, iOS 설정, 루트 진행·계획·정책 문서 | `PROGRESS.md`, `docs/RESUME.md` |
 | Android worktree 채팅 | Android 개발 실행 스크립트, Android 전용 config plugin·테스트, 에뮬레이터·권한·서비스·잠금 검증 | `docs/ANDROID_PROGRESS.md`, 로컬 Android 검증 증거 |
 
 Android가 공통 파일의 수정 필요성을 발견하면 현재 파일을 직접 바꾸기 전에 별도 제안 파일과 근거를 남긴다. 현재 채팅에서 적용·회귀 검증 후 통합한다. `app.config.ts`, `package*.json`, 공통 tracking/repository와 루트 PROGRESS는 양쪽에서 동시에 수정하지 않는다. Android의 공유 진행 문서에는 개인 위치, 기기 식별자, 환경 비밀값을 넣지 않는다.

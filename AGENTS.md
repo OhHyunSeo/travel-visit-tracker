@@ -29,6 +29,6 @@ bash scripts/verify-cloud.sh
 
 The verifier runs mobile typecheck, ESLint, Vitest, backend syntax/native dependency loading, and production Android/iOS JS/Hermes export. It sets offline Expo mode, does not start a persistent service, and does not read personal databases.
 
-For focused iteration use `npm --prefix travel_visit_tracker run check`. If changing the backend, run an isolated temporary-database API smoke check too; the backend currently has no automated test suite. For native configuration changes, report that native rebuild/device verification is still required if unavailable.
+For focused iteration use `npm --prefix travel_visit_tracker run check`. If changing the backend, run `npm --prefix backend test` too; it starts isolated loopback servers with temporary databases and synthetic images. Do not start the actual server against personal data for verification. For native configuration changes, report that native rebuild/device verification is still required if unavailable.
 
 Cloud Linux checks cannot prove signed iOS/Android builds, GPS permission behavior, screen-lock collection, battery behavior, real photos, or future step/health permission integrations. State exactly which commands passed and what remains for a phone.

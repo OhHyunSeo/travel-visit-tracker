@@ -21,10 +21,10 @@
 | 계획·저장소 조사    | 문서 작성 완료      | 현재 코드·환경 조사와 계획 파일 작성         |
 | G1 지도와 저장      | 진행 중             | P1-01 스냅샷 무결성 확인                     |
 | G2 실제 방문 판정   | 기반 코드 선행 구현 | 실제 iPhone foreground·짧은 잠금 확인, 장시간·경계 이동·배터리 대기 |
-| G3 오프라인·동기화  | 시작 전             | 없음                                         |
+| G3 오프라인·동기화  | 서버 기반 선행 구현 | 인증·사진 격리 검사, 앱 백업 연결과 G3 검증 대기                                         |
 | G4 디자인·출시 검증 | 시작 전             | 없음                                         |
 
-앱 구현 체크리스트: **18 / 54 완료**. 계획 문서 작성과 기존 프로토타입 존재는 구현 완료 수에 포함하지 않는다. 이후 완료 수를 바꿀 때 PROJECT_PLAN의 체크 상태와 함께 갱신한다.
+앱 구현 체크리스트: **19 / 54 완료**. 계획 문서 작성과 기존 프로토타입 존재는 구현 완료 수에 포함하지 않는다. 이후 완료 수를 바꿀 때 PROJECT_PLAN의 체크 상태와 함께 갱신한다.
 
 ## 3. 다음 작업과 선행 조건
 
@@ -298,3 +298,17 @@
 - 최신 소스·준비 문서를 **`08c4ec2`**로 커밋해 기존 원격 `master`에 푸시했다. 개인 환경 파일, 기존 DB, 현재 생성 iOS 설정이 PC에 남아 있는 것을 확인했다. 푸시 후 Git 작업 폴더의 미커밋 변경 없음.
 - [Ubuntu GitHub Actions](https://github.com/OhHyunSeo/travel-visit-tracker/actions/runs/38245531922)에서 Node 준비, 깨끗한 의존성 설치와 전체 검증 스크립트가 모두 성공했다. 실제 Cloud 환경 계정 연결·게시와 휴대폰 수용 시험은 별도다.
 - 마지막 검증 결과 문서와 DB rollback journal 제외 규칙은 후속 문서 커밋으로 함께 푸시한다. 이후 개발은 최신 `origin/master`에서 `codex/<topic>` 작업 브랜치를 만들고 PR로 master에 반영한다.
+
+### 2026-10-12 — 공통·iOS와 Android 병렬 개발 구성
+
+- 사용자 승인한 분담으로 원래 checkout은 codex/common-ios, Android는 독립 worktree의 codex/android-native에서 진행한다. 기준 역할 커밋 0cf402a. 공통 소스·app.config·루트 진행 문서는 이 채팅 소유이며 Android는 전용 실행 도구와 별도 진행 문서만 수정한다. [역할과 통합 규칙](docs/PARALLEL_DEVELOPMENT.md).
+- Android는 에뮬레이터를 SwiftShader/CPU 4개로 복구하고 기존 APK·DB·사진을 보존해 최신 JS와 8082 Metro로 권한/GPS·공백·알림·절전·기록 중지 검증을 진행한다. 공통 iOS Metro 8081과 폴더는 격리한다.
+- 사용자가 불필요한 캐시 정리를 허용했다. inactive 프로젝트 Xcode intermediate/module/index 6폴더 약 8.162GB와 완료된 임시 Cloud 검증의 node_modules/export/npm cache 약 1.032GB를 정리했다. iOS 앱·APK 해시 보존 검증. 소스·DB·사진·로그·스냅샷·서명·원본 임시 checkout은 보존했다.
+- 삭제 크기는 실제 가용량 증가와 다르다. 오늘 Time Machine snapshot을 읽기 전용으로 확인했고 중요한 백업이므로 삭제하지 않았다. 병렬 의존성·검증 생성도 함께 있어 현재 실제 여유 공간은 별도 측정한다. 전역 캐시나 다른 프로젝트 정리 없음.
+- iPhone 30분 잠금 검증은 사용자 승인·수동 잠금 후 시작했다. SQLite 상태를 매분 읽어 현재까지 위치 수신·한 번 확정·이후 방문/outbox 각 6건 유지 확인. 최종 결과는 시험 종료 후 추가한다.
+
+#### 서버 인증·사진 소유권 기반
+
+- P3-06 완료, 현재 **19/54**. 하드코딩 JWT 제거, 계정·토큰 검증, 사용자별 원본/썸네일 접근과 기존 파일 보존, trip 범위·원자적 저장을 구현했다.
+- schema version 1은 기존 users/trips/steps를 보존하며 photos 소유권 테이블을 추가한다. 앱에 로그인·서버 백업은 아직 연결하지 않았고 visits UUID sync와 G3는 미완료다.
+- `bash scripts/verify-cloud.sh` PASS: 모바일 typecheck·lint·90개, backend 통합 20개, native dependency load, 양쪽 생산용 JS/Hermes export. 개인 DB·사진 대신 임시 DB/HTTP·합성 이미지 사용. [로컬 증거](docs/test-results/2026-10-12-backend-auth.md), [서버 실행·API](backend/README.md).

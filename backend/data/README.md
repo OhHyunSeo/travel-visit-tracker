@@ -79,9 +79,9 @@ Contains 15 Seoul districts (gu) with admin_level 8:
 To test the GeoJSON endpoint:
 
 ```bash
-# Start the backend server
+# Start the backend server after supplying a fresh JWT_SECRET in .env
 cd backend
-npm start
+node --env-file=.env server.js
 
 # Request the KR pack
 curl http://localhost:3000/api/geojson/KR

@@ -34,3 +34,13 @@ CREATE TABLE IF NOT EXISTS steps (
   FOREIGN KEY (user_id) REFERENCES users (id),
   FOREIGN KEY (trip_id) REFERENCES trips (id)
 );
+-- Private photo ownership. Existing unregistered uploads are preserved, never made public.
+CREATE TABLE IF NOT EXISTS photos (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  region_id TEXT NOT NULL,
+  filename TEXT NOT NULL UNIQUE,
+  thumbnail_filename TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_photos_owner_region ON photos(user_id, region_id);
