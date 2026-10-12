@@ -1,0 +1,27 @@
+name: Cloud checks
+on:
+  push:
+    paths: ['travel_visit_tracker/**', 'backend/**', 'scripts/**', '.nvmrc', '.github/workflows/mobile-check.yml']
+  pull_request:
+    paths: ['travel_visit_tracker/**', 'backend/**', 'scripts/**', '.nvmrc', '.github/workflows/mobile-check.yml']
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      CI: '1'
+      EXPO_NO_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            travel_visit_tracker/package-lock.json
+            backend/package-lock.json
+      - run: bash scripts/setup-cloud.sh
+      - run: bash scripts/verify-cloud.sh

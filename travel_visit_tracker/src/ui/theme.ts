@@ -1,0 +1,42 @@
+import { StyleSheet } from 'react-native';
+export const colors = {
+  background: '#0b191a',
+  surface: '#142526',
+  border: '#294344',
+  mint: '#11d4c4',
+  text: '#f0f7f5',
+  muted: '#9cb5b3',
+  amber: '#ffd58e',
+  danger: '#ffa7a0',
+};
+export const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: colors.background },
+  content: { padding: 20, gap: 16, paddingBottom: 32 },
+  eyebrow: { color: colors.mint, fontSize: 12, fontWeight: '700', letterSpacing: 1.4 },
+  title: { color: colors.text, fontSize: 30, fontWeight: '700' },
+  heading: { color: colors.text, fontSize: 20, fontWeight: '600' },
+  body: { color: colors.muted, fontSize: 14, lineHeight: 22 },
+  text: { color: colors.text, fontSize: 16 },
+  card: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 20,
+    padding: 18,
+    gap: 12,
+  },
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  button: {
+    backgroundColor: colors.mint,
+    borderRadius: 14,
+    paddingHorizontal: 18,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  buttonText: { color: colors.background, fontWeight: '700', fontSize: 15 },
+  secondary: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+  chip: { borderRadius: 10, backgroundColor: '#163c39', paddingHorizontal: 10, paddingVertical: 6 },
+  chipText: { color: colors.mint, fontSize: 12, fontWeight: '600' },
+  error: { color: colors.danger, lineHeight: 22 },
+});

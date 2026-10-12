@@ -1,0 +1,18 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "resolveJsonModule": true,
+    "moduleSuffixes": [".native", ""],
+    "types": ["react", "node"]
+  },
+  "include": [
+    "app/**/*.tsx",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "tests/**/*.ts",
+    "index.ts",
+    "app.config.ts",
+    "vitest.config.mts"
+  ]
+}

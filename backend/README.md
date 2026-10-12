@@ -14,8 +14,12 @@ Backend service for the Travel Visit Tracker app. Provides GeoJSON boundary data
 ## Installation
 
 ```bash
-npm install
+npm ci
 ```
+
+Use Node 24.21.0 from the repository `.nvmrc`. For the shared Cloud setup, run `bash scripts/setup-cloud.sh` from the repository root. The current Expo app does not yet use this API for login or synchronization; the Flutter references below describe the earlier client.
+
+Local environment names are documented in `.env.example`: `PORT`, `NODE_ENV`, and `JWT_SECRET`. Copy it to `.env`, supply a fresh local secret, then run `node --env-file=.env server.js`. `npm start` and `npm run dev` require variables to be supplied by the shell; they do not load `.env` automatically. Never use the hard-coded development fallback for a real deployment. Cloud mobile tests need no JWT secret.
 
 ## Running the Server
 
