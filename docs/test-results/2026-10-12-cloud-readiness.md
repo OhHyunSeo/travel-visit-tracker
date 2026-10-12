@@ -3,8 +3,8 @@
 ## 대상과 보존
 
 - 원격: `https://github.com/OhHyunSeo/travel-visit-tracker`, 기존 공개 저장소. 기본·통합 브랜치 `master`, 작업 브랜치 `codex/<topic>`.
-- 작업 시작 시 로컬과 원격은 `0d42b91`의 Flutter MVP 상태였으며 PC에 Expo 전환 및 백엔드 확장 미커밋 변경이 있었다. 이 소스와 참고 폴더를 함께 커밋 대상으로 준비했다.
-- 생성된 현재 앱의 `ios/`, `android/`, 도구 런타임·스냅샷, 환경 값, DB, 업로드 사진과 기기 증거 파일은 Git에 포함하지 않는다. 기존에 추적되던 현재 앱의 iOS 생성 경로도 인덱스에서 제외한다. PC의 파일은 유지한다.
+- 작업 시작 시 로컬과 원격은 `0d42b91`의 Flutter MVP 상태였으며 PC에 Expo 전환 및 백엔드 확장 미커밋 변경이 있었다. 이 소스와 참고 폴더를 함께 **`08c4ec2`로 커밋하고 원격 master에 푸시했다**.
+- 생성된 현재 앱의 `ios/`, `android/`, 도구 런타임·스냅샷, 환경 값, DB(rollback journal 포함), 업로드 사진과 기기 증거 파일은 Git에 포함하지 않는다. 기존에 추적되던 현재 앱의 iOS 생성 경로도 인덱스에서 제외했다. PC의 파일은 유지했다.
 - 공유 문서의 실제 방문 지역명과 LAN 주소는 일반 표현으로 변경했다. 문서 원문은 로컬 `.snapshots/20261012-before-cloud-readiness-docs/`에 보존했다. 기존 기기 증거는 로컬 `docs/test-results/`에 유지한다.
 
 ## 실행 결과
@@ -22,8 +22,9 @@ macOS의 Node 24.21.0, npm 11.21.0에서 실행했다. 개인 파일을 제외�
 | ignore 규칙 | 환경 파일, DB, 인증서·키, 업로드, 생성 네이티브 경로, 기기 덤프·캡처 제외 확인, 예시 환경 파일 허용 |
 | 후보 소스 비밀 값 점검 | GitHub/API 토큰과 private-key 패턴, Apple signing team 상수 없음. Android 에뮬레이터 표준 주소 주석은 개인정보가 아님 |
 | CI 액션 버전 | 기존 `actions/checkout@v7`, `actions/setup-node@v7` 태그 존재 확인 |
+| GitHub Ubuntu CI (`08c4ec2`) | 공통 설치·검증 스크립트 전체 PASS, [Actions run](https://github.com/OhHyunSeo/travel-visit-tracker/actions/runs/38245531922) |
 
-CI는 Ubuntu에서 같은 설치·검증 스크립트를 실행하도록 보완했다. GitHub에서 실행되는 결과는 해당 커밋의 Actions run을 확인한다. 로컬 macOS 설치 성공은 Linux Cloud 설치 성공을 대신하지 않는다. 실제 Codex Cloud 환경 생성·게시·새 작업 시작은 사용자 계정 화면에서 완료해야 한다.
+CI는 Ubuntu에서 같은 설치·검증 스크립트를 실행하도록 보완했고 GitHub의 Linux 실행도 성공했다. 실제 Codex Cloud 컨테이너의 네트워크 정책과 계정 권한까지 검증한 것은 아니다. 실제 Cloud 환경 생성·게시·새 작업 시작은 사용자 계정 화면에서 완료해야 한다.
 
 ## 남은 제한
 

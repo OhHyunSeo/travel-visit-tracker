@@ -292,3 +292,9 @@
 - 기존 앱 및 실제 환경 값이 없는 임시 소스에서 typecheck·lint·90개 테스트 PASS. 새 `npm ci` 성공, backend syntax·네이티브 모듈 로딩, Android·iOS JS/Hermes export PASS. 임시 DB의 health·GeoJSON·가입 JWT와 현재 사용자 API smoke check PASS, 실제 PC DB 해시 유지.
 - 공유 문서에서 실제 방문 지역·LAN 주소를 일반화했고 원문은 `.snapshots/20261012-before-cloud-readiness-docs/`에 보존했다. 개인 기기 데이터 삭제·네이티브 재설치·폰 시험·운영 배포는 실행하지 않았다. 완료 수 **18/54**와 G1~G4 미통과는 유지한다.
 - 현재 npm audit 결과와 미실행 범위, 실제 Cloud 계정 연결 대기는 [Cloud 준비 검증](docs/test-results/2026-10-12-cloud-readiness.md)에 기록했다. 실제 Cloud 설치·환경 게시와 계정 권한은 사용자 화면에서 확인한다. 커밋·푸시 결과는 Git 로그와 원격 브랜치로 확인한다.
+
+#### GitHub 업로드와 Linux 검증 완료
+
+- 최신 소스·준비 문서를 **`08c4ec2`**로 커밋해 기존 원격 `master`에 푸시했다. 개인 환경 파일, 기존 DB, 현재 생성 iOS 설정이 PC에 남아 있는 것을 확인했다. 푸시 후 Git 작업 폴더의 미커밋 변경 없음.
+- [Ubuntu GitHub Actions](https://github.com/OhHyunSeo/travel-visit-tracker/actions/runs/38245531922)에서 Node 준비, 깨끗한 의존성 설치와 전체 검증 스크립트가 모두 성공했다. 실제 Cloud 환경 계정 연결·게시와 휴대폰 수용 시험은 별도다.
+- 마지막 검증 결과 문서와 DB rollback journal 제외 규칙은 후속 문서 커밋으로 함께 푸시한다. 이후 개발은 최신 `origin/master`에서 `codex/<topic>` 작업 브랜치를 만들고 PR로 master에 반영한다.
