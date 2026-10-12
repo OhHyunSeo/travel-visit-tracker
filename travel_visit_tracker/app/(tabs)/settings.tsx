@@ -80,9 +80,8 @@ export default function SettingsScreen() {
                     }}
                   />
                   <Text style={styles.body}>
-                    화면 잠금 기록을 켜면 항상 위치 허용을 요청합니다. Android에서는
-                    알림을 허용하면 기록 알림이 표시됩니다. 앱을 강제 종료하면 수집이 중단될 수
-                    있습니다.
+                    화면 잠금 기록을 켜면 항상 위치 허용을 요청합니다. Android에서는 알림을 허용하면
+                    기록 알림이 표시됩니다. 앱을 강제 종료하면 수집이 중단될 수 있습니다.
                   </Text>
                   <Button
                     title="화면 잠금 중에도 기록"
@@ -104,6 +103,26 @@ export default function SettingsScreen() {
             </>
           )}
         </View>
+        {Platform.OS === 'android' && (
+          <View style={styles.card}>
+            <Text style={styles.heading}>잠금 중 기록과 배터리 설정</Text>
+            <Text style={styles.body}>
+              절전 모드나 앱 배터리 제한 때문에 위치가 늦게 들어올 수 있습니다. 2분 넘게 위치가
+              끊기면 체류 확인을 다시 시작하며, 이미 저장한 방문과 사진은 남아 있습니다.
+            </Text>
+            <Text style={styles.body}>
+              잠금 중 기록이 멈춘다면 휴대폰 설정에서 이 앱의 위치 권한과 배터리 제한을 확인해
+              주세요.
+            </Text>
+            <Button
+              title="휴대폰 앱 설정 열기"
+              secondary
+              onPress={() => {
+                void Linking.openSettings();
+              }}
+            />
+          </View>
+        )}
         <View style={styles.card}>
           <Text style={styles.heading}>지금 기록 상태</Text>
           <Text style={styles.body}>{reception}</Text>

@@ -1,7 +1,7 @@
 # 진행 기록
 
 마지막 갱신: 2026-10-12, Asia/Seoul  
-현재 상태: **iPhone 짧은 화면 잠금·5분 확정 검증 완료, 기록 목록을 지역당 한 카드로 정리·실기기 표시 확인**  
+현재 상태: **iPhone 정지 상태 30분 잠금 기록·보존 확인, 제주 포함 초기 지도 적용, 공통·iOS와 Android 독립 worktree 개발 중**
 현재 앱·서버: 프로토타입. 검증 완료 제품으로 취급하지 않음.
 
 ## 1. 관리 문서
@@ -20,7 +20,7 @@
 | ------------------- | ------------------- | -------------------------------------------- |
 | 계획·저장소 조사    | 문서 작성 완료      | 현재 코드·환경 조사와 계획 파일 작성         |
 | G1 지도와 저장      | 진행 중             | P1-01 스냅샷 무결성 확인                     |
-| G2 실제 방문 판정   | 기반 코드 선행 구현 | 실제 iPhone foreground·짧은 잠금 확인, 장시간·경계 이동·배터리 대기 |
+| G2 실제 방문 판정   | 기반 코드 선행 구현 | 실제 iPhone foreground·정지 30분 잠금 확인, 경계 이동·배터리·Android 실기기 대기 |
 | G3 오프라인·동기화  | 서버 기반 선행 구현 | 인증·사진 격리 검사, 앱 백업 연결과 G3 검증 대기                                         |
 | G4 디자인·출시 검증 | 시작 전             | 없음                                         |
 
@@ -305,10 +305,19 @@
 - Android는 에뮬레이터를 SwiftShader/CPU 4개로 복구하고 기존 APK·DB·사진을 보존해 최신 JS와 8082 Metro로 권한/GPS·공백·알림·절전·기록 중지 검증을 진행한다. 공통 iOS Metro 8081과 폴더는 격리한다.
 - 사용자가 불필요한 캐시 정리를 허용했다. inactive 프로젝트 Xcode intermediate/module/index 6폴더 약 8.162GB와 완료된 임시 Cloud 검증의 node_modules/export/npm cache 약 1.032GB를 정리했다. iOS 앱·APK 해시 보존 검증. 소스·DB·사진·로그·스냅샷·서명·원본 임시 checkout은 보존했다.
 - 삭제 크기는 실제 가용량 증가와 다르다. 오늘 Time Machine snapshot을 읽기 전용으로 확인했고 중요한 백업이므로 삭제하지 않았다. 병렬 의존성·검증 생성도 함께 있어 현재 실제 여유 공간은 별도 측정한다. 전역 캐시나 다른 프로젝트 정리 없음.
-- iPhone 30분 잠금 검증은 사용자 승인·수동 잠금 후 시작했다. SQLite 상태를 매분 읽어 현재까지 위치 수신·한 번 확정·이후 방문/outbox 각 6건 유지 확인. 최종 결과는 시험 종료 후 추가한다.
+- iPhone 30분 잠금 검증 완료. 아래 최종 결과를 우선한다.
 
 #### 서버 인증·사진 소유권 기반
 
 - P3-06 완료, 현재 **19/54**. 하드코딩 JWT 제거, 계정·토큰 검증, 사용자별 원본/썸네일 접근과 기존 파일 보존, trip 범위·원자적 저장을 구현했다.
 - schema version 1은 기존 users/trips/steps를 보존하며 photos 소유권 테이블을 추가한다. 앱에 로그인·서버 백업은 아직 연결하지 않았고 visits UUID sync와 G3는 미완료다.
 - `bash scripts/verify-cloud.sh` PASS: 모바일 typecheck·lint·90개, backend 통합 20개, native dependency load, 양쪽 생산용 JS/Hermes export. 개인 DB·사진 대신 임시 DB/HTTP·합성 이미지 사용. [로컬 증거](docs/test-results/2026-10-12-backend-auth.md), [서버 실행·API](backend/README.md).
+
+#### iPhone 30분 잠금과 공통 화면 보완
+
+- 실제 iPhone의 정지 상태 잠금 1800.003초 동안 32회 읽기 전용 관측. 모든 확인 시점 잠금 유지, 같은 체류 후보·초기화 시각 유지, 방문 한 번만 확정, 방문/outbox 각각 5→6건. 마지막 위치 관측은 종료 시점 약 1.7초 전이다.
+- 사용자가 잠금 해제 후 앱을 열었고, 6건 보존과 지역 카드 1개·상세 방문 내역 6건을 확인했다. 시험 종료 뒤 관측 공백으로 새 후보가 시작됐으나 확정 방문은 보존됐다. 시험 중 소스 reload 없음. 이후 UI 검증을 위해 개발 앱을 reload했다.
+- MapLibre 초기 카메라를 전체 경계 팩 bounds로 지정해 제주와 외곽 섬이 포함되게 했다. iPhone 재실행 화면과 상세 표시 확인. Android에만 절전·앱 배터리 제한, 위치 권한 확인과 앱 설정 열기 안내를 추가했다. Android의 새 안내 화면은 해당 worktree에서 후속 검증해야 한다.
+- 서명 Debug, USB 연결과 주기적 inspector 조건이다. 실제 경계 이동·재방문, 배터리, standalone Release, Android 실기기는 미검증. AT-08 전체 및 P2-11은 부분 완료를 유지하며 완료 수는 **19/54**다.
+- 로컬 증거: [30분 요약](docs/test-results/2026-10-12-iphone-30min-summary.json), [관측 요약](docs/test-results/2026-10-12-iphone-30min-samples.jsonl). 좌표·지역 ID·UUID·사진 경로와 기기 식별자는 저장·공개하지 않았다. 검사용 원본 스크린샷은 임시 확인 후 삭제한다.
+- 공개 전송을 사용자에게 승인받고 비밀값·개인 DB·사진·기기 원본 로그 제외 확인 후 공통·iOS [초안 PR #2](https://github.com/OhHyunSeo/travel-visit-tracker/pull/2), Android [초안 PR #1](https://github.com/OhHyunSeo/travel-visit-tracker/pull/1)을 만들었다. master 원격 병합은 아직 하지 않았다.

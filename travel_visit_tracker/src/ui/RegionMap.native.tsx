@@ -18,6 +18,17 @@ const mapStyle: StyleSpecification = {
     { id: 'background', type: 'background', paint: { 'background-color': colors.background } },
   ],
 };
+// Derive the initial viewport from every region, including outlying islands.
+const packBounds = regions.reduce<[number, number, number, number]>(
+  (bounds, region) => [
+    Math.min(bounds[0], region.bounds[0]),
+    Math.min(bounds[1], region.bounds[1]),
+    Math.max(bounds[2], region.bounds[2]),
+    Math.max(bounds[3], region.bounds[3]),
+  ],
+  [Infinity, Infinity, -Infinity, -Infinity],
+);
+const cameraPadding = { top: 24, right: 24, bottom: 24, left: 24 };
 export const RegionMap = memo(function RegionMap({
   visited,
   selected,
@@ -51,8 +62,18 @@ export const RegionMap = memo(function RegionMap({
     [visited, selected],
   );
   return (
-    <Map mapStyle={mapStyle} style={{ flex: 1 }} attribution={false} compass>
-      <Camera ref={camera} initialViewState={{ center: [127.8, 36.1], zoom: 5.7 }} />
+    <Map
+      mapStyle={mapStyle}
+      style={{ flex: 1 }}
+      attribution={false}
+      compass
+      onDidFinishLoadingMap={() => {
+        const bounds = selected ? regionById.get(selected)?.bounds : packBounds;
+        if (bounds && bounds.every(Number.isFinite))
+          camera.current?.fitBounds(bounds, { padding: cameraPadding, duration: 0 });
+      }}
+    >
+      <Camera ref={camera} initialViewState={{ bounds: packBounds, padding: cameraPadding }} />
       <GeoJSONSource
         id="regions"
         data={data}

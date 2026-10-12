@@ -30,7 +30,7 @@
 | P2-08 | 완료 | 실제 iPhone 항상 허용·full accuracy, background task, 364초 잠금·관측 시각·지연·5분 확정·잠금 해제 유지 확인. 30분·경계 이동·배터리는 P2-11/12에 남김 |
 | P2-09 | 부분 완료 / 검증 대기 | top-level task·복원·켜기/끄기와 활성 화면의 권한·GPS·공백 점검 구현, 관련 회귀 PASS. 새 점검의 Android 화면 연동 검증 대기 |
 | P2-10 | 완료 | SQLite 동시 쓰기 직렬화·확정 중복 방지·outbox 트랜잭션 회귀. Android foreground/background 수집 및 UI DB poll 중 확정 한 건 확인 |
-| P2-11 | 부분 완료 / 검증 대기 | Android 화면 꺼짐과 재실행 일부 완료. 양쪽 실기기 30분·경계·권한·강제 종료 검증 대기 |
+| P2-11 | 부분 완료 / 검증 대기 | iPhone 정지 30분 잠금·해제 후 보존 완료(Debug/USB/inspector), Android 화면 꺼짐·재실행 일부 완료. 실제 경계·재방문·권한·강제 종료 전체 시나리오와 Android 실기기 대기 |
 | P2-12 | 부분 완료 / 검증 대기 | 샘플링 초기 값 있음. 실제 기기 8시간 배터리 측정 대기 |
 | P2-13 | 부분 완료 / 검증 대기 | Android native crash 원인 수정. 이번 iPhone foreground 체류 진행·301.532초 확정·재실행 유지 확인. 이전 정지 원인과 잠금 필수 시나리오 확인 뒤 native 보완 판단 |
 | P2-14 | 부분 완료 / 검증 대기 | Android 중간 결과 있음. G2 최종 결과와 지원 범위 확정 대기 |
@@ -76,3 +76,5 @@
 - [iPhone 실제 지도·위치·체류 진행 및 재개 검증](test-results/2026-10-12-iphone-resume.md). AT-01 iOS PASS. iPhone foreground 301.532초 확정·중복 방지·재실행 유지 확인. iPhone 364초 잠금·5분 확정까지 확인. 30분·실제 경계 이동과 전체 수용 시험은 미완료.
 
 - 지역별 기록 목록 한 카드와 상세 방문 내역 분리, 이전 사진 연결 유지 회귀 포함 **90개 검사 PASS**. [최신 결과](test-results/2026-10-12-iphone-resume.md).
+
+- [iPhone 정지 30분 잠금 최종 요약](test-results/2026-10-12-iphone-30min-summary.json): 1800.003초, 32회 잠금·SQLite 확인, 후보 유지·한 번 확정·해제 후 6건 보존. 제주 포함 초기 지도·지역 카드 1개·상세 6건 확인. AT-08의 경계 이동은 미완료.

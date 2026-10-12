@@ -3,10 +3,10 @@
 2026-10-12 추가 갱신: 현재 채팅은 codex/common-ios의 공통·iOS, 별도 Android 개발·검증 채팅은 독립 worktree의 codex/android-native 담당이다. [역할·통합·캐시 보존 규칙](PARALLEL_DEVELOPMENT.md)을 먼저 읽는다. Android는 localhost 8082, iOS는 기존 8081을 유지한다. Android 원본 시험 자료는 해당 worktree에 있으며 전체 진행 문서는 공통 채팅에서 통합한다.
 
 - 현재 체크리스트 19/54. P3-06 서버 인증·사진 소유권 기반 및 20개 backend 통합 검사 완료. 모바일 90개, 양쪽 생산용 JS/Hermes export PASS. 실제 앱 로그인·백업·UUID sync와 G3는 미완료다.
-- iPhone 30분 잠금 시험은 진행 중이다. app/와 공통 src/의 라이브 변경은 시험 종료 뒤 적용해 reload 영향을 피한다. 사용자 DB·사진·원시 좌표 복사 없음.
+- iPhone 정지 상태 30분 잠금 1800.003초·32회 관측 PASS. 후보 초기화 없이 한 번 확정, 방문/outbox 각 6건 보존. 사용자가 잠금 해제 후 앱을 열었고 지역 카드 1개·상세 방문 6건, reload 후 제주 포함 초기 지도 확인. 시험 종료 뒤 새 관측 공백은 기존 방문을 지우지 않았다. 경계 이동·배터리·standalone Release와 Android 실기기는 미검증이다.
 - 확인된 inactive 프로젝트 Xcode 캐시와 완료된 임시 Cloud 의존성·생성물만 정리했다. 기존 앱/APK·백업·스냅샷·소스·개인 데이터·서명·로그를 보존했다. Time Machine snapshot은 삭제하지 않았다.
-- Android 보고에서 절전 안내 누락과 초기 제주 viewport를 제안했으며 공통 담당이 준비·적용·검증한다. Android가 직접 공통 소스를 편집하지 않는다.
-- 아래 18/54, 6분 잠금·이전 source 상태는 앞선 시점의 이력이다. 최종 30분 결과와 통합 커밋을 PROGRESS와 새 검사 기록에서 우선한다.
+- Android 제안에 따라 공통 담당이 Android 전용 절전 안내와 전체 경계 bounds 초기 지도를 적용했다. 모바일 검사와 iPhone 표시 확인, 새 Android 화면은 후속 검증 대기. 공통 PR #2와 Android PR #1은 초안이며 원격 master 병합 전이다.
+- 아래 18/54, 6분 잠금·이전 source 상태는 앞선 시점의 이력이다. 최종 30분 결과와 최신 커밋을 PROGRESS와 새 검사 기록에서 우선한다.
 
 # 개발 재개 안내
 
