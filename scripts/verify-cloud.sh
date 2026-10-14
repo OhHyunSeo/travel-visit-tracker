@@ -8,6 +8,10 @@ npm --prefix travel_visit_tracker run check
 node --check backend/server.js
 npm --prefix backend test
 (
+  cd travel_visit_tracker
+  node --import tsx ../scripts/check-visit-sync.mts
+)
+(
   cd backend
   node -e "for (const name of ['sharp', 'bcrypt', 'sqlite3']) require(name); console.log('Backend native dependencies loaded');"
 )

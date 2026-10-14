@@ -1,25 +1,26 @@
 # 여기서 이어서 개발하기
 
-2026-10-14에 체크리스트 개발을 다시 시작했습니다. 먼저 [앱 소개](../README.md)와 [현재 진행 상황](../PROGRESS.md)을 읽으면 전체 맥락을 볼 수 있습니다.
+2026-10-14에 체크리스트 개발을 다시 시작했습니다. [앱 소개](../README.md)와 [진행 이야기](../PROGRESS.md)를 먼저 읽으면 전체 맥락을 볼 수 있습니다.
 
 ## 현재 상태
 
-- 완료한 작업은 20/54입니다. 서버 모듈 분리(P3-05), 방문 중복 방지·삭제 보존 기반을 구현했습니다. 모바일 90개, 서버 36개 검사와 양쪽 JS/Hermes export가 통과했습니다.
-- 앱 로그인과 서버 백업은 아직 연결하지 않았습니다. 다음은 P3-07의 로그인·토큰 보관과 P3-08·09의 전송 대기 목록 연결입니다. [방문 API 예시](../backend/docs/VISIT_BACKUP.md)를 사용합니다.
+- 완료한 작업은 20/54입니다. 로그인·SecureStore·계정별 로컬 기록과 방문 전송 서비스를 구현했습니다. 모바일 134개, 서버 36개, 합성 HTTP 전송 검사와 양쪽 JS/Hermes export가 통과했습니다.
+- 로그인은 설정 화면에 연결했습니다. 방문 전송 서비스는 앱 UI·자동 실행에 연결하지 않았습니다. 재시도 일정, 백업 동작·상태 표시, 사진 업로드와 복원을 이어서 준비합니다. [방문 API 예시](../backend/docs/VISIT_BACKUP.md)를 사용합니다.
+- 아이폰에서 고유한 합성 SecureStore 키의 쓰기·읽기·삭제 PASS. 기존 계정 키·방문 DB는 변경하지 않았습니다. 전체 로그인 화면·실제 인증 API 흐름은 남아 있습니다. Android는 공통 로그인 소스 `aa09aa0`의 임시 overlay로 검증 중입니다. 새 backup exclusion 설정은 기존 APK에 반영됐다고 보지 않습니다.
 - 실제 아이폰의 30분 잠금, Android 에뮬레이터의 30분 화면 꺼짐과 저장 보존은 10월 12일 결과입니다. 경계 이동·배터리·Android 실기기·Release 시험은 남아 있습니다.
-- Android에서는 10월 14일 새 배터리 안내와 제주 초기 지도를 확인했습니다. 지도 선택 카드를 먼저 닫는 뒤로 가기 개선도 에뮬레이터에서 확인했습니다. 공통 파일은 테스트용으로만 동기화하고 Android 커밋에는 포함하지 않습니다.
+- Android에서는 10월 14일 새 배터리 안내와 제주 초기 지도, 선택 카드 닫기·상세·설정·검색의 뒤로 가기를 에뮬레이터에서 확인했습니다.
 
 ## 작업 폴더와 PR
 
-공통·iOS는 원래 checkout의 `codex/common-ios`, Android는 독립 worktree의 `codex/android-native`에서 작업합니다. 공통 앱과 서버, 전체 진행 문서는 공통 담당이 수정합니다. Android 담당은 실행 도구와 전용 검사·결과 문서를 맡습니다. [분담 규칙](PARALLEL_DEVELOPMENT.md)을 참고하세요.
+공통·iOS는 원래 checkout의 `codex/common-ios`, Android는 독립 worktree의 `codex/android-native`에서 작업합니다. 공통 앱과 서버, 전체 진행 문서는 공통 담당이 수정합니다. Android 담당은 실행 도구와 전용 검사·결과 문서를 맡습니다. [분담 규칙](PARALLEL_DEVELOPMENT.md)을 참고하세요. 공통 파일의 임시 QA 복사본은 검사 후 원래대로 복구하고 Android 커밋에는 넣지 않습니다.
 
 [공통 PR #2](https://github.com/OhHyunSeo/travel-visit-tracker/pull/2)와 [Android PR #1](https://github.com/OhHyunSeo/travel-visit-tracker/pull/1)은 master 대상 초안입니다. 병합 여부와 최신 head는 재개할 때 다시 확인합니다. 기존 변경을 reset하거나 데이터 폴더를 지우지 않습니다.
 
 ## 실행할 때 확인할 것
 
-Node 24.21.0으로 루트에서 `bash scripts/verify-cloud.sh`를 실행합니다. 기기 앱은 [모바일 실행 안내](../travel_visit_tracker/README.md)를 따르며, iOS는 8081, Android는 자체 8082를 사용합니다. 서버 검사는 개인 DB 대신 임시 데이터를 사용합니다.
+Node 24.21.0으로 루트에서 `bash scripts/verify-cloud.sh`를 실행합니다. 방문 동기화 검사도 임시 모바일·서버 DB와 짧게 실행하는 루프백 서버만 사용합니다. 기기 앱은 [모바일 실행 안내](../travel_visit_tracker/README.md)를 따르며, iOS는 8081, Android는 자체 8082를 사용합니다. 기존 Metro를 중복 실행하지 않습니다.
 
-원래 PC의 기기 증거는 `docs/test-results/`, Android 원본은 Android worktree의 같은 폴더에 있습니다. GitHub에는 요약만 올립니다. 소스, 방문과 사진, 전송 대기 자료, 환경 값, 서명, APK와 스냅샷은 보존합니다. 캐시를 정리할 때도 사용 중인 폴더와 중요한 자료는 제외합니다.
+원래 PC의 증거는 `docs/test-results/`, Android 원본은 Android worktree의 같은 폴더에 있습니다. GitHub에는 요약만 올립니다. 검사 로그와 번들 해시를 저장한 뒤 이번 JS export 약 8.0MiB만 정리했습니다. 소스, 방문·사진·전송 대기 자료, 환경 값, 서명, APK와 스냅샷은 보존합니다.
 
 ## 이전 인계 기록
 

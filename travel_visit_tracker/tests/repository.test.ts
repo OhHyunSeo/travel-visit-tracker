@@ -581,3 +581,120 @@ describe('account scope and explicit guest transfer', () => {
     expect(db.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
   });
 });
+describe('account-scoped visit outbox acknowledgements', () => {
+  async function accountWithVisits() {
+    const account = new Repository(connection, 'account:test:1');
+    await account.activateOwner();
+    await record(account, 'first');
+    await record(account, 'second');
+    return account;
+  }
+  it('reads bounded visit batches without including photos, guest or another account', async () => {
+    await record(repository, 'guest');
+    const account = await accountWithVisits();
+    await account.addPhoto({
+      id: 'photo',
+      visitId: 'first-visit',
+      uri: 'file:///synthetic.jpg',
+      createdAt: initial,
+    });
+    expect((await account.pendingVisitOperations(1)).map((op) => op.id)).toEqual(['first-visit']);
+    expect(await account.pendingVisitOperations()).toHaveLength(2);
+    await expect(repository.pendingVisitOperations()).rejects.toThrow('현재 로그인한 계정');
+    await expect(
+      new Repository(connection, 'account:test:2').pendingVisitOperations(),
+    ).rejects.toThrow();
+    await expect(account.pendingVisitOperations(101)).rejects.toThrow();
+  });
+  it('retains operation IDs and payloads after an interrupted attempt and database reopening', async () => {
+    const account = await accountWithVisits();
+    const sent = await account.pendingVisitOperations();
+    await account.noteVisitAttempt(sent);
+    db.close();
+    db = new DatabaseSync(join(directory, 'data.sqlite'));
+    connection = adapter(db);
+    const reopened = new Repository(connection, account.ownerId);
+    const retry = await reopened.pendingVisitOperations();
+    expect(retry).toEqual(sent.map((op) => ({ ...op, attempts: 1 })));
+    expect((await reopened.snapshot(false)).visits).toHaveLength(2);
+  });
+  it('removes only acknowledged visit operations and preserves photo work and saved visits', async () => {
+    const account = await accountWithVisits();
+    await account.addPhoto({
+      id: 'photo',
+      visitId: 'first-visit',
+      uri: 'file:///synthetic.jpg',
+      createdAt: initial,
+    });
+    const sent = await account.pendingVisitOperations();
+    expect(await account.acknowledgeVisitOperations(sent, [sent[0].id])).toBe(1);
+    const state = await account.snapshot(false);
+    expect(state.pending).toBe(2);
+    expect(state.visits).toHaveLength(2);
+    expect(state.photos).toHaveLength(1);
+    expect(await account.acknowledgeVisitOperations(sent, [sent[0].id])).toBe(0);
+  });
+  it('does not acknowledge a row whose immutable payload differs from the sent snapshot', async () => {
+    const account = await accountWithVisits();
+    const sent = await account.pendingVisitOperations();
+    await connection.run(
+      'UPDATE outbox SET payload=? WHERE id=?',
+      '{"synthetic":"changed"}',
+      sent[1].id,
+    );
+    expect(await account.acknowledgeVisitOperations(sent, [sent[1].id])).toBe(0);
+    await expect(account.noteVisitAttempt(sent)).rejects.toThrow('전송할 기록이 바뀌었습니다');
+    expect((await account.pendingVisitOperations()).every((op) => op.attempts === 0)).toBe(true);
+    expect((await account.snapshot(false)).pending).toBe(2);
+  });
+  it('rejects unrequested or duplicate acknowledgements before modifying any row', async () => {
+    const account = await accountWithVisits();
+    const sent = await account.pendingVisitOperations();
+    await expect(
+      account.acknowledgeVisitOperations(sent, [sent[0].id, 'foreign']),
+    ).rejects.toThrow();
+    await expect(
+      account.acknowledgeVisitOperations(sent, [sent[0].id, sent[0].id]),
+    ).rejects.toThrow();
+    expect((await account.snapshot(false)).pending).toBe(2);
+  });
+  it('rolls back the entire acknowledgement batch when a later SQL operation fails', async () => {
+    const account = await accountWithVisits();
+    const sent = await account.pendingVisitOperations();
+    let deletes = 0;
+    const broken = new Repository(
+      {
+        ...connection,
+        run: async (sql, ...params) => {
+          if (sql.startsWith('DELETE FROM outbox') && ++deletes === 2)
+            throw new Error('disk failure');
+          return connection.run(sql, ...params);
+        },
+      },
+      account.ownerId,
+    );
+    await expect(
+      broken.acknowledgeVisitOperations(
+        sent,
+        sent.map((op) => op.id),
+      ),
+    ).rejects.toThrow('disk failure');
+    expect((await account.snapshot(false)).pending).toBe(2);
+  });
+  it('keeps old-account work when a response arrives after switching accounts', async () => {
+    const account = await accountWithVisits();
+    const sent = await account.pendingVisitOperations();
+    const second = new Repository(connection, 'account:test:2');
+    await second.activateOwner();
+    await record(second, 'second-account');
+    await expect(
+      account.acknowledgeVisitOperations(
+        sent,
+        sent.map((op) => op.id),
+      ),
+    ).rejects.toThrow();
+    await expect(account.noteVisitAttempt(sent)).rejects.toThrow();
+    expect((await account.snapshot(false)).pending).toBe(2);
+    expect((await second.snapshot(false)).pending).toBe(1);
+  });
+});

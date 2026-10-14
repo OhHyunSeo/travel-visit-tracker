@@ -1,5 +1,6 @@
 import { schemaSql, schemaVersion } from './schema';
 import { dwellPolicy } from '../domain/dwell';
+import type { QueuedVisitOperation } from './outbox';
 import type {
   Candidate,
   Photo,
@@ -116,6 +117,71 @@ export class Repository {
         this.ownerId,
       );
       return { visits: visits?.count ?? 0, photos: photos?.count ?? 0 };
+    });
+  }
+  private async requireActiveAccount(): Promise<void> {
+    const active = await this.db.first<{ value: string }>(
+      'SELECT value FROM settings WHERE key=?',
+      'active_owner',
+    );
+    if (this.ownerId === 'guest' || !active || JSON.parse(active.value) !== this.ownerId)
+      throw new Error('현재 로그인한 계정의 전송 작업만 처리할 수 있습니다.');
+  }
+  async pendingVisitOperations(limit = 100): Promise<QueuedVisitOperation[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+      throw new Error('방문 전송 묶음은 1~100개여야 합니다.');
+    return this.serialize(async () => {
+      await this.requireActiveAccount();
+      return this.db.all<QueuedVisitOperation>(
+        "SELECT id,entity_type AS entityType,entity_id AS entityId,operation,payload AS serializedPayload,created_at AS createdAt,attempts FROM outbox WHERE owner_id=? AND entity_type='visit' ORDER BY created_at,id LIMIT ?",
+        this.ownerId,
+        limit,
+      );
+    });
+  }
+  async noteVisitAttempt(operations: readonly QueuedVisitOperation[]): Promise<void> {
+    await this.transaction(async () => {
+      await this.requireActiveAccount();
+      for (const operation of operations) {
+        const updated = await this.db.run(
+          "UPDATE outbox SET attempts=attempts+1 WHERE owner_id=? AND id=? AND entity_type='visit' AND entity_id=? AND operation=? AND payload=?",
+          this.ownerId,
+          operation.id,
+          operation.entityId,
+          operation.operation,
+          operation.serializedPayload,
+        );
+        if (updated.changes !== 1)
+          throw new Error('전송할 기록이 바뀌었습니다. 대기 목록을 다시 확인해 주세요.');
+      }
+    });
+  }
+  async acknowledgeVisitOperations(
+    sent: readonly QueuedVisitOperation[],
+    acknowledgedIds: readonly string[],
+  ): Promise<number> {
+    const ids = new Set(acknowledgedIds);
+    if (
+      ids.size !== acknowledgedIds.length ||
+      [...ids].some((id) => !sent.some((operation) => operation.id === id))
+    )
+      throw new Error('서버가 확인한 작업이 전송한 목록과 일치하지 않습니다.');
+    return this.transaction(async () => {
+      await this.requireActiveAccount();
+      let acknowledged = 0;
+      for (const operation of sent) {
+        if (!ids.has(operation.id)) continue;
+        const deleted = await this.db.run(
+          "DELETE FROM outbox WHERE owner_id=? AND id=? AND entity_type='visit' AND entity_id=? AND operation=? AND payload=?",
+          this.ownerId,
+          operation.id,
+          operation.entityId,
+          operation.operation,
+          operation.serializedPayload,
+        );
+        acknowledged += deleted.changes;
+      }
+      return acknowledged;
     });
   }
   private async writeSetting(key: string, value: unknown) {
