@@ -2,39 +2,63 @@
 
 마지막 갱신: 2026-10-14, Asia/Seoul.
 
-새 배터리 안내와 제주를 포함한 초기 지도를 Android 에뮬레이터에서 확인했습니다. 지도 선택 카드에서 뒤로 가면 카드를 먼저 닫도록 한 공통 수정도 정상 동작합니다. 앱 설정, 설정 탭, 지역 검색, 지역 상세에서 뒤로 돌아오는 흐름과 기존 방문, 사진, 서버 전송 대기 자료가 유지됐습니다. 현재는 다음 단계 P3-07의 로그인 검증을 준비하며 공통 소스 전달을 기다리고 있습니다.
+새 배터리 안내와 제주를 포함한 초기 지도를 Android 에뮬레이터에서 확인했습니다. 지도 선택 카드에서 뒤로 가면 카드를 먼저 닫도록 한 공통 수정도 정상 동작합니다. 앱 설정, 설정 탭, 지역 검색, 지역 상세에서 뒤로 돌아오는 흐름과 기존 방문, 사진, 서버 전송 대기 자료가 유지됐습니다. P3-07의 Android 로그인·복구·오프라인·만료·로그아웃 QA도 완료했고, 사용자 종료 지시에 따라 자료를 저장하고 이번 단계를 마무리했습니다.
 
 현재 실제 Android 휴대폰은 없습니다. 이 문서의 결과는 기존 Debug 앱을 실행한 에뮬레이터 시험이며, 실제 휴대폰이나 출시용 Release 검증으로 보지 않습니다. 전체 체크리스트와 완료 수는 공통 담당 채팅에서 관리합니다.
 
-## P3-07 로그인 검증 준비
+## P3-07 Android 로그인 QA 결과
 
-**준비 상태: APK 포함 확인 PASS, 로그인·복구·로그아웃 시험은 공통 소스 대기.** 공통 담당이 저장소와 화면을 수정 중이므로 이 단계에서는 어떤 공통 파일도 동기화하지 않았습니다.
+**이번 native 흐름은 PASS입니다.** 실제 backend의 `createBackend`를 읽기 전용으로 재사용하되 별도 루프백 서버, 임시 DB·업로드 폴더와 합성 계정만 사용했습니다. 실제 backend의 data/uploads나 환경 비밀값은 사용하지 않았습니다. 공개 문서에는 합성 계정 값, 토큰, 서버 주소와 원본 JSON을 적지 않습니다.
 
-설치된 `app.trippainting.mobile`의 APK 파일만 읽어 기존 Debug APK와 해시·크기가 같은지 비교했습니다. 그 APK의 `expo.modules.securestore.SecureStoreModule` 클래스와 `expo.modules.ExpoModulesPackageList` 등록 참조를 확인했습니다. package에도 `expo-secure-store ~57.0.4`가 포함돼 있습니다. 새 native 의존성이나 빌드를 추가할 근거는 현재 없습니다.
+| 시험 | 실제 결과 |
+| --- | --- |
+| 가입 | 실제 가입 API 성공 후 계정 뷰로 전환. 계정 로컬 자료는 0건, 게스트 자료는 별도로 유지 |
+| 저장·강제 재실행 복구 | native SecureStore에 AES 암호화 항목 저장 확인. 앱 강제 종료·재실행 후 세션 복구와 실제 me 확인 성공 |
+| 서버 오프라인 | offline 상태로 바뀌어도 토큰과 같은 계정의 로컬 뷰 유지. 게스트로 임의 전환하지 않음 |
+| JWT 비밀값 교체 | 실제 me 요청이 401로 거절된 뒤 expired·토큰 없음으로 변경. 같은 계정 뷰와 게스트 자료 유지 |
+| 재로그인 | 같은 합성 계정으로 실제 로그인 API 성공, signed-in·토큰 있음으로 복귀 |
+| 게스트 가져오기 | 확인창을 열었다 취소하는 것만 확인. 기록 이동이나 가져오기 실행 없음 |
+| 로그아웃 | guest·세션 없음·토큰 없음·기록 꺼짐으로 복귀. 해당 native SecureStore 인증 항목도 삭제됨 |
+| 원본 보존 | 모든 단계에서 게스트 방문 4건, 사진 파일 1개, 전송 대기 3건 유지. 행 전체와 사진 내용의 원본 비교도 일치, DB 무결성 정상 |
 
-Debug manifest의 INTERNET 권한, debuggable과 usesCleartextTraffic 허용도 확인해 로컬 HTTP 시험을 준비할 수 있습니다. 이는 기존 Debug APK의 정적 확인입니다. SecureStore 함수 호출, 키 저장·읽기·삭제, 실제 로그인이나 토큰 복구 성공을 뜻하지 않으며 Release의 네트워크·보안 설정을 확인한 결과도 아닙니다.
+계정 뷰 유지 시험은 **로컬 계정 자료가 0건인 조건**입니다. 계정 소유자가 유지되고 게스트 4건이 노출·이동되지 않는 것을 확인했으며, 비어 있지 않은 계정의 방문·사진 복원까지 검증했다는 뜻은 아닙니다. 가져오기 원자성은 공통 담당의 임시 SQL 검사 결과이고 이번 native 시험에서는 실제 가져오기를 하지 않았습니다.
 
-설치 APK 점검을 위해 기존 AVD를 잠깐 부팅했습니다. 앱을 여는 명령이나 Metro 시작은 하지 않았지만 부팅 뒤 기존 앱 프로세스가 있는 것을 확인했습니다. 로그인·복구·로그아웃 동작은 수행하지 않았으며 APK 읽기 점검 후 에뮬레이터를 정상 종료했습니다. 개인 DB·사진을 읽거나 복사하지 않았고, 계정이나 SecureStore 값을 직접 쓰지 않았습니다. 로그인 시험은 다음 준비 완료 소스를 받은 뒤 시작합니다.
+### 기준 소스와 검사 범위
 
-### 공통 소스가 준비되면 확인할 흐름
+Android 시작 기준은 `0bc330d`, 공통 검증 소스는 **`aa09aa0`**입니다. 계정 화면, 설정 화면, authClient/sessionManager/credentials 두 플랫폼 파일, database/repository, useAuthStore/useAppStore의 승인된 10개 파일만 임시 적용했습니다. 파일 해시로 `aa09aa0`와의 일치를 확인했고 시험 중 다시 동기화하지 않았습니다. 이후 공통 전송 서비스 개발은 이번 native 결과에 포함하지 않습니다.
 
-1. 이전에 보존한 게스트 방문 4건(그중 GPS 3건), 사진 파일 1개와 전송 대기 3건의 최소 요약을 다시 읽어 기준을 잡습니다.
-2. 별도 임시 DB와 합성 계정만 쓰는 서버를 `127.0.0.1:3002`에 준비합니다. 실제 backend DB나 환경 비밀값은 사용하지 않습니다. 서버 계약과 앱의 API 주소 설정은 전달된 소스로 확인합니다.
-3. 로그인에서 **게스트 기록 가져오기를 선택하지 않습니다**. 준비 소스에서도 가져오기가 명시적 선택 없이 실행되지 않는지 먼저 확인합니다. 기존 게스트 방문·사진·전송 대기 자료를 계정으로 옮기거나 수정하지 않는 것이 이 시험의 조건입니다.
-4. 로그인 상태와 계정 표시, 앱 프로세스 재실행 뒤의 SecureStore 기반 세션 복구, 로그아웃 뒤 세션 제거를 확인합니다. 비밀번호와 토큰은 증거에 저장하지 않습니다.
-5. 로그아웃 뒤 게스트 자료가 그대로 남았는지 대조하고 임시 서버·전용 연결과 Android 시험 프로세스를 종료합니다. 게스트 가져오기 자체와 다른 계정으로의 기록 이동은 이번 시험에 포함하지 않습니다.
+새 의존성 설치, APK 재설치, native rebuild나 장시간 시험은 하지 않았습니다. 기존 APK의 SecureStore 클래스·등록 참조와 설치 파일 일치는 준비 단계에서 읽기 전용으로 확인했습니다. 임시 UI 상태의 Android 타입 검사, ESLint와 기존 **90개 테스트**가 PASS였습니다. 공통 채팅의 112개 또는 이후 검사 수를 이 worktree의 실행 결과로 바꾸지 않습니다.
 
-`travel_visit_tracker/scripts/android-auth-loopback.sh`는 서버가 준비된 뒤 `/health` 응답을 확인하고 에뮬레이터의 3002 포트만 연결하는 보조 도구입니다. 공통 서버 후보 3000/3001과 Metro 8081/8082는 거절하고, 실제 휴대폰도 거절합니다. `--remove`는 해당 인증 시험 연결만 제거합니다. 이 도구는 서버를 시작하거나 계정을 만들거나 앱을 실행하지 않습니다. `/health` 성공만으로 서버의 임시 DB·합성 계정 격리가 증명되는 것은 아니므로 실제 서버 준비 상태는 별도로 확인합니다.
+독립 비동기 Inspector의 credentials.read 진단은 완료 응답을 얻지 못해 직접 API probe의 PASS로 표시하지 않습니다. 실제 흐름 확인은 가입·로그인 UI, 강제 재실행과 me 성공, 동기식 앱 상태 읽기, native 암호화 항목의 존재·로그아웃 후 삭제와 DB·사진 원본 대조로 수행했습니다. 초기 연결·화면 자동 입력 문제는 인증 실패로 분류하지 않으며, 원본 예외도 로컬에 보존했습니다.
 
-```sh
-# 공통 소스와 합성 서버가 준비된 뒤에만 사용합니다.
+새 app.config의 SecureStore backup 제외 선언은 동기화하지 않았고 이번 기존 APK에 반영됐다고 주장하지 않습니다. **backup 정책 native rebuild 확인, 실제 Android 휴대폰·Release, iOS 실제 계정 UI/DB 전환은 별도 대기**입니다.
+
+### 근거와 종료 상태
+
+원본 근거는 Git 제외인 `docs/test-results/android-auth-20261014/`에 보존했습니다. 아래 파일에는 상태·개수 중심의 요약 또는 비공개 원본이 있으므로 공개 PR에는 이 설명만 공유합니다.
+
+| 근거 | 로컬 파일 |
+| --- | --- |
+| 승인 소스 일치·원상 복원 | `validation-files.json`, 원래 존재한 파일의 `original-*.txt` |
+| 검사 결과 | `common-auth-check.log` |
+| 단계별 앱·DB 상태 | `after-signup`, `restored-online`, `server-offline`, `invalid-token`, `after-relogin`, `final-guest` 이름의 `*-session.json`, `*-db.json` |
+| native 인증 저장 항목 | 단계별 `*-credential.json` (존재·암호화 여부만 기록) |
+| 확인창 취소 | `guest-import-confirmation.*`, `guest-import-cancelled.*` |
+| 실제 임시 서버 응답·최종 요약 | `server-summary.json`, `summary.json` |
+| 종료 확인 | `shutdown-status.json`, `loopback-remove.log` |
+
+최종 상태는 guest, recording off, collector off, 방문 4건·사진 1개·전송 대기 3건, 인증 세션 없음입니다. 임시 서버와 전용 연결, 자체 Metro와 에뮬레이터를 종료했습니다. 공통 overlay 10개는 원래 Android HEAD로 복원했고, 이번에만 생긴 공통 파일은 해시를 확인한 뒤 제거했습니다. 원래 common checkout, iOS와 기록·사진·증거·백업은 보존했습니다. 이번 종료 커밋은 Android 결과 문서만 포함합니다.
+
+### 다음 native 시험의 연결 도구
+
+준비 단계에서 추가한 `android-auth-loopback.sh`는 임시 서버의 health 응답을 확인한 뒤 인증 전용 포트를 에뮬레이터에 연결합니다. 공통 서버·Metro 포트와 실제 휴대폰을 거절하고 `--remove`는 해당 연결만 제거합니다. 서버·계정·앱을 만드는 도구는 아니며 임시 DB·합성 계정 격리는 실제 서버 설정에서 별도로 확인해야 합니다. 가짜 adb/curl로 검사한 `test-android-auth-loopback.py`는 PASS입니다.
+
+```
 bash travel_visit_tracker/scripts/android-auth-loopback.sh
 bash travel_visit_tracker/scripts/android-auth-loopback.sh --remove
 ```
 
-가짜 adb/curl로 별도 포트, 서버 준비 확인, 에뮬레이터 제한과 연결 제거를 검사한 `python3 scripts/test-android-auth-loopback.py`는 PASS입니다. 아직 실제 API 포트 연결이나 인증 시험은 실행하지 않았습니다.
-
-원본 준비 근거는 Git 제외인 `docs/test-results/android-auth-prep-20261014/`에 있습니다. `host-apk-inspection.json`, `installed-apk-inspection.json`, `module-registration.txt`, `module-registration.json`, `network-manifest.txt`, `prep-summary.json`, `loopback-tool-check.log`를 보존합니다. 공개 문서에는 APK 해시, 설치 경로·기기값, 원본 bytecode와 계정 정보를 복사하지 않습니다.
+설치 APK 준비 근거는 `docs/test-results/android-auth-prep-20261014/`에 따로 보존했습니다. 원본 APK·기기 경로, bytecode, 계정·토큰과 키 값은 GitHub에 올리지 않습니다.
 
 ## 10월 14일에 확인한 내용
 
