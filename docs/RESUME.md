@@ -1,3 +1,33 @@
+# 여기서 이어서 개발하기
+
+2026-10-14에 체크리스트 개발을 다시 시작했습니다. 먼저 [앱 소개](../README.md)와 [현재 진행 상황](../PROGRESS.md)을 읽으면 전체 맥락을 볼 수 있습니다.
+
+## 현재 상태
+
+- 완료한 작업은 20/54입니다. 서버 모듈 분리(P3-05), 방문 중복 방지·삭제 보존 기반을 구현했습니다. 모바일 90개, 서버 36개 검사와 양쪽 JS/Hermes export가 통과했습니다.
+- 앱 로그인과 서버 백업은 아직 연결하지 않았습니다. 다음은 P3-07의 로그인·토큰 보관과 P3-08·09의 전송 대기 목록 연결입니다. [방문 API 예시](../backend/docs/VISIT_BACKUP.md)를 사용합니다.
+- 실제 아이폰의 30분 잠금, Android 에뮬레이터의 30분 화면 꺼짐과 저장 보존은 10월 12일 결과입니다. 경계 이동·배터리·Android 실기기·Release 시험은 남아 있습니다.
+- Android에서는 10월 14일 새 배터리 안내와 제주 초기 지도를 확인했습니다. 지도 선택 카드를 먼저 닫는 뒤로 가기 개선도 에뮬레이터에서 확인했습니다. 공통 파일은 테스트용으로만 동기화하고 Android 커밋에는 포함하지 않습니다.
+
+## 작업 폴더와 PR
+
+공통·iOS는 원래 checkout의 `codex/common-ios`, Android는 독립 worktree의 `codex/android-native`에서 작업합니다. 공통 앱과 서버, 전체 진행 문서는 공통 담당이 수정합니다. Android 담당은 실행 도구와 전용 검사·결과 문서를 맡습니다. [분담 규칙](PARALLEL_DEVELOPMENT.md)을 참고하세요.
+
+[공통 PR #2](https://github.com/OhHyunSeo/travel-visit-tracker/pull/2)와 [Android PR #1](https://github.com/OhHyunSeo/travel-visit-tracker/pull/1)은 master 대상 초안입니다. 병합 여부와 최신 head는 재개할 때 다시 확인합니다. 기존 변경을 reset하거나 데이터 폴더를 지우지 않습니다.
+
+## 실행할 때 확인할 것
+
+Node 24.21.0으로 루트에서 `bash scripts/verify-cloud.sh`를 실행합니다. 기기 앱은 [모바일 실행 안내](../travel_visit_tracker/README.md)를 따르며, iOS는 8081, Android는 자체 8082를 사용합니다. 서버 검사는 개인 DB 대신 임시 데이터를 사용합니다.
+
+원래 PC의 기기 증거는 `docs/test-results/`, Android 원본은 Android worktree의 같은 폴더에 있습니다. GitHub에는 요약만 올립니다. 소스, 방문과 사진, 전송 대기 자료, 환경 값, 서명, APK와 스냅샷은 보존합니다. 캐시를 정리할 때도 사용 중인 폴더와 중요한 자료는 제외합니다.
+
+## 이전 인계 기록
+
+지난 실행 명령과 빌드 메모를 보존했습니다. 아래의 기록 수, 실행 상태와 날짜는 과거 시점의 값입니다.
+
+<details>
+<summary>이전 환경과 기기 기록 보기</summary>
+
 # 최신 재개 상태
 
 2026-10-14: 사용량 한도로 중단된 결과 저장·PR 갱신을 재개해 마무리했다. 10월 12일의 양쪽 30분 시험은 완료되어 반복하지 않았다. Android 최종 결과·증거 checker는 `55ed305`로 PR #1에 반영됐고, 공통 결과·종료 문서는 PR #2에 보존한다. 공통 동작 소스는 `70805c4`이며 이후는 문서 갱신이다. 두 PR 모두 draft/open·master 병합 전. Android emulator/8082/시험 runner 종료 확인, 새 개발·추가 시험 없음. iPhone 유선 pairing·개발자 모드와 기기 정보 조회 성공이며 현재 기기 기록 수를 새로 검증한 것으로 취급하지 않는다.
@@ -121,3 +151,5 @@ Expo 57.0.27, RN 0.86.3, React 19.2.3, MapLibre 11.5.0, TypeScript 6.0.3. Node 2
 파일을 저장한 상태이며 Git commit·push·배포는 하지 않았다. `.git`은 현재 읽기만 허용된다. 최신 계획과 실제 결과는 [PROJECT_PLAN](../PROJECT_PLAN.md), [PROGRESS](../PROGRESS.md), [종료 검증 기록](test-results/2026-10-12-validation.md)을 함께 확인한다.
 
 직전 채팅 종료 때 Metro와 에뮬레이터는 종료했다. 당시 Android 자동 기록은 꺼져 있었고 새 Android native 시험은 완료하지 못했다. 이번에는 위의 iPhone 개발 서버를 재개했다. 앱·기기 데이터는 삭제하지 않았다. [최신 상태](test-results/2026-10-12-android-health.md)가 직전 실행 중 안내보다 우선한다.
+
+</details>

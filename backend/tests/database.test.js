@@ -35,7 +35,7 @@ it('adds ownership metadata to a legacy database while preserving users, trips a
     assert.equal((await db.get('SELECT username FROM users WHERE id=7')).username, 'Legacy');
     assert.equal((await db.get('SELECT title FROM trips WHERE id=8')).title, 'Existing trip');
     assert.equal((await db.get('SELECT trip_id FROM steps WHERE id=9')).trip_id, 8);
-    assert.equal((await db.get('PRAGMA user_version')).user_version, 1);
+    assert.equal((await db.get('PRAGMA user_version')).user_version, 2);
     assert.equal((await db.get('PRAGMA foreign_keys')).foreign_keys, 1);
     assert.equal((await db.get('SELECT COUNT(*) AS count FROM photos')).count, 0);
     await db.close();
@@ -62,6 +62,44 @@ it('rejects a newer database without downgrading it', async () => {
     assert.equal((await getRaw(raw, 'SELECT value FROM future_data')).value, 'preserve');
     await closeRaw(raw);
   } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+it('upgrades version 1 while preserving private photo ownership and existing accounts', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'trip-painting-db-v1-'));
+  const filename = path.join(dir, 'data.sqlite');
+  let db;
+  try {
+    const raw = await openRaw(filename);
+    const schema = (await fs.readFile(path.join(__dirname, '../data/schema.sql'), 'utf8')).split(
+      '-- Confirmed GPS visits',
+    )[0];
+    await execRaw(
+      raw,
+      schema +
+        "\nINSERT INTO users(id,email,password_hash,username) VALUES (7,'saved@example.test','preserved-hash','Saved'); INSERT INTO photos(id,user_id,region_id,filename,thumbnail_filename,created_at) VALUES ('saved-photo',7,'gb:test','saved.jpg','saved-thumb.jpg','2026-01-01'); PRAGMA user_version=1;",
+    );
+    await closeRaw(raw);
+    db = await openDatabase(filename);
+    assert.equal((await db.get('PRAGMA user_version')).user_version, 2);
+    assert.equal(
+      (await db.get('SELECT password_hash FROM users WHERE id=7')).password_hash,
+      'preserved-hash',
+    );
+    assert.deepEqual(
+      await db.get('SELECT user_id,filename,thumbnail_filename FROM photos WHERE id=?', [
+        'saved-photo',
+      ]),
+      {
+        user_id: 7,
+        filename: 'saved.jpg',
+        thumbnail_filename: 'saved-thumb.jpg',
+      },
+    );
+    assert.equal((await db.get('SELECT COUNT(*) AS count FROM visits')).count, 0);
+    assert.deepEqual(await db.all('PRAGMA foreign_key_check'), []);
+  } finally {
+    if (db) await db.close();
     await fs.rm(dir, { recursive: true, force: true });
   }
 });

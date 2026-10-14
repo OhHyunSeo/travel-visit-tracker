@@ -4,12 +4,14 @@ const compression = require('compression');
 const morgan = require('morgan');
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { createHash } = require('node:crypto');
+const { createRegions } = require('./regions');
 const { validateSecret } = require('./config');
 const { openDatabase } = require('./database');
 const { createAuth } = require('./auth');
 const { createPhotos } = require('./photos');
-const { HttpError, asyncRoute, errorHandler } = require('./http');
+const { createVisits } = require('./visits');
+const { createLegacyTrips } = require('./legacyTrips');
+const { HttpError, errorHandler } = require('./http');
 
 async function createBackend(config) {
   validateSecret(config.jwtSecret);
@@ -35,112 +37,12 @@ async function createBackend(config) {
   app.use(express.json({ limit: '1mb' }));
   const { router: auth, authenticate } = createAuth(db, config.jwtSecret);
   app.use('/api/auth', auth);
+  app.use('/api/visits', createVisits(db, authenticate));
   app.use(createPhotos(db, authenticate, uploadsDir));
 
-  app.get(
-    '/api/geojson/:countryCode',
-    asyncRoute(async (req, res) => {
-      if (!/^[A-Z]{2,3}$/.test(req.params.countryCode))
-        throw new HttpError(400, 'INVALID_COUNTRY', 'Country code must be 2-3 uppercase letters.');
-      let content;
-      try {
-        content = await fs.readFile(
-          path.join(dataDir, `${req.params.countryCode}_boundaries.geojson`),
-        );
-      } catch (error) {
-        if (error.code === 'ENOENT')
-          throw new HttpError(404, 'PACK_NOT_FOUND', 'GeoJSON pack not found.');
-        throw error;
-      }
-      const etag = `"${createHash('sha256').update(content).digest('hex')}"`;
-      if (req.get('If-None-Match') === etag) return res.status(304).end();
-      res.set({
-        'Content-Type': 'application/geo+json',
-        'Cache-Control': 'public, max-age=86400',
-        ETag: etag,
-      });
-      res.send(content);
-    }),
-  );
+  app.use('/api/geojson', createRegions(dataDir));
 
-  // Legacy location-point endpoint. The Expo visits/outbox client is not connected to this route.
-  app.post(
-    '/api/trips/sync',
-    authenticate,
-    asyncRoute(async (req, res) => {
-      const steps = req.body?.steps;
-      if (!Array.isArray(steps) || steps.length > 1000)
-        throw new HttpError(
-          400,
-          'INVALID_DATA',
-          'Provide a steps array with at most 1000 location points.',
-        );
-      for (const step of steps) {
-        if (
-          !step ||
-          typeof step !== 'object' ||
-          Array.isArray(step) ||
-          typeof step.latitude !== 'number' ||
-          !Number.isFinite(step.latitude) ||
-          Math.abs(step.latitude) > 90 ||
-          typeof step.longitude !== 'number' ||
-          !Number.isFinite(step.longitude) ||
-          Math.abs(step.longitude) > 180 ||
-          (step.trip_id != null && (!Number.isSafeInteger(step.trip_id) || step.trip_id <= 0)) ||
-          (step.accuracy != null &&
-            (typeof step.accuracy !== 'number' ||
-              !Number.isFinite(step.accuracy) ||
-              step.accuracy < 0)) ||
-          (step.altitude != null &&
-            (typeof step.altitude !== 'number' || !Number.isFinite(step.altitude))) ||
-          (step.timestamp != null && !['string', 'number'].includes(typeof step.timestamp)) ||
-          (step.type != null && (typeof step.type !== 'string' || step.type.length > 80)) ||
-          !['string', 'number'].includes(typeof step.local_id)
-        )
-          throw new HttpError(
-            400,
-            'INVALID_LOCATION',
-            'Each step must contain valid coordinates, optional trip metadata and a local_id.',
-          );
-      }
-      const syncedIds = await db.transaction(async (transaction) => {
-        const trips = new Set(
-          steps.filter((step) => step.trip_id != null).map((step) => step.trip_id),
-        );
-        for (const id of trips) {
-          const trip = await transaction.get('SELECT id FROM trips WHERE id=? AND user_id=?', [
-            id,
-            req.user.id,
-          ]);
-          if (!trip)
-            throw new HttpError(403, 'TRIP_FORBIDDEN', 'The trip is unavailable to this account.');
-        }
-        const ids = [];
-        for (const step of steps) {
-          await transaction.run(
-            'INSERT INTO steps(user_id,trip_id,latitude,longitude,timestamp,accuracy,altitude,type) VALUES (?,?,?,?,?,?,?,?)',
-            [
-              req.user.id,
-              step.trip_id ?? null,
-              step.latitude,
-              step.longitude,
-              step.timestamp ?? null,
-              step.accuracy ?? null,
-              step.altitude ?? null,
-              step.type ?? null,
-            ],
-          );
-          ids.push(step.local_id);
-        }
-        return ids;
-      });
-      res.json({
-        success: true,
-        synced_ids: syncedIds,
-        message: `Synced ${syncedIds.length} location points`,
-      });
-    }),
-  );
+  app.use('/api/trips', createLegacyTrips(db, authenticate));
   app.get('/health', (req, res) =>
     res.json({
       status: 'ok',
