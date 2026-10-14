@@ -2,9 +2,39 @@
 
 마지막 갱신: 2026-10-14, Asia/Seoul.
 
-새 배터리 안내와 제주를 포함한 초기 지도를 Android 에뮬레이터에서 확인했습니다. 지도 선택 카드에서 뒤로 가면 카드를 먼저 닫도록 한 공통 수정도 정상 동작합니다. 앱 설정, 설정 탭, 지역 검색, 지역 상세에서 뒤로 돌아오는 흐름과 기존 방문, 사진, 서버 전송 대기 자료가 유지됐습니다.
+새 배터리 안내와 제주를 포함한 초기 지도를 Android 에뮬레이터에서 확인했습니다. 지도 선택 카드에서 뒤로 가면 카드를 먼저 닫도록 한 공통 수정도 정상 동작합니다. 앱 설정, 설정 탭, 지역 검색, 지역 상세에서 뒤로 돌아오는 흐름과 기존 방문, 사진, 서버 전송 대기 자료가 유지됐습니다. 현재는 다음 단계 P3-07의 로그인 검증을 준비하며 공통 소스 전달을 기다리고 있습니다.
 
 현재 실제 Android 휴대폰은 없습니다. 이 문서의 결과는 기존 Debug 앱을 실행한 에뮬레이터 시험이며, 실제 휴대폰이나 출시용 Release 검증으로 보지 않습니다. 전체 체크리스트와 완료 수는 공통 담당 채팅에서 관리합니다.
+
+## P3-07 로그인 검증 준비
+
+**준비 상태: APK 포함 확인 PASS, 로그인·복구·로그아웃 시험은 공통 소스 대기.** 공통 담당이 저장소와 화면을 수정 중이므로 이 단계에서는 어떤 공통 파일도 동기화하지 않았습니다.
+
+설치된 `app.trippainting.mobile`의 APK 파일만 읽어 기존 Debug APK와 해시·크기가 같은지 비교했습니다. 그 APK의 `expo.modules.securestore.SecureStoreModule` 클래스와 `expo.modules.ExpoModulesPackageList` 등록 참조를 확인했습니다. package에도 `expo-secure-store ~57.0.4`가 포함돼 있습니다. 새 native 의존성이나 빌드를 추가할 근거는 현재 없습니다.
+
+Debug manifest의 INTERNET 권한, debuggable과 usesCleartextTraffic 허용도 확인해 로컬 HTTP 시험을 준비할 수 있습니다. 이는 기존 Debug APK의 정적 확인입니다. SecureStore 함수 호출, 키 저장·읽기·삭제, 실제 로그인이나 토큰 복구 성공을 뜻하지 않으며 Release의 네트워크·보안 설정을 확인한 결과도 아닙니다.
+
+설치 APK 점검을 위해 기존 AVD를 잠깐 부팅했습니다. 앱을 여는 명령이나 Metro 시작은 하지 않았지만 부팅 뒤 기존 앱 프로세스가 있는 것을 확인했습니다. 로그인·복구·로그아웃 동작은 수행하지 않았으며 APK 읽기 점검 후 에뮬레이터를 정상 종료했습니다. 개인 DB·사진을 읽거나 복사하지 않았고, 계정이나 SecureStore 값을 직접 쓰지 않았습니다. 로그인 시험은 다음 준비 완료 소스를 받은 뒤 시작합니다.
+
+### 공통 소스가 준비되면 확인할 흐름
+
+1. 이전에 보존한 게스트 방문 4건(그중 GPS 3건), 사진 파일 1개와 전송 대기 3건의 최소 요약을 다시 읽어 기준을 잡습니다.
+2. 별도 임시 DB와 합성 계정만 쓰는 서버를 `127.0.0.1:3002`에 준비합니다. 실제 backend DB나 환경 비밀값은 사용하지 않습니다. 서버 계약과 앱의 API 주소 설정은 전달된 소스로 확인합니다.
+3. 로그인에서 **게스트 기록 가져오기를 선택하지 않습니다**. 준비 소스에서도 가져오기가 명시적 선택 없이 실행되지 않는지 먼저 확인합니다. 기존 게스트 방문·사진·전송 대기 자료를 계정으로 옮기거나 수정하지 않는 것이 이 시험의 조건입니다.
+4. 로그인 상태와 계정 표시, 앱 프로세스 재실행 뒤의 SecureStore 기반 세션 복구, 로그아웃 뒤 세션 제거를 확인합니다. 비밀번호와 토큰은 증거에 저장하지 않습니다.
+5. 로그아웃 뒤 게스트 자료가 그대로 남았는지 대조하고 임시 서버·전용 연결과 Android 시험 프로세스를 종료합니다. 게스트 가져오기 자체와 다른 계정으로의 기록 이동은 이번 시험에 포함하지 않습니다.
+
+`travel_visit_tracker/scripts/android-auth-loopback.sh`는 서버가 준비된 뒤 `/health` 응답을 확인하고 에뮬레이터의 3002 포트만 연결하는 보조 도구입니다. 공통 서버 후보 3000/3001과 Metro 8081/8082는 거절하고, 실제 휴대폰도 거절합니다. `--remove`는 해당 인증 시험 연결만 제거합니다. 이 도구는 서버를 시작하거나 계정을 만들거나 앱을 실행하지 않습니다. `/health` 성공만으로 서버의 임시 DB·합성 계정 격리가 증명되는 것은 아니므로 실제 서버 준비 상태는 별도로 확인합니다.
+
+```sh
+# 공통 소스와 합성 서버가 준비된 뒤에만 사용합니다.
+bash travel_visit_tracker/scripts/android-auth-loopback.sh
+bash travel_visit_tracker/scripts/android-auth-loopback.sh --remove
+```
+
+가짜 adb/curl로 별도 포트, 서버 준비 확인, 에뮬레이터 제한과 연결 제거를 검사한 `python3 scripts/test-android-auth-loopback.py`는 PASS입니다. 아직 실제 API 포트 연결이나 인증 시험은 실행하지 않았습니다.
+
+원본 준비 근거는 Git 제외인 `docs/test-results/android-auth-prep-20261014/`에 있습니다. `host-apk-inspection.json`, `installed-apk-inspection.json`, `module-registration.txt`, `module-registration.json`, `network-manifest.txt`, `prep-summary.json`, `loopback-tool-check.log`를 보존합니다. 공개 문서에는 APK 해시, 설치 경로·기기값, 원본 bytecode와 계정 정보를 복사하지 않습니다.
 
 ## 10월 14일에 확인한 내용
 
