@@ -8,7 +8,7 @@ GitHub 저장소: [OhHyunSeo/travel-visit-tracker](https://github.com/OhHyunSeo/
 
 1. Codex 화면의 **Settings → Codex Cloud → Environments → Create environment**에서 GitHub를 연결하고 이 저장소를 선택합니다. 목록에 없다면 GitHub의 설치된 OpenAI/Codex 앱 설정에서 이 저장소 접근을 허용한 뒤 다시 선택합니다. 현재 채팅의 GitHub 커넥터 권한과 Cloud 환경의 저장소 권한은 별도로 확인합니다.
 2. 기본 브랜치 `master`, Node `24.21.0`을 사용하고 **Install script**에 `bash scripts/setup-cloud.sh`를 설정하도록 요청합니다. 자동 준비 대화에는 “README와 AGENTS.md를 읽고 Node 24.21.0을 준비한 다음, 저장소 루트에서 설치·검증 스크립트를 실행해줘”라고 입력합니다.
-3. 검증 명령은 `bash scripts/verify-cloud.sh`입니다. 앱 자동 검사에는 서비스 시작이 필요하지 않습니다. 준비 결과를 확인하고 환경을 **Publish**, 수정 후에는 **Republish**합니다. 새 작업 시작 시 GitHub의 최신 브랜치·커밋을 확인합니다.
+3. 검증 명령은 `bash scripts/verify-cloud.sh`입니다. 지속 실행하는 개발 서버는 필요하지 않습니다. 검사 스크립트가 임시 DB·루프백 서버로 인증과 방문 전송을 확인한 뒤 종료합니다. 준비 결과를 확인하고 환경을 **Publish**, 수정 후에는 **Republish**합니다. 새 작업 시작 시 GitHub의 최신 브랜치·커밋을 확인합니다.
 4. 모바일에서도 같은 계정으로 이 Cloud 환경을 선택해 작업을 요청합니다. 예: “최신 master에서 codex/visit-history 작업 브랜치로 기록 화면을 수정해줘. AGENTS.md의 검증을 실행하고 master 대상 PR을 만들어줘.”
 
 현재 Cloud UI의 준비·게시 절차는 [공식 Cloud 환경 문서](https://learn.chatgpt.com/docs/environments/cloud-environments)를 기준으로 합니다. 이전 UI에서 **Setup script** 필드가 보이면 같은 설치 명령을 쓰고, **Maintenance script**가 있다면 같은 명령으로 lockfile 변경을 반영합니다. 패키지 변경 후에는 준비 환경의 설치를 다시 실행하고 새 작업을 시작합니다. 캐시나 Cloud 작업 파일은 PC의 미커밋 변경을 자동으로 가져오지 않습니다.
