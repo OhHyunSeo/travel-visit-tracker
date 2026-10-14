@@ -28,6 +28,7 @@ const config: ExpoConfig = {
     './plugins/with-gradle-jdk.js',
     'expo-router',
     'expo-dev-client',
+    ['expo-secure-store', { configureAndroidBackup: true, faceIDPermission: false }],
     '@maplibre/maplibre-react-native',
     [
       'expo-location',

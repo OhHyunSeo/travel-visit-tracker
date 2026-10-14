@@ -4,6 +4,7 @@ import type { AppSnapshot } from '../domain/types';
 import { getRepository } from '../storage/database';
 import { attachPhoto, removePhotoFiles, resolvePhotoUri } from '../services/photos';
 import { startTracking, stopTracking, reconcileTracking } from '../services/tracking';
+import { useAuthStore } from './useAuthStore';
 
 const initial: AppSnapshot = {
   visits: [],
@@ -35,6 +36,10 @@ type State = AppSnapshot & {
   developmentVisit(regionId: string): Promise<void>;
   addPhoto(visitId: string): Promise<void>;
   deleteVisit(id: string): Promise<void>;
+  signIn(apiUrl: string, email: string, password: string, username?: string): Promise<void>;
+  logout(): Promise<void>;
+  checkAccount(): Promise<void>;
+  importGuest(expectedOwner: string): Promise<void>;
 };
 export const useAppStore = create<State>((set, get) => {
   const action = async (operation: () => Promise<unknown>) => {
@@ -58,7 +63,9 @@ export const useAppStore = create<State>((set, get) => {
     error: null,
     clearError: () => set({ error: null }),
     refresh: async () => {
-      const snapshot = await (await getRepository()).snapshot(__DEV__);
+      const repository = await getRepository();
+      const snapshot = await repository.snapshot(__DEV__);
+      if ((await getRepository()).ownerId !== repository.ownerId) return get().refresh();
       snapshot.photos = snapshot.photos.map((photo) => ({
         ...photo,
         uri: resolvePhotoUri(photo.uri),
@@ -73,16 +80,25 @@ export const useAppStore = create<State>((set, get) => {
     },
     initialize: async () => {
       try {
+        await useAuthStore.getState().initialize();
         await get().refresh();
         await reconcileTracking();
         await get().refresh();
         set({ ready: true, error: null });
+        void useAuthStore
+          .getState()
+          .check()
+          .catch(() => undefined);
       } catch (error) {
         set({ error: error instanceof Error ? error.message : '저장소를 열 수 없습니다.' });
       }
     },
     tracking: (enabled, background = false) =>
       action(() => (enabled ? startTracking(background) : stopTracking())),
+    signIn: (...args) => action(() => useAuthStore.getState().signIn(...args)),
+    logout: () => action(() => useAuthStore.getState().logout()),
+    checkAccount: () => action(() => useAuthStore.getState().check()),
+    importGuest: (owner) => action(() => useAuthStore.getState().importGuest(owner)),
     developmentVisit: (regionId) =>
       action(async () => {
         if (!__DEV__) throw new Error('개발 빌드에서만 사용할 수 있습니다.');

@@ -475,3 +475,109 @@ describe('local tracking diagnostics', () => {
     expect(result.candidate?.startedAt).toBe(initial + 75000);
   });
 });
+
+describe('account scope and explicit guest transfer', () => {
+  it('keeps current guest recording when the active owner has never been changed', async () => {
+    await record();
+    expect(await repository.activeOwner()).toBe('guest');
+    expect((await repository.snapshot(false)).recording).toBe(true);
+  });
+  it('changes only the active view, preserving account and guest visits', async () => {
+    await record();
+    const account = new Repository(connection, 'account:test:1');
+    await repository.setRecording(false);
+    await account.activateOwner();
+    expect(await repository.activeOwner()).toBe(account.ownerId);
+    expect((await account.snapshot(false)).visits).toEqual([]);
+    expect((await repository.snapshot(false)).visits).toHaveLength(1);
+    await record(account, 'account-session', 'B');
+    await account.setRecording(false);
+    await repository.activateOwner();
+    expect((await repository.snapshot(false)).visits).toHaveLength(1);
+    expect((await account.snapshot(false)).visits).toHaveLength(1);
+  });
+  it('moves GPS visits, photo associations and pending work together without altering IDs or file paths', async () => {
+    await record();
+    await repository.addPhoto({
+      id: 'guest-photo',
+      visitId: 'session-A-visit',
+      uri: 'persistent://saved-photo',
+      createdAt: initial + 400000,
+    });
+    await repository.developmentVisit('B', 'development-visit', initial + 500000);
+    await repository.addPhoto({
+      id: 'development-photo',
+      visitId: 'development-visit',
+      uri: 'persistent://development-photo',
+      createdAt: initial + 600000,
+    });
+    const before = await repository.snapshot(true);
+    await repository.setRecording(false);
+    const account = new Repository(connection, 'account:test:1');
+    await account.activateOwner();
+    expect(await repository.guestRecordCounts()).toEqual({ visits: 1, photos: 1 });
+    expect(await account.importGuestRecords()).toEqual({ visits: 1, photos: 1 });
+    const imported = await account.snapshot(false);
+    expect(imported.visits[0]).toEqual(before.visits.find((v) => v.source === 'gps'));
+    expect(imported.photos).toEqual([before.photos.find((p) => p.id === 'guest-photo')]);
+    expect(imported.pending).toBe(2);
+    const guest = await repository.snapshot(true);
+    expect(guest.visits.map((v) => v.id)).toEqual(['development-visit']);
+    expect(guest.photos.map((p) => p.id)).toEqual(['development-photo']);
+    expect(guest.pending).toBe(0);
+    expect(await account.importGuestRecords()).toEqual({ visits: 0, photos: 0 });
+    expect((await account.snapshot(false)).pending).toBe(2);
+  });
+  it('preserves deletion markers and their pending operations during transfer', async () => {
+    await record();
+    await repository.deleteVisit('session-A-visit', 'delete-operation', initial + 500000);
+    await repository.setRecording(false);
+    const account = new Repository(connection, 'account:test:1');
+    await account.activateOwner();
+    await account.importGuestRecords();
+    expect((await account.snapshot(false)).visits).toEqual([]);
+    expect((await account.snapshot(false)).pending).toBe(2);
+    expect(
+      db.prepare('SELECT owner_id,deleted_at FROM visits WHERE id=?').get('session-A-visit'),
+    ).toEqual({ owner_id: account.ownerId, deleted_at: initial + 500000 });
+  });
+  it('rolls back photo and outbox transfer when the destination already has the same session', async () => {
+    await record();
+    await repository.addPhoto({
+      id: 'guest-photo',
+      visitId: 'session-A-visit',
+      uri: 'persistent://saved-photo',
+      createdAt: initial + 400000,
+    });
+    const account = new Repository(connection, 'account:test:1');
+    await account.developmentVisit('A', 'different-visit', initial + 500000);
+    db.prepare('UPDATE visits SET session_id=? WHERE id=?').run('session-A', 'different-visit');
+    await repository.setRecording(false);
+    await account.activateOwner();
+    await expect(account.importGuestRecords()).rejects.toThrow();
+    const guest = await repository.snapshot(false);
+    expect(guest.visits).toHaveLength(1);
+    expect(guest.photos[0].uri).toBe('persistent://saved-photo');
+    expect(guest.pending).toBe(2);
+    expect((await account.snapshot(false)).visits).toEqual([]);
+    expect((await account.snapshot(true)).photos).toEqual([]);
+  });
+  it('cannot import into an inactive account or into guest', async () => {
+    await record();
+    const account = new Repository(connection, 'account:test:1');
+    await expect(account.importGuestRecords()).rejects.toThrow('현재 계정이 바뀌었습니다');
+    await expect(repository.importGuestRecords()).rejects.toThrow('먼저 로그인');
+    expect((await repository.snapshot(false)).visits).toHaveLength(1);
+  });
+  it('serializes transactions across different owners on the same connection', async () => {
+    const a = new Repository(connection, 'account:test:1'),
+      b = new Repository(connection, 'account:test:2');
+    await Promise.all([
+      a.developmentVisit('A', 'a-visit', initial),
+      b.developmentVisit('B', 'b-visit', initial),
+    ]);
+    expect((await a.snapshot(true)).visits.map((v) => v.id)).toEqual(['a-visit']);
+    expect((await b.snapshot(true)).visits.map((v) => v.id)).toEqual(['b-visit']);
+    expect(db.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+  });
+});

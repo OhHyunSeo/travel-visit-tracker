@@ -7,6 +7,8 @@ import { dwellPolicy } from '../../src/domain/dwell';
 import type { TrackingDiagnostics } from '../../src/domain/types';
 import { Button } from '../../src/ui/Button';
 import { styles } from '../../src/ui/theme';
+import { router } from 'expo-router';
+import { useAuthStore } from '../../src/store/useAuthStore';
 
 const modeLabels: Record<TrackingDiagnostics['collectorMode'], string> = {
   off: '수집 중단 / 대기',
@@ -20,6 +22,7 @@ const formatSeconds = (milliseconds: number | null) =>
 
 export default function SettingsScreen() {
   const app = useAppStore();
+  const auth = useAuthStore();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 4_000);
@@ -48,6 +51,23 @@ export default function SettingsScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.eyebrow}>YOUR JOURNEY, YOUR CONTROL</Text>
         <Text style={styles.title}>기록 설정</Text>
+        <View style={styles.card}>
+          <Text style={styles.heading}>내 기록 계정</Text>
+          <Text style={styles.body}>
+            {auth.session
+              ? `${auth.session.user.username} 계정의 기록을 보고 있습니다.`
+              : '로그인 없이 이 기기에 기록하고 있습니다.'}
+          </Text>
+          <Text style={styles.body}>
+            계정 로그인과 게스트 기록 가져오기를 설정할 수 있습니다. 서버 백업은 아직 연결 전입니다.
+          </Text>
+          <Button
+            title="로그인과 계정 설정"
+            secondary
+            disabled={app.busy}
+            onPress={() => router.push('/account')}
+          />
+        </View>
         <View style={styles.card}>
           <Text style={styles.heading}>자동 방문 기록</Text>
           <Text style={styles.body}>

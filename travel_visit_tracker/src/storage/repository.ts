@@ -16,15 +16,19 @@ export interface SqlConnection {
   first<T>(sql: string, ...params: SqlValue[]): Promise<T | null>;
   all<T>(sql: string, ...params: SqlValue[]): Promise<T[]>;
 }
+// All owners on one connection must share the same transaction queue.
+const connectionTails = new WeakMap<SqlConnection, Promise<unknown>>();
 export class Repository {
-  private tail: Promise<unknown> = Promise.resolve();
   constructor(
     private readonly db: SqlConnection,
     readonly ownerId = 'guest',
   ) {}
   private serialize<T>(operation: () => Promise<T>): Promise<T> {
-    const next = this.tail.then(operation);
-    this.tail = next.catch(() => undefined);
+    const next = (connectionTails.get(this.db) ?? Promise.resolve()).then(operation);
+    connectionTails.set(
+      this.db,
+      next.catch(() => undefined),
+    );
     return next;
   }
   private transaction<T>(operation: () => Promise<T>): Promise<T> {
@@ -42,6 +46,77 @@ export class Repository {
   }
   private settingKey(key: string) {
     return `${this.ownerId}:${key}`;
+  }
+  async activeOwner(): Promise<string> {
+    return this.serialize(async () => {
+      const row = await this.db.first<{ value: string }>(
+        'SELECT value FROM settings WHERE key=?',
+        'active_owner',
+      );
+      if (!row) return 'guest';
+      const owner: unknown = JSON.parse(row.value);
+      if (typeof owner !== 'string' || !owner || owner.length > 400)
+        throw new Error('기록 계정을 확인할 수 없습니다.');
+      return owner;
+    });
+  }
+  async activateOwner(): Promise<void> {
+    await this.transaction(async () => {
+      await this.writeSetting('recording', false);
+      await this.writeSetting('status', 'off');
+      await this.writeSetting('message', '계정을 바꿨습니다. 기록을 다시 켜 주세요.');
+      await this.writeSetting('diagnostics', {
+        ...(await this.diagnostics()),
+        collectorMode: 'off',
+      });
+      await this.db.run('DELETE FROM candidates WHERE owner_id=?', this.ownerId);
+      await this.db.run(
+        'INSERT INTO settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+        'active_owner',
+        JSON.stringify(this.ownerId),
+      );
+    });
+  }
+  async guestRecordCounts(): Promise<{ visits: number; photos: number }> {
+    return this.serialize(async () => {
+      const visits = await this.db.first<{ count: number }>(
+        "SELECT count(*) AS count FROM visits WHERE owner_id='guest' AND source='gps' AND deleted_at IS NULL",
+      );
+      const photos = await this.db.first<{ count: number }>(
+        "SELECT count(*) AS count FROM photos p JOIN visits v ON v.id=p.visit_id WHERE p.owner_id='guest' AND v.owner_id='guest' AND v.source='gps' AND v.deleted_at IS NULL",
+      );
+      return { visits: visits?.count ?? 0, photos: photos?.count ?? 0 };
+    });
+  }
+  async importGuestRecords(): Promise<{ visits: number; photos: number }> {
+    if (this.ownerId === 'guest') throw new Error('먼저 로그인해 주세요.');
+    return this.transaction(async () => {
+      const active = await this.db.first<{ value: string }>(
+        'SELECT value FROM settings WHERE key=?',
+        'active_owner',
+      );
+      if (!active || JSON.parse(active.value) !== this.ownerId)
+        throw new Error('현재 계정이 바뀌었습니다. 기록을 다시 확인해 주세요.');
+      const visits = await this.db.first<{ count: number }>(
+        "SELECT count(*) AS count FROM visits WHERE owner_id='guest' AND source='gps' AND deleted_at IS NULL",
+      );
+      const photos = await this.db.first<{ count: number }>(
+        "SELECT count(*) AS count FROM photos p JOIN visits v ON v.id=p.visit_id WHERE p.owner_id='guest' AND v.owner_id='guest' AND v.source='gps' AND v.deleted_at IS NULL",
+      );
+      await this.db.run(
+        "UPDATE outbox SET owner_id=? WHERE owner_id='guest' AND ((entity_type='visit' AND entity_id IN (SELECT id FROM visits WHERE owner_id='guest' AND source='gps')) OR (entity_type='photo' AND entity_id IN (SELECT p.id FROM photos p JOIN visits v ON v.id=p.visit_id WHERE p.owner_id='guest' AND v.owner_id='guest' AND v.source='gps')))",
+        this.ownerId,
+      );
+      await this.db.run(
+        "UPDATE photos SET owner_id=? WHERE owner_id='guest' AND visit_id IN (SELECT id FROM visits WHERE owner_id='guest' AND source='gps')",
+        this.ownerId,
+      );
+      await this.db.run(
+        "UPDATE visits SET owner_id=? WHERE owner_id='guest' AND source='gps'",
+        this.ownerId,
+      );
+      return { visits: visits?.count ?? 0, photos: photos?.count ?? 0 };
+    });
   }
   private async writeSetting(key: string, value: unknown) {
     await this.db.run(
