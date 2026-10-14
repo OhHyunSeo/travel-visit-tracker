@@ -1,7 +1,7 @@
 # 진행 기록
 
-마지막 갱신: 2026-10-12, Asia/Seoul  
-현재 상태: **iPhone 정지 상태 30분 잠금 기록·보존 확인, 제주 포함 초기 지도 적용, 공통·iOS와 Android 독립 worktree 개발 중**
+마지막 갱신: 2026-10-14, Asia/Seoul
+현재 상태: **양쪽 30분 시험 결과·변경 기록 저장과 두 초안 PR 최종 갱신 완료**
 현재 앱·서버: 프로토타입. 검증 완료 제품으로 취급하지 않음.
 
 ## 1. 관리 문서
@@ -321,3 +321,27 @@
 - 서명 Debug, USB 연결과 주기적 inspector 조건이다. 실제 경계 이동·재방문, 배터리, standalone Release, Android 실기기는 미검증. AT-08 전체 및 P2-11은 부분 완료를 유지하며 완료 수는 **19/54**다.
 - 로컬 증거: [30분 요약](docs/test-results/2026-10-12-iphone-30min-summary.json), [관측 요약](docs/test-results/2026-10-12-iphone-30min-samples.jsonl). 좌표·지역 ID·UUID·사진 경로와 기기 식별자는 저장·공개하지 않았다. 검사용 원본 스크린샷은 임시 확인 후 삭제한다.
 - 공개 전송을 사용자에게 승인받고 비밀값·개인 DB·사진·기기 원본 로그 제외 확인 후 공통·iOS [초안 PR #2](https://github.com/OhHyunSeo/travel-visit-tracker/pull/2), Android [초안 PR #1](https://github.com/OhHyunSeo/travel-visit-tracker/pull/1)을 만들었다. master 원격 병합은 아직 하지 않았다.
+
+
+### 2026-10-12 — Android 30분 결과 통합과 이번 작업 종료
+
+- 사용자 최신 요청: 초안 PR까지 진행하고 Android 30분 화면 꺼짐 시험 결과·변경사항을 저장한 뒤 이번 작업을 마무리한다. 추가 기능이나 장시간 시험은 시작하지 않는다.
+- Android API 37 에뮬레이터의 화면 꺼짐 1800.589초, 시작과 매분 총 31회 확인. 모든 확인에서 background 수신·DB integrity 유지, 총 체류 301.100초에 한 번만 확정, GPS 방문/outbox 2→3건. 매분 확인 시 마지막 위치 나이 최대 10.098초로, 전체 위치 이벤트 간격을 측정한 값은 아니다.
+- 화면 복귀·기록 중지·프로세스 재실행 뒤 GPS 방문 3건(전체 활성 방문 4건)·사진 파일 1개·outbox 3건 보존. orphan 연결과 누락 파일 없음. 위치·알림 권한, 합성 전원·절전 설정 복구, 새 crash/ANR 없음. 저장된 증거의 읽기 전용 checker를 공통 담당도 실행해 세 검사 묶음 PASS를 확인했다.
+- 조건: 기존 Debug APK, SwiftShader/CPU 4, Metro 8082, 고정 합성 GPS, foreground 위치 서비스, 알림 거부, AC 전원, low_power=0, 매분 adb 조회. 보안 keyguard 없는 화면 꺼짐 시험이며 실제 Android 잠금·깊은 Doze·OEM 정책·배터리 결과는 아니다.
+- Android 변경은 독립 브랜치의 실행 포트 격리(8082 기본·8081 거절), 에뮬레이터 실행 도구, 상태 읽기·증거 대조 검사와 진행 문서다. [초안 PR #1](https://github.com/OhHyunSeo/travel-visit-tracker/pull/1)에 보존한다. 개인 DB·사진·원본 화면·로그는 로컬 Android worktree의 `docs/test-results/android-native-20261012/`에 Git 제외로 유지한다.
+- 공통·iOS [초안 PR #2](https://github.com/OhHyunSeo/travel-visit-tracker/pull/2): 인증·사진 소유권, 전체 bounds 초기 지도, Android 배터리 안내 및 공통 관리 문서. 소스 `70805c4`의 로컬 전체 검증과 [GitHub 검사](https://github.com/OhHyunSeo/travel-visit-tracker/actions/runs/38254477766) PASS. 새 Android 안내 화면의 native 확인은 다음 재개 시 진행한다.
+- 두 PR은 별도로 보존하고 원격 master 병합은 하지 않았다. **19/54**, G1~G4 최종 미통과 유지. 실제 경계 이동·재방문, Android 실기기, 배터리·Release와 앱 로그인/UUID 백업 연결이 남아 있다. 보존된 두 worktree와 로컬 증거에서 재개할 수 있다.
+- 사용하지 않는 재생성 가능 캐시 약 9.194GB(약 8.6GiB)를 정리했고, 10월 12일 별도 측정 실제 여유 공간은 약 42GiB였다. APFS/Time Machine snapshot과 동시 생성물 때문에 삭제량만큼 여유 공간이 즉시 늘었다고 주장하지 않는다. 중요한 소스·DB·사진·백업·서명·앱/APK·증거는 보존했다.
+
+
+### 2026-10-14 — 사용량 한도 중단 지점 재개
+
+- 두 PR의 원격 상태와 저장된 Git 변경을 다시 확인했다. 공통 `70805c4`는 이미 PR #2에 반영됐고, Android PR #1은 `75b9d2f` 및 시험 진행 중 설명에 머물러 최종 결과 저장·PR 갱신을 재개했다. 공통 결과 문서 4개는 미커밋 상태로 보존돼 있었다.
+- 10월 12일의 iPhone·Android 30분 시험은 완료된 증거를 사용하며 반복하지 않는다. 시험 날짜와 환경·실기기/에뮬레이터 구분을 유지한다. Android 채팅에도 같은 종료 범위를 전달했다.
+- 연결된 iPhone의 device info 조회 성공: iOS 27.0.1, 유선 연결·pairing·개발자 모드 확인. 이번 재개에서는 앱 기록이나 위치 권한을 변경하지 않았다.
+- 이번 남은 작업은 기존 결과·변경 기록의 커밋·푸시와 초안 PR 설명 갱신이다. 새 기능, 추가 장시간 시험, master 병합은 이번 종료 범위에 포함하지 않는다.
+
+- Android 최종 `55ed305`의 PR #1 원격 head·최종 설명과 clean worktree를 확인했다. 10월 12일 권한·전원 복구와 시험 종료 상태를 저장했고, 10월 14일 emulator·8082·시험 runner가 실행 중이 아님을 읽기 전용으로 확인했다. 공통·iOS 프로세스를 조작하지 않았다.
+- 공통의 최종 결과·재개·수용 시험 문서를 PR #2에 저장한다. 개인 DB·사진·원본 로그·화면·기기 식별자·비밀값은 제외하며, 새 코드 변경은 없다. 체크리스트와 완료 수 일치, `git diff --check`, 공개 문서 범위·민감 값 검사 PASS. 모바일/서버 검사는 `70805c4`의 기존 전체 통과 근거를 유지한다.
+- 실제 여유 공간은 재개 시 별도 측정 약 37GiB. 이번 재개에서는 추가 삭제 없이 소스·사용자 자료·기존 백업·시험 증거를 보존했다. 이번 요청 범위는 저장·PR 갱신으로 종료한다.

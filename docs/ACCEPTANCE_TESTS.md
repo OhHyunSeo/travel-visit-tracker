@@ -96,3 +96,6 @@ AT-05, AT-06, AT-11의 판정 엔진 자동 테스트가 공통 TypeScript로 �
 
 
 2026-10-12 후속: AT-08 iOS PARTIAL. 정지 상태 잠금 1800.003초, 32회 확인에서 잠금·후보 유지·중복 없는 한 번 확정, 해제 및 개발 앱 reload 후 보존을 확인했다. 경계 이동이 남아 전체 PASS는 아니다. Debug/USB/읽기 전용 inspector 조건이며 배터리·standalone Release 결과를 뜻하지 않는다. [최종 요약](test-results/2026-10-12-iphone-30min-summary.json).
+
+
+2026-10-12 Android 후속: 에뮬레이터에서 1800.589초/31회 화면 꺼짐 확인, 총 체류 301.100초 한 번 확정, 화면 복귀·중지·프로세스 재실행 후 방문·사진·outbox 보존 PASS. 실제 Android 기기 수용 시험은 NOT RUN 유지. Debug/합성 고정 GPS/전원 연결/Metro/매분 adb 조건이며 보안 잠금·깊은 절전·배터리 결과는 아니다. [공유 요약과 변경](https://github.com/OhHyunSeo/travel-visit-tracker/pull/1), 원본은 Android worktree 로컬 Git 제외 증거 폴더에 보존한다.

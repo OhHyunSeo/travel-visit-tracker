@@ -1,7 +1,12 @@
+# 최신 재개 상태
+
+2026-10-14: 사용량 한도로 중단된 결과 저장·PR 갱신을 재개해 마무리했다. 10월 12일의 양쪽 30분 시험은 완료되어 반복하지 않았다. Android 최종 결과·증거 checker는 `55ed305`로 PR #1에 반영됐고, 공통 결과·종료 문서는 PR #2에 보존한다. 공통 동작 소스는 `70805c4`이며 이후는 문서 갱신이다. 두 PR 모두 draft/open·master 병합 전. Android emulator/8082/시험 runner 종료 확인, 새 개발·추가 시험 없음. iPhone 유선 pairing·개발자 모드와 기기 정보 조회 성공이며 현재 기기 기록 수를 새로 검증한 것으로 취급하지 않는다.
+
 # 최신 병렬 개발 안내
 
 2026-10-12 추가 갱신: 현재 채팅은 codex/common-ios의 공통·iOS, 별도 Android 개발·검증 채팅은 독립 worktree의 codex/android-native 담당이다. [역할·통합·캐시 보존 규칙](PARALLEL_DEVELOPMENT.md)을 먼저 읽는다. Android는 localhost 8082, iOS는 기존 8081을 유지한다. Android 원본 시험 자료는 해당 worktree에 있으며 전체 진행 문서는 공통 채팅에서 통합한다.
 
+- 이번 작업 종료 요청: PR 및 Android 30분 결과 저장까지 마무리한다. Android 에뮬레이터 화면 꺼짐 1800.589초·31회 관측, 한 번 확정·화면 복귀/중지/재실행 보존 PASS. 방문/outbox 각 3건·사진 파일 1개, 시험 설정 복구. 원본은 Android worktree의 Git 제외 증거 폴더에 보존한다. 새 개발·추가 시험은 재개 요청 후 진행한다. 두 초안 PR #1/#2는 master 병합 전이다.
 - 현재 체크리스트 19/54. P3-06 서버 인증·사진 소유권 기반 및 20개 backend 통합 검사 완료. 모바일 90개, 양쪽 생산용 JS/Hermes export PASS. 실제 앱 로그인·백업·UUID sync와 G3는 미완료다.
 - iPhone 정지 상태 30분 잠금 1800.003초·32회 관측 PASS. 후보 초기화 없이 한 번 확정, 방문/outbox 각 6건 보존. 사용자가 잠금 해제 후 앱을 열었고 지역 카드 1개·상세 방문 6건, reload 후 제주 포함 초기 지도 확인. 시험 종료 뒤 새 관측 공백은 기존 방문을 지우지 않았다. 경계 이동·배터리·standalone Release와 Android 실기기는 미검증이다.
 - 확인된 inactive 프로젝트 Xcode 캐시와 완료된 임시 Cloud 의존성·생성물만 정리했다. 기존 앱/APK·백업·스냅샷·소스·개인 데이터·서명·로그를 보존했다. Time Machine snapshot은 삭제하지 않았다.
