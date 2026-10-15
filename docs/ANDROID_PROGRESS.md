@@ -1,12 +1,86 @@
 # Android 개발·검증 기록
 
-마지막 갱신: 2026-10-14, Asia/Seoul.
+마지막 갱신: 2026-10-15, Asia/Seoul.
 
-새 배터리 안내와 제주를 포함한 초기 지도를 Android 에뮬레이터에서 확인했습니다. 지도 선택 카드에서 뒤로 가면 카드를 먼저 닫도록 한 공통 수정도 정상 동작합니다. 앱 설정, 설정 탭, 지역 검색, 지역 상세에서 뒤로 돌아오는 흐름과 기존 방문, 사진, 서버 전송 대기 자료가 유지됐습니다. P3-07의 Android 로그인·복구·오프라인·만료·로그아웃 QA도 완료했고, 사용자 종료 지시에 따라 자료를 저장하고 이번 단계를 마무리했습니다.
+10월 15일 새 Debug APK의 최종 manifest와 컴파일된 XML에서 SecureStore 백업 제외를 확인했습니다. 공통 저장 소스로 메모리 전용 native SQLite 시험도 통과했고, 기존 방문 4건, 사진 파일 1개, 전송 대기 3건은 행과 사진 내용까지 보존됐습니다. 이전 배터리 안내, 제주 포함 지도, 뒤로 가기와 P3-07 로그인 QA 결과는 아래에 유지합니다.
 
-현재 실제 Android 휴대폰은 없습니다. 이 문서의 결과는 기존 Debug 앱을 실행한 에뮬레이터 시험이며, 실제 휴대폰이나 출시용 Release 검증으로 보지 않습니다. 전체 체크리스트와 완료 수는 공통 담당 채팅에서 관리합니다.
+현재 실제 Android 휴대폰은 없습니다. 결과는 Debug APK의 정적 검사와 API 37 에뮬레이터 시험이며, 실제 휴대폰이나 출시용 Release 검증으로 보지 않습니다. 전체 체크리스트와 완료 수는 공통 담당 채팅에서 관리합니다.
 
-## P3-07 Android 로그인 QA 결과
+## 10월 15일 SecureStore 백업 제외와 native SQLite
+
+### 최종 APK의 백업 선언 확인
+
+Android 시작 기준은 `b32afc6`, 공통 소스 기준은 `d51a8fefc8603327ad13bf2dba67045372eefa0a`입니다. 공통 `app.config.ts` 한 파일만 정확한 커밋 내용으로 임시 적용했습니다. 차이는 `expo-secure-store` 플러그인의 `configureAndroidBackup: true`, `faceIDPermission: false` 선언입니다. 원문과 양쪽 해시를 보존했고, 검증 후 원래 Android HEAD와 바이트 단위로 같게 복구했습니다. package/lock과 의존성은 바꾸지 않았습니다.
+
+Node 24.21.0, JDK 17, 기존 Android SDK로 Android만 prebuild하고 아래 빌드를 실행했습니다. Expo는 offline, dotenv 비활성 조건이었습니다.
+
+```sh
+# travel_visit_tracker/에서
+EXPO_OFFLINE=1 EXPO_NO_DOTENV=1 EXPO_NO_TELEMETRY=1 CI=1 npx expo prebuild --platform android --no-install
+# travel_visit_tracker/android/에서, 기존 JDK/SDK 환경 사용
+./gradlew :app:assembleDebug -PreactNativeArchitectures=arm64-v8a --offline --max-workers=2 --no-daemon --console=plain
+```
+
+빌드는 **2분 42초, 497개 task로 성공**했습니다. 기존 APK의 최종 manifest에는 아래 두 참조가 없었습니다. 새 `travel_visit_tracker/android/app/build/outputs/apk/debug/app-debug.apk`에서는 SDK의 `aapt`로 참조 ID와 컴파일된 XML을 대조했습니다.
+
+| 최종 APK 검사 | 결과 |
+| --- | --- |
+| `android:fullBackupContent` | `@xml/secure_store_backup_rules` 리소스로 연결됨 |
+| `android:dataExtractionRules` | `@xml/secure_store_data_extraction_rules` 리소스로 연결됨 |
+| 기존 full-backup 규칙 | `sharedpref` 도메인의 `SecureStore` 제외 |
+| cloud-backup 규칙 | `sharedpref` 도메인의 `SecureStore` 제외 |
+| device-transfer 규칙 | `sharedpref` 도메인의 `SecureStore` 제외 |
+| APK 서명 검증, 기존 APK와 서명·package 비교 | 모두 PASS |
+
+새 APK는 109,406,499 bytes이며 로컬에 보존합니다. **설치하지 않았으므로 에뮬레이터에 남은 기존 APK의 백업 정책이 바뀐 것은 아닙니다.** 이번 PASS는 최종 Debug 바이너리에 제외 규칙이 들어간다는 근거입니다. OS 백업·복원·기기 전송 실행, 방문 DB·사진의 OS 백업 보존, Release나 실제 휴대폰 시험은 수행하지 않았습니다. `faceIDPermission: false`의 iOS native 결과도 이번 Android 검사 범위가 아닙니다.
+
+### 원본과 분리한 저장 계층 시험
+
+기존 설치 Debug APK의 Hermes와 `expo-sqlite` native 함수를 사용했습니다. 공통 `d51a8fe`의 repository/schema/dwell 원문과 해시를 별도로 보존하고, 저장소 파일을 덮어쓰지 않은 채 Inspector의 격리된 함수로 불러왔습니다. 새 연결의 **`:memory:` DB**만 사용했으며 `PRAGMA database_list`의 빈 파일 경로를 확인했습니다. 기존 앱의 DB 연결과 구분되며 종료 시 `closeSync()`로 모든 시험 자료를 해제했습니다.
+
+| 합성 native SQLite 검사 | 결과 |
+| --- | --- |
+| A/B 계정 조회 분리 | A가 가져온 방문·사진을 B가 볼 수 없음 |
+| 명시적 게스트 가져오기 | GPS 방문 1건과 연결 사진 행 1건만 이동, 개발 방문은 guest에 남음 |
+| 비활성 계정 가져오기 | 현재 계정과 다르면 거절됨 |
+| 식별자·시각·사진 연결 | 방문 UUID, session ID, 소수점 시각, 사진 URI와 visit 연결 보존 |
+| 전송 대기 자료 | owner 변경 외 ID, entity, operation, payload, 생성 시각, attempts 보존 |
+| 계정 전환 후 전송 보호 | 비활성 A의 attempt 갱신 거절, B의 ACK로 A의 대기 자료가 삭제되지 않음 |
+| 무결성·종료 | integrity `ok`, 메모리 DB 닫힘 |
+| 원본 앱 대조 | guest 방문 4건, 사진 파일 1개, 전송 대기 3건의 전체 행·사진 바이트 불변, guest·기록 꺼짐 유지 |
+
+사진은 합성 URI 문자열과 연결 행만 만들었고 실제 사진 파일을 만들지 않았습니다. 위치 관측 결과를 합성한 저장 계층 시험이므로 GPS 수신·체류 판정이나 앱 UI, 서버 전송 E2E의 통과 근거로 사용하지 않습니다. 동기식 native SQLite 호출을 Repository 연결 형태로 감싸 실행했으며 production의 비동기 adapter 전체를 검증한 결과도 아닙니다.
+
+초기 Inspector 시험은 native async/await로 변환한 검증 코드에서 방문 생성 후속 단계가 실패했습니다. 같은 공통 원문을 TypeScript ES2015 Promise 흐름으로 변환한 뒤 전체 항목이 PASS였습니다. 제품 소스는 수정하지 않았고, 초기 실패와 최종 결과를 함께 보존합니다. 이전 credentials 직접 probe의 미완료 상태를 이번 결과로 소급 변경하지 않습니다.
+
+### 용량 정리와 종료
+
+빌드와 Inspector, 자체 Metro 8082, 에뮬레이터 종료를 확인한 뒤 이번 빌드에서 새로 생성한 중간 바이너리만 정리했습니다. 각 디렉터리·파일 생성 시각, 이 worktree 안의 실제 경로, 열린 파일 부재를 확인했습니다. `.so`, `.o`, `.a`, `.dex`, `.class`, `.jar`, `.flat`, `.bc` 파일 **1,236개, 논리 크기 2,570,324,503 bytes**를 제거했습니다. 디렉터리와 로그·리포트·XML·JSON은 유지했습니다.
+
+정리 직전 가용량은 23,472,234,496 bytes(21.86GiB), 직후는 25,807,925,248 bytes(24.04GiB)였습니다. **즉시 측정한 확보량은 2,335,690,752 bytes(2.18GiB)**입니다. 빌드 전 기록값은 29,941,760,000 bytes(27.88GiB), 빌드 직후는 25,053,179,904 bytes(23.33GiB)였습니다. 각 시점의 파일시스템 가용량이며 다른 프로세스 사용량을 분리한 값은 아닙니다.
+
+정리한 경로는 다음과 같습니다. 아래 package 이름은 각 행의 접두·접미 경로에 그대로 대응합니다.
+
+| 경로 | 해당 디렉터리 |
+| --- | --- |
+| 앱 | `travel_visit_tracker/android/app/build/intermediates`, `travel_visit_tracker/android/app/.cxx` |
+| `travel_visit_tracker/node_modules/<package>/android/build/intermediates` | `expo`, `expo-constants`, `expo-dev-client`, `expo-dev-launcher`, `expo-dev-menu`, `expo-dev-menu-interface`, `expo-json-utils`, `expo-manifests`, `expo-modules-core`, `expo-updates-interface`, `react-native-gesture-handler`, `react-native-reanimated`, `react-native-safe-area-context`, `react-native-screens`, `react-native-svg`, `react-native-worklets`, `@expo/log-box`, `@maplibre/maplibre-react-native`, `@react-native-masked-view/masked-view` |
+| `travel_visit_tracker/node_modules/<package>/android/.cxx` | `expo-modules-core`, `react-native-gesture-handler`, `react-native-reanimated`, `react-native-screens`, `react-native-worklets` |
+
+기존·신규 APK와 debug signing 파일은 정리 전후 해시가 같습니다. 원본 checkout, 전역 Gradle 캐시, SDK, AVD, DB·사진·outbox, 기존 증거·백업·로그는 유지했습니다. 공통 임시 설정은 복구했고 iOS 8081 프로세스는 그대로입니다. 자체 8082 연결만 제거했으며 다음 빌드 때 삭제한 중간 바이너리는 다시 생성해야 합니다.
+
+이번 원본은 Git 제외인 `docs/test-results/android-backup-20261015/`에 보존합니다. 공유 가능한 결과는 이 문서에 기록하며 APK, 원본 로그, 서명 값, DB와 기기 식별자는 공개하지 않습니다.
+
+| 근거 | 로컬 파일 |
+| --- | --- |
+| 기준 소스·복구 | `validation-files.json`, `original-*.txt`, `restoration-result.json`, `synthetic-source-manifest.json`, `*-source.ts` |
+| 빌드·APK 검사 | `prebuild.log`, `assemble-debug.log`, `old-apk-summary.json`, `apk-backup-result.json`, `new-apk-manifest.txt`, `secure_store_*-compiled.txt` |
+| 격리 SQLite와 원본 대조 | `synthetic-native-probe.js`, `make-sqlite-probe.cjs`, `run-sqlite-probe.mjs`, `synthetic-native-attempt*.json`, `synthetic-native-result.json`, `synthetic-native-summary.json`, `app-before-synthetic.json`, `app-after-synthetic.json` |
+| 정리·종료 | `cleanup-candidate-inspection.json`, `cleanup-removed-files.json`, `cleanup-summary.json`, `shutdown-status.json`, `metro.log`, `emulator.log` |
+
+이번 변경은 Android 결과 문서만 포함합니다. 공통 진행표·체크리스트는 수정하지 않았고 실제 기기·Release·배터리 수용 조건도 완료로 올리지 않았습니다.
+
+## 10월 14일 P3-07 Android 로그인 QA 결과
 
 **이번 native 흐름은 PASS입니다.** 실제 backend의 `createBackend`를 읽기 전용으로 재사용하되 별도 루프백 서버, 임시 DB·업로드 폴더와 합성 계정만 사용했습니다. 실제 backend의 data/uploads나 환경 비밀값은 사용하지 않았습니다. 공개 문서에는 합성 계정 값, 토큰, 서버 주소와 원본 JSON을 적지 않습니다.
 
@@ -31,7 +105,7 @@ Android 시작 기준은 `0bc330d`, 공통 검증 소스는 **`aa09aa0`**입니�
 
 독립 비동기 Inspector의 credentials.read 진단은 완료 응답을 얻지 못해 직접 API probe의 PASS로 표시하지 않습니다. 실제 흐름 확인은 가입·로그인 UI, 강제 재실행과 me 성공, 동기식 앱 상태 읽기, native 암호화 항목의 존재·로그아웃 후 삭제와 DB·사진 원본 대조로 수행했습니다. 초기 연결·화면 자동 입력 문제는 인증 실패로 분류하지 않으며, 원본 예외도 로컬에 보존했습니다.
 
-새 app.config의 SecureStore backup 제외 선언은 동기화하지 않았고 이번 기존 APK에 반영됐다고 주장하지 않습니다. **backup 정책 native rebuild 확인, 실제 Android 휴대폰·Release, iOS 실제 계정 UI/DB 전환은 별도 대기**입니다.
+10월 14일에는 새 app.config의 SecureStore backup 제외 선언을 동기화하지 않았습니다. 10월 15일 새 Debug APK에서 native 제외 규칙을 확인한 결과는 위에 별도로 기록합니다. 기존 설치 APK는 그대로이며 OS 백업·복원, 실제 Android 휴대폰·Release와 iOS 실제 계정 UI/DB 전환은 이 로그인 QA의 완료 범위가 아닙니다.
 
 ### 근거와 종료 상태
 
@@ -181,6 +255,9 @@ Android 채팅은 Android 실행·진단 스크립트, 전용 검사와 이 문�
 | `55ed305` | 30분 증거 대조 스크립트와 최종 결과 |
 | `7db23ae` | 10월 14일 인계 기록. 첫 배터리·지도 UI 검증의 Android 시작 기준 |
 | `cdb023a` | 배터리 안내·제주 포함 지도·뒤로 가기 첫 검증과 읽기 쉬운 설명. 선택 카드 수정 검증의 Android 시작 기준 |
+| `6b0c042` | 포커스된 지도 선택 카드의 Android 뒤로 가기 후속 검증 |
+| `0bc330d` | 합성 인증 서버용 Android 루프백 연결과 SecureStore 검사 준비 |
+| `b32afc6` | 10월 14일 native 로그인 QA·원본 보존·종료 결과. 10월 15일 백업 설정 빌드의 Android 시작 기준 |
 
 10월 12일 최종 공개 단계가 사용량 한도로 중단돼 10월 14일에 기존 자료를 확인하고 커밋·푸시와 PR 설명 갱신을 마쳤습니다. 이번 후속 검증에서도 공통 UI는 임시로만 사용했으며 Android PR에 중복 포함하지 않습니다.
 
@@ -199,7 +276,7 @@ python3 scripts/test-android-emulator.py
 
 ## 자료와 실행 환경 보존
 
-기존 DB, 방문, 사진, 전송 대기 자료, APK, 소스와 스냅샷은 삭제하지 않았습니다. 10월 12일 시작 가용량은 약 48GiB, 이번 후속 시작 시 약 37GiB였습니다. 이번 채팅에서 캐시 정리나 자료 삭제는 하지 않았으며 확보량은 0입니다.
+기존 DB, 방문, 사진, 전송 대기 자료, APK, 소스와 스냅샷은 삭제하지 않았습니다. 10월 12일 시작 가용량은 약 48GiB, 10월 14일 후속 시작 시 약 37GiB였습니다. 10월 14일까지는 캐시 정리나 자료 삭제를 하지 않았고 확보량은 0이었습니다. 10월 15일의 새 중간 바이너리 정리 경로와 확보량은 위의 별도 기록을 따릅니다.
 
 10월 12일에는 위치 권한 3개와 알림을 원래 허용 상태로 돌리고 알림의 user-fixed 플래그를 제거했습니다. 위치 공백용 test provider도 제거하고 mock_location을 원래 default deny로 복구했습니다. 이번에는 권한을 바꾸지 않았고 합성 전원만 복구했습니다.
 

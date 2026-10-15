@@ -1,6 +1,20 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
-갱신: 2026-10-14. 이 문서는 공통 코드에 적용할 내용과 Android에서 확인한 결과를 구분해 기록합니다. Android 채팅이 공통 파일을 직접 커밋하지 않습니다.
+갱신: 2026-10-15. 이 문서는 공통 코드에 적용할 내용과 Android에서 확인한 결과를 구분해 기록합니다. Android 채팅이 공통 파일을 직접 커밋하지 않습니다.
+
+## SecureStore 백업 제외의 Debug 빌드를 확인했습니다
+
+Android `b32afc6`에 공통 `d51a8fe`의 `app.config.ts`만 임시 적용해 offline Android Debug 빌드를 마쳤습니다. 최종 APK manifest의 fullBackupContent·dataExtractionRules 참조가 실제 XML 리소스로 연결되며, 컴파일된 full-backup·cloud-backup·device-transfer 규칙 모두 `sharedpref/SecureStore`를 제외합니다. APK 서명 검증과 기존 APK와의 서명·package 일치도 PASS입니다.
+
+새 APK는 보존했지만 설치하지 않았습니다. 기존 설치 앱의 백업 정책은 그대로이며 OS 백업·복원·기기 전송, 방문 DB·사진 백업, Release·실제 휴대폰을 확인한 결과가 아닙니다. `faceIDPermission: false`의 iOS 결과도 Android 범위 밖입니다. 공통 설정은 원문·해시를 대조해 복구했고 package/lock이나 의존성은 바꾸지 않았습니다.
+
+## 합성 native SQLite에서 가져오기와 계정 분리를 확인했습니다
+
+동일 공통 커밋의 저장 소스를 원본 DB와 다른 `:memory:` native 연결에서 실행했습니다. A/B 계정 분리, GPS 방문·연결 사진 행만 명시적으로 가져오기, 개발 방문 guest 잔류, UUID·session·소수점 시각·사진 URI·outbox 내용 보존이 PASS였습니다. 비활성 계정 가져오기·attempt 갱신 거절과 다른 계정 ACK의 삭제 방지도 확인했습니다. 시험 후 메모리 연결을 닫았습니다.
+
+실제 사진 파일이나 앱 원본 DB에는 시험 자료를 쓰지 않았습니다. guest 방문 4건, 사진 파일 1개, 전송 대기 3건은 전체 행과 사진 바이트까지 변함없습니다. 이 결과는 동기식 native SQLite를 감싼 저장 계층 시험이며 앱 UI나 production 비동기 adapter, 서버 전송 E2E 전체의 결과가 아닙니다. 초기 Inspector 변환 문제와 최종 PASS 근거는 [진행 기록](ANDROID_PROGRESS.md)에 구분했습니다.
+
+검증 프로세스 종료 후 이번 worktree에서 새로 생성된 중간 바이너리만 정리해 가용량이 2.18GiB 증가했습니다. 최종·기존 APK, signing 파일, 로그·증거, AVD와 원본 자료는 보존했고 전역 캐시·원본 checkout·iOS 8081은 조작하지 않았습니다. 정확한 경로·용량과 로컬 근거 목록도 진행 기록에 있습니다.
 
 첫 배터리·지도 검증은 Android 기준 `7db23ae`에 공통 `712dc04`의 설정 화면과 native 지도 두 파일을 임시 적용했습니다. 해당 UI 내용은 `70805c4`와 같았습니다. 뒤로 가기 수정의 후속 검증은 Android 기준 `cdb023a`에 공통 담당이 수정한 지도 화면까지 총 세 파일을 임시 적용했습니다. 검증 후 모든 파일을 원래 Android HEAD로 복원했습니다.
 
@@ -44,7 +58,7 @@ Android에서는 승인된 인증 파일 10개를 임시 적용해 가입, 강�
 
 이 결과는 기존 Debug APK·API 37 에뮬레이터와 자료 0건인 합성 계정 뷰의 시험입니다. 독립 비동기 Inspector 직접 읽기 진단은 미완료로 남겼고, 실제 앱 흐름과 native 저장 항목·서버 응답·원본 비교를 근거로 삼았습니다. 실제 게스트 가져오기나 이후 공통 전송 서비스를 검증한 결과가 아닙니다.
 
-새 SecureStore backup 제외 선언은 이번 APK에 반영됐다는 근거가 없습니다. 이후 native rebuild에서 backup 정책을 별도 확인하고, 실제 Android·Release와 iOS 계정 UI/DB 전환도 따로 확인해야 합니다. 사용자 종료 지시로 추가 시험은 시작하지 않았습니다. 자세한 상태와 로컬 근거 목록은 [진행 기록](ANDROID_PROGRESS.md)에 남겼습니다.
+10월 14일 로그인 QA에는 SecureStore backup 제외 선언이 반영된 APK 근거가 없었습니다. 이후 10월 15일 새 Debug 빌드의 최종 manifest·XML에서 제외 규칙을 확인한 결과는 위에 별도로 기록합니다. OS 백업·복원, 실제 Android·Release와 iOS 계정 UI/DB 전환은 별도 확인이 필요합니다. 로그인 QA 종료 당시에는 사용자 지시에 따라 추가 시험을 시작하지 않았습니다. 자세한 상태와 로컬 근거 목록은 [진행 기록](ANDROID_PROGRESS.md)에 남겼습니다.
 
 ## 성능은 실제 기기에서 따로 판단해야 합니다
 
