@@ -7,3 +7,12 @@ export type QueuedVisitOperation = {
   createdAt: number;
   attempts: number;
 };
+
+export type VisitBackupState = {
+  autoEnabled: boolean;
+  pendingVisits: number;
+  pendingPhotos: number;
+  lastSuccessAt: number | null;
+  nextAttemptAt: number | null;
+  pauseReason: 'authentication' | 'conflict' | null;
+};

@@ -4,7 +4,7 @@
 
 - Read `README.md`, `PROGRESS.md`, `PROJECT_PLAN.md`, `docs/CHECKLIST_STATUS.md`, and `docs/RESUME.md` before changing behavior. Newer dated updates take precedence over older reports.
 - The active app is `travel_visit_tracker/`: Expo 57, React Native, TypeScript, Expo Router, Zustand, SQLite, MapLibre and background GPS. This is a visit tracker, with no implemented pedometer or HealthKit/Health Connect integration.
-- `backend/` is a separate Express/SQLite API. The active Expo app connects optional login and account-scoped local records. Visit sync services are tested with synthetic data but are not yet wired to app startup or UI; photo upload and restoration are still pending.
+- `backend/` is a separate Express/SQLite API. The active Expo app connects optional login and account-scoped local records. Manual visit backup and per-account opt-in automatic backup (off by default) are wired to the UI and foreground startup/resume checks, with persisted retries and automatic pauses for 401/409; photo upload and restoration are still pending.
 - `prototype_reference/` and `travel_visit_tracker_flutter_backup/` are reference source. Do not install, modify or migrate these folders unless the task specifically needs them.
 
 ## Preserve work and data

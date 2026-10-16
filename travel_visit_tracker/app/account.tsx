@@ -3,7 +3,7 @@ import { Alert, Platform, ScrollView, Text, TextInput, View } from 'react-native
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuthStore } from '../src/store/useAuthStore';
-import { useAppStore } from '../src/store/useAppStore';
+import { useAppStore, type BackupExpectation } from '../src/store/useAppStore';
 import { getRepository } from '../src/storage/database';
 import { sessionOwner } from '../src/services/authClient';
 import { Button } from '../src/ui/Button';
@@ -33,12 +33,33 @@ export default function AccountScreen() {
     };
   }, [auth.session, auth.notice]);
   const input = { style: [styles.text, styles.card], placeholderTextColor: colors.muted };
+  const accountOwner = auth.session ? sessionOwner(auth.session) : null;
+  const backupVisible = accountOwner !== null && app.backupOwnerId === accountOwner;
+  const toggleAutomaticBackup = () => {
+    if (!auth.session || !backupVisible) return;
+    const expected: BackupExpectation = {
+      ownerId: sessionOwner(auth.session),
+      token: auth.session.token,
+    };
+    if (app.backup.autoEnabled) {
+      void app.setBackupEnabled(false, expected);
+      return;
+    }
+    Alert.alert(
+      '자동 방문 백업을 켤까요?',
+      `${auth.session.user.email}\n${auth.session.apiUrl}\n\n이 계정의 방문 기록과 방문 삭제 요청을 앱 화면이 열려 있는 동안 서버로 보냅니다. 사진 백업과 다른 기기 복원은 아직 지원하지 않습니다.`,
+      [
+        { text: '취소', style: 'cancel' },
+        { text: '자동 방문 백업 켜기', onPress: () => void app.setBackupEnabled(true, expected) },
+      ],
+    );
+  };
   const importRecords = () => {
     if (!auth.session) return;
     const owner = sessionOwner(auth.session);
     Alert.alert(
       '게스트 기록을 이 계정으로 옮길까요?',
-      `${auth.session.user.email}\n방문 ${guest.visits}개와 사진 ${guest.photos}개를 옮깁니다. 이후 로그아웃해도 계정 기록으로 보관되며, 서버 백업은 아직 연결 전입니다.`,
+      `${auth.session.user.email}\n방문 ${guest.visits}개와 사진 ${guest.photos}개를 옮깁니다. 이후 로그아웃해도 계정 기록으로 보관됩니다. 옮긴 방문은 이 계정의 백업 설정에 따라 서버로 전송됩니다. 사진 백업과 다른 기기 복원은 아직 지원하지 않습니다.`,
       [
         { text: '취소', style: 'cancel' },
         {
@@ -60,8 +81,8 @@ export default function AccountScreen() {
           자동 기록을 멈추고 해당 계정의 기록을 엽니다.
         </Text>
         <Text style={styles.body}>
-          현재는 로그인과 기기 안의 기록 연결을 준비했습니다. 서버로 방문과 사진을 보내는 백업은
-          다음 작업입니다.
+          계정의 방문 기록을 서버로 보낼 수 있습니다. 사진 백업과 다른 기기로 기록을 복원하는
+          기능은 아직 준비 중입니다. 앱을 삭제하기 전에는 이 점을 확인해 주세요.
         </Text>
         {auth.notice && <Text style={styles.body}>{auth.notice}</Text>}
         {auth.session && (
@@ -101,6 +122,70 @@ export default function AccountScreen() {
                 void app.logout();
               }}
             />
+          </View>
+        )}
+        {auth.session && (
+          <View style={styles.card}>
+            <Text style={styles.heading}>방문 백업</Text>
+            <Text style={styles.body}>{auth.session.apiUrl}</Text>
+            {backupVisible ? (
+              <>
+                <Text style={styles.body}>
+                  방문 변경사항 {app.backup.pendingVisits}건이 전송을 기다립니다.
+                </Text>
+                <Text style={styles.body}>
+                  사진 변경사항 {app.backup.pendingPhotos}건은 아직 백업되지 않습니다.
+                </Text>
+                <Text style={styles.body}>
+                  {app.backup.lastSuccessAt === null
+                    ? '아직 방문을 전송한 내역이 없습니다.'
+                    : `마지막 방문 전송 완료: ${new Date(app.backup.lastSuccessAt).toLocaleString('ko-KR')}`}
+                </Text>
+                {app.backupBusy && <Text style={styles.body}>방문을 전송하고 있습니다.</Text>}
+                {app.backupMessage && <Text style={styles.body}>{app.backupMessage}</Text>}
+                {app.backup.pauseReason && (
+                  <Text style={styles.error}>
+                    {app.backup.pauseReason === 'authentication'
+                      ? '다시 로그인한 뒤 방문 백업을 눌러 주세요. 대기 기록은 보관 중입니다.'
+                      : '서버 기록과 충돌해 자동 백업을 멈췄습니다. 기록을 확인한 뒤 방문 백업을 눌러 주세요.'}
+                  </Text>
+                )}
+                {app.backup.autoEnabled &&
+                  !app.backup.pauseReason &&
+                  app.backup.nextAttemptAt !== null && (
+                    <Text style={styles.body}>
+                      다음 자동 시도: {new Date(app.backup.nextAttemptAt).toLocaleTimeString('ko-KR')}
+                    </Text>
+                  )}
+                <Button
+                  title={app.backupBusy ? '방문 전송 중' : '방문 백업하기'}
+                  disabled={app.busy || app.backupBusy || !auth.session.token || Platform.OS === 'web'}
+                  onPress={() => {
+                    if (auth.session)
+                      void app.backupVisits(true, {
+                        ownerId: sessionOwner(auth.session),
+                        token: auth.session.token,
+                      });
+                  }}
+                />
+                <Text style={styles.body}>
+                  자동 방문 백업: {app.backup.autoEnabled ? '켜짐' : '꺼짐'}. 켜 두면 앱 화면을 열어
+                  둔 동안 전송하고, 연결에 실패하면 잠시 뒤 다시 시도합니다.
+                </Text>
+                <Button
+                  title={app.backup.autoEnabled ? '자동 방문 백업 끄기' : '자동 방문 백업 켜기'}
+                  secondary
+                  disabled={
+                    app.busy ||
+                    (!app.backup.autoEnabled && !auth.session.token) ||
+                    Platform.OS === 'web'
+                  }
+                  onPress={toggleAutomaticBackup}
+                />
+              </>
+            ) : (
+              <Text style={styles.body}>이 계정의 전송 상태를 읽고 있습니다.</Text>
+            )}
           </View>
         )}
         {Platform.OS === 'web' ? (

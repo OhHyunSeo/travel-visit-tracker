@@ -1,6 +1,6 @@
 import { schemaSql, schemaVersion } from './schema';
 import { dwellPolicy } from '../domain/dwell';
-import type { QueuedVisitOperation } from './outbox';
+import type { QueuedVisitOperation, VisitBackupState } from './outbox';
 import type {
   Candidate,
   Photo,
@@ -126,6 +126,97 @@ export class Repository {
     );
     if (this.ownerId === 'guest' || !active || JSON.parse(active.value) !== this.ownerId)
       throw new Error('현재 로그인한 계정의 전송 작업만 처리할 수 있습니다.');
+  }
+  async visitBackupState(): Promise<VisitBackupState> {
+    return this.serialize(async () => {
+      const rows = await this.db.all<{ key: string; value: string }>(
+        'SELECT key,value FROM settings WHERE key IN (?,?,?,?)',
+        this.settingKey('visitBackupEnabled'),
+        this.settingKey('visitBackupLastSuccessAt'),
+        this.settingKey('visitBackupNextAttemptAt'),
+        this.settingKey('visitBackupPauseReason'),
+      );
+      const read = (key: string): unknown => {
+        const row = rows.find((item) => item.key === this.settingKey(key));
+        if (!row) return null;
+        return JSON.parse(row.value);
+      };
+      const timestamp = (key: string) => {
+        const value = read(key);
+        if (value === null) return null;
+        if (
+          typeof value !== 'number' ||
+          !Number.isFinite(value) ||
+          value < 0 ||
+          value > Number.MAX_SAFE_INTEGER
+        )
+          throw new Error('저장된 방문 백업 시각을 확인할 수 없습니다.');
+        return value;
+      };
+      const enabled = read('visitBackupEnabled');
+      if (enabled !== null && typeof enabled !== 'boolean')
+        throw new Error('저장된 방문 백업 설정을 확인할 수 없습니다.');
+      const pauseReason = read('visitBackupPauseReason');
+      if (pauseReason !== null && pauseReason !== 'authentication' && pauseReason !== 'conflict')
+        throw new Error('저장된 방문 백업 상태를 확인할 수 없습니다.');
+      const counts = await this.db.all<{ entityType: string; count: number }>(
+        'SELECT entity_type AS entityType,count(*) AS count FROM outbox WHERE owner_id=? GROUP BY entity_type',
+        this.ownerId,
+      );
+      return {
+        autoEnabled: this.ownerId !== 'guest' && enabled === true,
+        pendingVisits: counts.find((row) => row.entityType === 'visit')?.count ?? 0,
+        pendingPhotos: counts.find((row) => row.entityType === 'photo')?.count ?? 0,
+        lastSuccessAt: timestamp('visitBackupLastSuccessAt'),
+        nextAttemptAt: timestamp('visitBackupNextAttemptAt'),
+        pauseReason,
+      };
+    });
+  }
+  async setVisitBackupEnabled(
+    enabled: boolean,
+    stillCurrent: () => boolean = () => true,
+  ): Promise<void> {
+    if (typeof enabled !== 'boolean') throw new Error('방문 백업 설정을 확인해 주세요.');
+    await this.transaction(async () => {
+      await this.requireActiveAccount();
+      if (!stillCurrent()) throw new Error('로그인 정보가 바뀌어 백업 설정을 보존했습니다.');
+      await this.writeSetting('visitBackupEnabled', enabled);
+      if (!stillCurrent()) throw new Error('로그인 정보가 바뀌어 백업 설정을 보존했습니다.');
+    });
+  }
+  async recordVisitBackupResult(
+    result: {
+      successAt?: number;
+      nextAttemptAt: number | null;
+      pauseReason?: 'authentication' | 'conflict' | null;
+    },
+    stillCurrent: () => boolean = () => true,
+  ): Promise<void> {
+    const validTime = (value: unknown) =>
+      typeof value === 'number' &&
+      Number.isFinite(value) &&
+      value >= 0 &&
+      value <= Number.MAX_SAFE_INTEGER;
+    if (
+      (result.successAt !== undefined && !validTime(result.successAt)) ||
+      (result.nextAttemptAt !== null && !validTime(result.nextAttemptAt)) ||
+      (result.pauseReason !== undefined &&
+        result.pauseReason !== null &&
+        result.pauseReason !== 'authentication' &&
+        result.pauseReason !== 'conflict')
+    )
+      throw new Error('방문 백업 시각을 확인해 주세요.');
+    await this.transaction(async () => {
+      await this.requireActiveAccount();
+      if (!stillCurrent()) throw new Error('로그인 정보가 바뀌어 백업 상태를 보존했습니다.');
+      if (result.successAt !== undefined)
+        await this.writeSetting('visitBackupLastSuccessAt', result.successAt);
+      await this.writeSetting('visitBackupNextAttemptAt', result.nextAttemptAt);
+      if (result.pauseReason !== undefined)
+        await this.writeSetting('visitBackupPauseReason', result.pauseReason);
+      if (!stillCurrent()) throw new Error('로그인 정보가 바뀌어 백업 상태를 보존했습니다.');
+    });
   }
   async pendingVisitOperations(limit = 100): Promise<QueuedVisitOperation[]> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)

@@ -2,7 +2,7 @@
 
 작성일: 2026-10-11, Asia/Seoul  
 목표 플랫폼: Android, iOS  
-현재 상태: Android 우선 개발·검증 중, iOS 실기기 검증은 연결 가능 시 재개  
+현재 상태: 2026-10-16 방문 백업 앱 연결·iPhone 부분 검사 저장. 사용자 요청으로 개발을 마무리하며 Android 새 백업 검사는 다음 재개 때 진행
 추천 개발 방식: React Native + Expo 개발 빌드 + TypeScript
 
 ## 1. 제품 목표와 첫 버전의 범위

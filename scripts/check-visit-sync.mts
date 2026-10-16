@@ -16,6 +16,7 @@ import {
   VisitSyncClient,
   VisitSyncRunner,
 } from "../travel_visit_tracker/src/services/visitSync.ts";
+import { VisitBackupCoordinator } from "../travel_visit_tracker/src/services/visitBackup.ts";
 import {
   Repository,
   type SqlConnection,
@@ -129,7 +130,9 @@ try {
   connection = adapter(db);
   repository = new Repository(connection, sessionOwner(a));
   assert.deepEqual(
-    (await repository.pendingVisitOperations()).map((operation) => ({ ...operation })),
+    (await repository.pendingVisitOperations()).map((operation) => ({
+      ...operation,
+    })),
     before.map((op) => ({ ...op, attempts: 1 })),
   );
   assert.deepEqual(await runner().run(), {
@@ -181,6 +184,195 @@ try {
   assert.equal((await repository.snapshot(false)).pending, 0);
   console.log(
     "PASS: synthetic HTTP visit sync, lost-response replay after DB reopening, photo preservation, late ACK account isolation and tombstone replay",
+  );
+
+  const c = await auth.signIn(
+    apiUrl,
+    "coordinator@example.test",
+    "synthetic-coordinator-password-789",
+    "Synthetic Coordinator",
+  );
+  session = c;
+  repository = new Repository(connection, sessionOwner(c));
+  await repository.activateOwner();
+  const confirmSyntheticVisit = async (startedAt: number) => {
+    const id = randomUUID(),
+      candidateId = randomUUID();
+    await repository.setRecording(true);
+    for (let offset = 0; offset <= 300000; offset += 60000) {
+      await repository.processObservation(
+        (previous) =>
+          advanceDwell(
+            previous,
+            {
+              longitude: 127,
+              latitude: 37,
+              accuracy: 10,
+              timestamp: startedAt + offset,
+              regionId,
+              boundaryDistanceM: 100,
+            },
+            startedAt + offset,
+            () => candidateId,
+          ),
+        () => id,
+      );
+    }
+    return id;
+  };
+  const firstBackupVisit = await confirmSyntheticVisit(epoch + 1000000);
+  const coordinatorPhoto = {
+    id: randomUUID(),
+    visitId: firstBackupVisit,
+    uri: "file:///synthetic-coordinator-photo.jpg",
+    createdAt: epoch + 1400000,
+  };
+  await repository.addPhoto(coordinatorPhoto);
+  const readPhotoWork = () =>
+    connection.all(
+      "SELECT * FROM outbox WHERE owner_id=? AND entity_type='photo' ORDER BY id",
+      sessionOwner(c),
+    );
+  const originalPhotoWork = await readPhotoWork();
+  let clock = epoch + 1500000;
+  const coordinator = (send: typeof fetch = fetch) =>
+    new VisitBackupCoordinator(
+      () => session,
+      async (owner) => new Repository(connection, owner),
+      new VisitSyncClient(send, true),
+      () => clock,
+    );
+  assert.equal((await repository.visitBackupState()).autoEnabled, false);
+  const manualBackup = await coordinator().run(true);
+  assert.equal(manualBackup.acknowledged, 1);
+  assert.equal(manualBackup.paused, false);
+  assert.deepEqual(await repository.visitBackupState(), {
+    autoEnabled: false,
+    pendingVisits: 0,
+    pendingPhotos: 1,
+    lastSuccessAt: clock,
+    nextAttemptAt: null,
+    pauseReason: null,
+  });
+  assert.deepEqual(
+    (await repository.snapshot(false)).photos.map((photo) => ({ ...photo })),
+    [coordinatorPhoto],
+  );
+  assert.deepEqual(await readPhotoWork(), originalPhotoWork);
+  const firstSuccessAt = clock;
+  clock += 10000;
+  assert.equal((await coordinator().run(true)).skipped, true);
+  assert.equal(
+    (await repository.visitBackupState()).lastSuccessAt,
+    firstSuccessAt,
+  );
+
+  const retryVisit = await confirmSyntheticVisit(epoch + 2000000);
+  await repository.setVisitBackupEnabled(true);
+  const queuedBeforeLoss = await repository.pendingVisitOperations();
+  assert.equal(queuedBeforeLoss.length, 1);
+  assert.equal(queuedBeforeLoss[0].entityId, retryVisit);
+  const losingTransport: typeof fetch = async (input, options) => {
+    const response = await fetch(input, options);
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      (await response.json()).acknowledgedIds,
+      queuedBeforeLoss.map((op) => op.id),
+    );
+    assert.equal(
+      (
+        await backend.db.get(
+          "SELECT COUNT(*) AS count FROM visits WHERE user_id=? AND id=?",
+          c.user.id,
+          retryVisit,
+        )
+      ).count,
+      1,
+    );
+    throw new Error(
+      "synthetic coordinator response loss after committed HTTP acknowledgement",
+    );
+  };
+  const lostBackup = await coordinator(losingTransport).run();
+  assert.equal(lostBackup.acknowledged, 0);
+  assert.equal(lostBackup.paused, false);
+  assert.ok(
+    lostBackup.message &&
+      !lostBackup.message.includes("synthetic coordinator response loss"),
+  );
+  const scheduledAt = clock + 30000;
+  assert.deepEqual(await repository.visitBackupState(), {
+    autoEnabled: true,
+    pendingVisits: 1,
+    pendingPhotos: 1,
+    lastSuccessAt: firstSuccessAt,
+    nextAttemptAt: scheduledAt,
+    pauseReason: null,
+  });
+  db.close();
+  db = new DatabaseSync(mobilePath);
+  connection = adapter(db);
+  repository = new Repository(connection, sessionOwner(c));
+  assert.equal(
+    (await repository.visitBackupState()).nextAttemptAt,
+    scheduledAt,
+  );
+  assert.deepEqual(
+    (await repository.pendingVisitOperations()).map((operation) => ({
+      ...operation,
+    })),
+    queuedBeforeLoss.map((operation) => ({ ...operation, attempts: 1 })),
+  );
+  let retryRequests = 0;
+  const retryTransport: typeof fetch = async (input, options) => {
+    retryRequests++;
+    const operations = JSON.parse(options!.body as string).operations;
+    assert.deepEqual(
+      operations.map((operation: { id: string }) => operation.id),
+      queuedBeforeLoss.map((op) => op.id),
+    );
+    return fetch(input, options);
+  };
+  const resumedBackup = coordinator(retryTransport);
+  assert.equal((await resumedBackup.run()).skipped, true);
+  assert.equal(retryRequests, 0);
+  clock = scheduledAt;
+  assert.equal((await resumedBackup.run()).acknowledged, 1);
+  assert.equal(retryRequests, 1);
+  assert.deepEqual(await repository.visitBackupState(), {
+    autoEnabled: true,
+    pendingVisits: 0,
+    pendingPhotos: 1,
+    lastSuccessAt: clock,
+    nextAttemptAt: null,
+    pauseReason: null,
+  });
+  assert.deepEqual(
+    (await repository.snapshot(false)).photos.map((photo) => ({ ...photo })),
+    [coordinatorPhoto],
+  );
+  assert.deepEqual(await readPhotoWork(), originalPhotoWork);
+  assert.equal(
+    (
+      await backend.db.get(
+        "SELECT COUNT(*) AS count FROM visits WHERE user_id=?",
+        c.user.id,
+      )
+    ).count,
+    2,
+  );
+  assert.equal(
+    (
+      await backend.db.get(
+        "SELECT COUNT(*) AS count FROM visit_sync_operations WHERE user_id=?",
+        c.user.id,
+      )
+    ).count,
+    2,
+  );
+  assert.equal((await read(c)).visits.length, 2);
+  console.log(
+    "PASS: visit backup coordinator over temporary mobile/server SQLite and HTTP, manual opt-in bypass, photo queue/URI preservation, acknowledged-only success time, persisted retry after response loss, reopened delay skip and same-UUID replay without duplicate visits or receipts",
   );
 } finally {
   if (server)

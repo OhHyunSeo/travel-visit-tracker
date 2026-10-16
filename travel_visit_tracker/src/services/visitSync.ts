@@ -65,7 +65,7 @@ export class VisitSyncClient {
     }
   }
 }
-// This service is deliberately not wired to app startup or the account screen yet.
+// Each batch captures its account; the foreground coordinator owns scheduling.
 export class VisitSyncRunner {
   private tail: Promise<unknown> = Promise.resolve();
   constructor(

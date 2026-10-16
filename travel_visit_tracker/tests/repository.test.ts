@@ -698,3 +698,139 @@ describe('account-scoped visit outbox acknowledgements', () => {
     expect((await second.snapshot(false)).pending).toBe(1);
   });
 });
+describe('account-scoped visit backup preferences and progress', () => {
+  it('counts guest visits and photos separately without enabling guest backup', async () => {
+    await record();
+    await repository.addPhoto({
+      id: 'photo',
+      visitId: 'session-A-visit',
+      uri: 'file:///synthetic.jpg',
+      createdAt: initial,
+    });
+    expect(await repository.visitBackupState()).toEqual({
+      autoEnabled: false,
+      pendingVisits: 1,
+      pendingPhotos: 1,
+      lastSuccessAt: null,
+      nextAttemptAt: null,
+      pauseReason: null,
+    });
+    await expect(repository.setVisitBackupEnabled(true)).rejects.toThrow('현재 로그인한 계정');
+    await expect(repository.recordVisitBackupResult({ nextAttemptAt: initial })).rejects.toThrow();
+  });
+  it('persists independent owner preferences, retry times and pauses after reopening the database', async () => {
+    const accountA = new Repository(connection, 'account:test:1');
+    const accountB = new Repository(connection, 'account:test:2');
+    await accountA.activateOwner();
+    await accountA.setVisitBackupEnabled(true);
+    await accountA.recordVisitBackupResult({ successAt: initial, nextAttemptAt: initial + 30000 });
+    await accountA.recordVisitBackupResult({ nextAttemptAt: null, pauseReason: 'authentication' });
+    await accountB.activateOwner();
+    await accountB.recordVisitBackupResult({ successAt: initial + 50000, nextAttemptAt: null });
+    db.close();
+    db = new DatabaseSync(join(directory, 'data.sqlite'));
+    connection = adapter(db);
+    const reopenedA = new Repository(connection, accountA.ownerId);
+    const reopenedB = new Repository(connection, accountB.ownerId);
+    expect(await reopenedA.visitBackupState()).toMatchObject({
+      autoEnabled: true,
+      lastSuccessAt: initial,
+      nextAttemptAt: null,
+      pauseReason: 'authentication',
+    });
+    expect(await reopenedB.visitBackupState()).toMatchObject({
+      autoEnabled: false,
+      lastSuccessAt: initial + 50000,
+      nextAttemptAt: null,
+      pauseReason: null,
+    });
+    await reopenedA.activateOwner();
+    await reopenedA.recordVisitBackupResult({ nextAttemptAt: initial + 90000, pauseReason: null });
+    expect(await reopenedA.visitBackupState()).toMatchObject({
+      lastSuccessAt: initial,
+      nextAttemptAt: initial + 90000,
+      pauseReason: null,
+    });
+  });
+  it('rejects a queued metadata change after another owner becomes active', async () => {
+    const accountA = new Repository(connection, 'account:test:1');
+    const accountB = new Repository(connection, 'account:test:2');
+    await accountA.activateOwner();
+    const switching = accountB.activateOwner();
+    const staleWrite = accountA.recordVisitBackupResult({
+      successAt: initial,
+      nextAttemptAt: null,
+    });
+    await switching;
+    await expect(staleWrite).rejects.toThrow('현재 로그인한 계정');
+    await expect(accountA.setVisitBackupEnabled(true)).rejects.toThrow();
+    expect(await accountA.visitBackupState()).toMatchObject({
+      autoEnabled: false,
+      lastSuccessAt: null,
+    });
+    expect(await accountB.visitBackupState()).toMatchObject({
+      autoEnabled: false,
+      lastSuccessAt: null,
+    });
+  });
+  it('rolls back metadata if a same-owner token changes during the transaction', async () => {
+    const account = new Repository(connection, 'account:test:1');
+    await account.activateOwner();
+    let current = true;
+    const guarded = new Repository(
+      {
+        ...connection,
+        run: async (sql, ...params) => {
+          const result = await connection.run(sql, ...params);
+          if (params[0] === 'account:test:1:visitBackupLastSuccessAt') current = false;
+          return result;
+        },
+      },
+      account.ownerId,
+    );
+    await expect(
+      guarded.recordVisitBackupResult({ successAt: initial, nextAttemptAt: null }, () => current),
+    ).rejects.toThrow('로그인 정보가 바뀌어');
+    expect(await account.visitBackupState()).toMatchObject({
+      lastSuccessAt: null,
+      nextAttemptAt: null,
+    });
+  });
+  it('rolls back automatic consent if the expected login changes during preference storage', async () => {
+    const account = new Repository(connection, 'account:test:1');
+    await account.activateOwner();
+    let current = true;
+    const guarded = new Repository(
+      {
+        ...connection,
+        run: async (sql, ...params) => {
+          const result = await connection.run(sql, ...params);
+          if (params[0] === 'account:test:1:visitBackupEnabled') current = false;
+          return result;
+        },
+      },
+      account.ownerId,
+    );
+    await expect(guarded.setVisitBackupEnabled(true, () => current)).rejects.toThrow(
+      '로그인 정보가 바뀌어',
+    );
+    expect((await account.visitBackupState()).autoEnabled).toBe(false);
+  });
+  it.each([NaN, Infinity, -1, Number.MAX_VALUE])(
+    'rejects invalid backup metadata time %s',
+    async (value) => {
+      const account = new Repository(connection, 'account:test:1');
+      await account.activateOwner();
+      await expect(
+        account.recordVisitBackupResult({ successAt: value, nextAttemptAt: null }),
+      ).rejects.toThrow('시각');
+      await expect(account.recordVisitBackupResult({ nextAttemptAt: value })).rejects.toThrow(
+        '시각',
+      );
+      expect(await account.visitBackupState()).toMatchObject({
+        lastSuccessAt: null,
+        nextAttemptAt: null,
+      });
+    },
+  );
+});
