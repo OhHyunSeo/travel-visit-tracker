@@ -1,12 +1,22 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
-갱신: 2026-10-15. 이 문서는 공통 코드에 적용할 내용과 Android에서 확인한 결과를 구분해 기록합니다. Android 채팅이 공통 파일을 직접 커밋하지 않습니다.
+갱신: 2026-10-16. 이 문서는 공통 코드에 적용할 내용과 Android에서 확인한 결과를 구분해 기록합니다. Android 채팅이 공통 파일을 직접 커밋하지 않습니다.
+
+## 10월 16일 APK 업데이트와 실제 비동기 SQLite 확인
+
+보존한 새 APK와 현 설치 앱의 hash·서명·package·버전을 대조한 뒤 `install -r` 1회로 데이터 보존 업데이트했습니다. 설치된 APK의 hash가 검증한 파일과 같고, manifest와 컴파일된 XML의 SecureStore 백업 제외 세 규칙도 확인했습니다. 모든 owner의 방문·사진·outbox 전체 행과 기존 사진 바이트가 유지됐습니다. 최종 guest 방문 4건·사진 파일 1개·전송 대기 3건, 기록 꺼짐·무결성 `ok`입니다. 새 빌드·의존성 설치·uninstall·wipe는 없었습니다.
+
+공통 `f4eb401`에 고정한 네 저장 소스의 원문·해시를 보존하고, production `database.ts`의 네 비동기 adapter 함수를 그대로 추출했습니다. 새 고유한 임시 파일 DB에서 실제 `openDatabaseAsync`, `execAsync`, `runAsync`, `getFirstAsync`, `getAllAsync`, `closeAsync`, `deleteDatabaseAsync`를 사용했습니다. A/B 격리, GPS만 가져오기, UUID·session·소수점 시각·사진 URI·outbox 보존, 비활성 owner의 import·attempt 쓰기·ACK 거절, 다른 계정 ACK의 삭제 방지와 재개방 보존이 PASS입니다. 임시 DB·WAL·SHM 제거와 원본 불변도 확인했습니다.
+
+10월 15일 sync wrapper 시험의 남은 범위 중 네 async adapter 함수는 이번에 확인했습니다. production 연결 캐시·계정 화면·서버 전송 UI E2E 전체나 새로 준비 중인 백업 버튼·자동 전송 기능의 결과는 아닙니다. 실제 OS 백업·복원·기기 전송은 시작하지 않았고 실제 Android·Release·배터리 조건도 남아 있습니다.
+
+사용자 용량 정리 요청에 따라 검증 프로세스 종료 후 본인 worktree의 재생성 가능한 중간 바이너리 3,265개(논리 크기 2.04GiB)를 제거했습니다. 실가용량 증가는 **154.19MiB**이며 2.04GiB를 확보했다고 표시하지 않습니다. APK·서명·로그·근거·AVD·DB·사진·outbox·백업은 보존했습니다. 정확한 경로·바이트 수와 근거는 [진행 기록](ANDROID_PROGRESS.md)에 있습니다. 공통 파일 overlay나 package/lock 변경은 없었고, 자체 8082·에뮬레이터는 종료했으며 iOS 8081·iPhone·원래 checkout은 조작하지 않았습니다.
 
 ## SecureStore 백업 제외의 Debug 빌드를 확인했습니다
 
 Android `b32afc6`에 공통 `d51a8fe`의 `app.config.ts`만 임시 적용해 offline Android Debug 빌드를 마쳤습니다. 최종 APK manifest의 fullBackupContent·dataExtractionRules 참조가 실제 XML 리소스로 연결되며, 컴파일된 full-backup·cloud-backup·device-transfer 규칙 모두 `sharedpref/SecureStore`를 제외합니다. APK 서명 검증과 기존 APK와의 서명·package 일치도 PASS입니다.
 
-새 APK는 보존했지만 설치하지 않았습니다. 기존 설치 앱의 백업 정책은 그대로이며 OS 백업·복원·기기 전송, 방문 DB·사진 백업, Release·실제 휴대폰을 확인한 결과가 아닙니다. `faceIDPermission: false`의 iOS 결과도 Android 범위 밖입니다. 공통 설정은 원문·해시를 대조해 복구했고 package/lock이나 의존성은 바꾸지 않았습니다.
+10월 15일에는 새 APK를 보존하고 설치하지 않았습니다. 10월 16일 데이터 보존 업데이트와 설치 바이너리 확인까지 마친 결과는 위에 별도로 기록합니다. OS 백업·복원·기기 전송, 방문 DB·사진 백업, Release·실제 휴대폰을 확인한 결과는 아닙니다. `faceIDPermission: false`의 iOS 결과도 Android 범위 밖입니다. 공통 설정은 원문·해시를 대조해 복구했고 package/lock이나 의존성은 바꾸지 않았습니다.
 
 ## 합성 native SQLite에서 가져오기와 계정 분리를 확인했습니다
 

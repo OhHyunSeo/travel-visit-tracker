@@ -1,10 +1,80 @@
 # Android 개발·검증 기록
 
-마지막 갱신: 2026-10-15, Asia/Seoul.
+마지막 갱신: 2026-10-16, Asia/Seoul.
 
-10월 15일 새 Debug APK의 최종 manifest와 컴파일된 XML에서 SecureStore 백업 제외를 확인했습니다. 공통 저장 소스로 메모리 전용 native SQLite 시험도 통과했고, 기존 방문 4건, 사진 파일 1개, 전송 대기 3건은 행과 사진 내용까지 보존됐습니다. 이전 배터리 안내, 제주 포함 지도, 뒤로 가기와 P3-07 로그인 QA 결과는 아래에 유지합니다.
+10월 16일 보존한 Debug APK를 데이터 보존 업데이트하고, 설치된 바이너리의 SecureStore 백업 제외를 확인했습니다. 실제 비동기 SQLite adapter를 쓴 고유한 임시 파일 DB 시험도 통과했습니다. 기존 방문 4건, 사진 파일 1개, 전송 대기 3건은 전체 행과 사진 내용까지 보존됐습니다. 이전 메모리 DB, 배터리 안내, 지도, 뒤로 가기와 로그인 QA 결과도 아래에 유지합니다.
 
 현재 실제 Android 휴대폰은 없습니다. 결과는 Debug APK의 정적 검사와 API 37 에뮬레이터 시험이며, 실제 휴대폰이나 출시용 Release 검증으로 보지 않습니다. 전체 체크리스트와 완료 수는 공통 담당 채팅에서 관리합니다.
+
+## 10월 16일 설치 APK와 실제 비동기 SQLite
+
+### 기존 자료를 보존한 APK 업데이트
+
+Android 시작 기준은 `3bb9493`입니다. 10월 15일 빌드한 APK의 보존 hash·파일 크기, APK 서명 유효성, 현 설치 앱과의 서명·package·버전 호환성을 먼저 대조했습니다. 모든 조건과 원본 자료 대조를 통과한 뒤 **`adb install -r`을 한 번만** 실행했고 성공했습니다. 새 의존성, prebuild나 native rebuild는 없었으며 uninstall, wipe, 재시드와 원본 DB 삭제도 하지 않았습니다.
+
+설치 후 package 경로에서 읽은 APK의 SHA-256이 보존한 새 APK와 같았습니다. 따라서 그 바이너리의 최종 manifest와 컴파일된 XML을 대조해 fullBackupContent·dataExtractionRules 참조, full-backup·cloud-backup·device-transfer의 `sharedpref/SecureStore` 제외를 설치 앱 기준으로 확인했습니다. 초기 XML 검사식은 aapt의 속성 값과 Raw 표시를 중복 집계해 실패했으며, 속성 행만 세도록 바로잡고 읽기 전용으로 재확인했습니다. 재설치는 하지 않았습니다.
+
+| 설치 전후 검사 | 결과 |
+| --- | --- |
+| 보존 APK hash·서명·설치 호환성 | PASS |
+| 데이터 보존 업데이트 | `install -r` 1회 성공 |
+| 설치 APK와 검증 APK의 hash | 동일 |
+| 설치 앱의 백업 제외 규칙 | manifest 참조와 세 규칙 PASS |
+| 모든 owner의 visits·photos·outbox 전체 행 | 설치 전후 hash 동일 |
+| 기존 guest 행·사진 파일 바이트 | 10월 14일 원본 기준과 동일 |
+| 최종 기존 자료·상태 | 방문 4건, 사진 파일 1개, 전송 대기 3건, guest·기록 꺼짐, integrity `ok` |
+
+이번에는 **실제 OS 클라우드 백업·복원·기기 전송을 시작하지 않았습니다.** 이 검사로 방문·사진의 OS 복원이나 실제 Android·Release 수용 조건을 완료 처리하지 않습니다.
+
+### production과 같은 비동기 adapter 검사
+
+공통 소스는 **`f4eb401cc58a7a03acc5fd38797f6c938b62b932`에 고정**했습니다. `repository.ts`, `schema.ts`, `dwell.ts`, `database.ts` 네 파일을 Git에서 읽어 원문·해시를 로컬에 보존했습니다. 작업 중인 공통 소스나 원래 checkout은 복사하지 않았고 Android 앱 소스에도 overlay하지 않았습니다.
+
+`database.ts`에서 production `SqlConnection` 객체의 본문을 그대로 추출했습니다. 네 함수는 `execAsync`, `runAsync`, `getFirstAsync`, `getAllAsync`를 직접 호출하며 sync API wrapper를 쓰지 않습니다. `getConnection()` 자체를 실행하면 원본 DB가 열리므로 실행하지 않았습니다. 대신 새 고유 이름의 합성 DB를 `openDatabaseAsync`로 열고 production과 같은 WAL·busy timeout을 설정한 뒤, 그 연결에 같은 adapter 본문과 Repository를 연결했습니다. `PRAGMA database_list`로 시험 파일 경로를 확인했습니다.
+
+Hermes Inspector 표현식은 즉시 반환하고 전역 finished 플래그를 별도 polling했습니다. 검증 코드는 지난번 확인한 ES2015 Promise 변환을 사용했습니다. 앱 시작 직후 Inspector가 아직 준비되지 않은 경우에만 제한된 대기를 추가했고, 실제 DB 시험은 한 번 실행해 PASS였습니다.
+
+| 합성 파일 DB의 비동기 API 검사 | 결과 |
+| --- | --- |
+| 합성 관측·방문·사진 행 생성 | async API로 성공. 실제 사진 파일은 만들지 않음 |
+| A/B 계정 분리 | A의 방문·사진을 B에서 볼 수 없음 |
+| 명시적 GPS 가져오기 | GPS 방문 1건·사진 행 1건 이동, 개발 방문은 guest에 남음 |
+| UUID·session·소수점 시각·사진 URI·연결 | 모두 동일 |
+| outbox 내용 보존 | owner 변경 외 ID·entity·operation·payload·생성 시각·attempts 동일 |
+| 비활성 owner import·attempt 쓰기·ACK | 모두 거절, outbox 불변 |
+| B의 ACK에 A 작업을 전달 | 삭제 0건, A의 대기 자료 보존 |
+| async close·reopen | 방문 UUID·소수점 시각·outbox 유지 |
+| 무결성·종료 | integrity `ok`, closeAsync·deleteDatabaseAsync 성공 |
+| 파일 제거·원본 재대조 | 해당 임시 DB·WAL·SHM 없음, 원본 전체 행·사진 바이트 불변 |
+
+10월 15일의 메모리 DB·sync native wrapper 결과와 구분합니다. 이번에는 production과 같은 **네 비동기 adapter 함수**를 실제 native SQLite에서 확인했지만, 앱의 연결 캐시·계정 화면 전환·서버 전송 UI의 E2E 전체를 검증한 것은 아닙니다. 준비 중인 공통 백업 버튼·자동 전송 소스도 이번 결과에 포함하지 않습니다.
+
+### 사용자 요청 용량 정리와 종료
+
+검증 후 자체 Metro 8082·에뮬레이터·Inspector를 종료하고 열린 파일을 대조했습니다. 최초 서버가 IPv6 localhost에만 떠서 IPv4 연결용 서버를 준비하는 동안 두 프로세스가 있었으며, 사용하지 않는 자체 IPv6 서버를 먼저 종료했습니다. 최종적으로 두 자체 서버 모두 종료됐습니다. 공통 iOS 8081과 연결된 iPhone은 조작하지 않았습니다.
+
+10월 15일 본인 prebuild가 만든 디렉터리 안의 남은 재생성 가능한 `.so`, `.pch`, `.class`, `.jar`, `.o`, `.a`, `.dex`, `.flat`, `.bc`만 정리했습니다. 디렉터리 생성 이력과 실제 worktree 경로를 기준으로 소유를 확인했습니다. 일부 복제 파일의 생성 시각은 원본 시각을 유지했으므로 파일 시각만으로 사전 존재 여부를 판단하지 않았습니다. 삭제 전 해당 파일의 열린 핸들이 없었고 APK·서명·로그·근거 해시는 삭제 후에도 같았습니다.
+
+| 정리 경로 | 해당 디렉터리 |
+| --- | --- |
+| 앱 | `travel_visit_tracker/android/app/build/intermediates`, `travel_visit_tracker/android/app/build/tmp` |
+| `travel_visit_tracker/node_modules/<package>/android/build/intermediates` | `expo-modules-core`, `react-native-gesture-handler`, `react-native-reanimated`, `react-native-screens`, `react-native-worklets` |
+| `travel_visit_tracker/node_modules/<package>/android/.cxx` | `expo-modules-core`, `react-native-reanimated`, `react-native-worklets` |
+| `travel_visit_tracker/node_modules/<package>/android/build/tmp` | `expo`, `expo-constants`, `expo-dev-launcher`, `expo-dev-menu`, `expo-json-utils`, `expo-manifests`, `expo-modules-core`, `expo-updates-interface`, `react-native-gesture-handler`, `react-native-reanimated`, `react-native-safe-area-context`, `react-native-screens`, `react-native-worklets`, `@expo/log-box`, `@maplibre/maplibre-react-native` |
+
+파일 **3,265개, 논리 크기 2,189,723,038 bytes(2.04GiB)**를 제거했습니다. 실제 파일시스템 가용량은 정리 직전 24,603,115,520 bytes에서 직후 24,764,792,832 bytes로 **161,677,312 bytes(154.19MiB) 증가**했습니다. 파일 크기 합계를 실제 확보량으로 바꾸지 않습니다. 복제 블록 공유나 다른 작업의 디스크 사용량을 분리 측정한 결과도 아닙니다.
+
+최종·기존 APK와 설치 전 APK 복사본, signing 파일, 모든 로그·XML·JSON·원본 근거, AVD·DB·사진·outbox·백업은 유지했습니다. 중복된 최종 APK를 삭제하지 않았고 원래 checkout·전역 캐시·SDK 정리는 이 Android 작업에서 하지 않았습니다. 공통 코드와 package/lock은 변경하지 않았으므로 복구할 임시 overlay도 없습니다. 삭제한 중간 바이너리는 필요할 때 다시 빌드해야 합니다.
+
+이번 원본은 Git 제외인 `docs/test-results/android-update-async-20261016/`에 있습니다. 공개하는 내용은 이 결과 요약이며 원본 DB·사진·서명·기기 경로와 APK는 커밋하지 않습니다.
+
+| 근거 | 로컬 파일 |
+| --- | --- |
+| 소스 고정·adapter 추출 | `source-manifest.json`, `*-source.ts`, `production-async-adapter.txt`, `async-probe-manifest.json` |
+| 설치 전 확인·설치·최종 바이너리 | `apk-preflight.json`, `install-r.log`, `installed-apk-result.json`, `installed-manifest.txt`, `secure_store_*-installed-compiled.txt` |
+| 실제 비동기 시험·임시 DB 정리 | `async-native-probe.js`, `async-native-start.json`, `async-native-result.json`, `temporary-database-cleanup.json` |
+| 원본 전후 비교 | `before-install-data.json`, `after-install-data.json`, `after-async-data.json`, 비공개 행·사진 fingerprint 기준 |
+| 용량·종료 | `cleanup-inspection.json`, `cleanup-removed-files.json`, `cleanup-summary.json`, `shutdown-status.json`, `metro*.log`, `emulator.log` |
 
 ## 10월 15일 SecureStore 백업 제외와 native SQLite
 
