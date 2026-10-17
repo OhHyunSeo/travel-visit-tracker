@@ -1,5 +1,6 @@
 import { schemaSql, schemaVersion } from './schema';
 import { dwellPolicy } from '../domain/dwell';
+import type { QueuedVisitOperation, VisitBackupState } from './outbox';
 import type {
   Candidate,
   Photo,
@@ -16,15 +17,19 @@ export interface SqlConnection {
   first<T>(sql: string, ...params: SqlValue[]): Promise<T | null>;
   all<T>(sql: string, ...params: SqlValue[]): Promise<T[]>;
 }
+// All owners on one connection must share the same transaction queue.
+const connectionTails = new WeakMap<SqlConnection, Promise<unknown>>();
 export class Repository {
-  private tail: Promise<unknown> = Promise.resolve();
   constructor(
     private readonly db: SqlConnection,
     readonly ownerId = 'guest',
   ) {}
   private serialize<T>(operation: () => Promise<T>): Promise<T> {
-    const next = this.tail.then(operation);
-    this.tail = next.catch(() => undefined);
+    const next = (connectionTails.get(this.db) ?? Promise.resolve()).then(operation);
+    connectionTails.set(
+      this.db,
+      next.catch(() => undefined),
+    );
     return next;
   }
   private transaction<T>(operation: () => Promise<T>): Promise<T> {
@@ -42,6 +47,243 @@ export class Repository {
   }
   private settingKey(key: string) {
     return `${this.ownerId}:${key}`;
+  }
+  async activeOwner(): Promise<string> {
+    return this.serialize(async () => {
+      const row = await this.db.first<{ value: string }>(
+        'SELECT value FROM settings WHERE key=?',
+        'active_owner',
+      );
+      if (!row) return 'guest';
+      const owner: unknown = JSON.parse(row.value);
+      if (typeof owner !== 'string' || !owner || owner.length > 400)
+        throw new Error('기록 계정을 확인할 수 없습니다.');
+      return owner;
+    });
+  }
+  async activateOwner(): Promise<void> {
+    await this.transaction(async () => {
+      await this.writeSetting('recording', false);
+      await this.writeSetting('status', 'off');
+      await this.writeSetting('message', '계정을 바꿨습니다. 기록을 다시 켜 주세요.');
+      await this.writeSetting('diagnostics', {
+        ...(await this.diagnostics()),
+        collectorMode: 'off',
+      });
+      await this.db.run('DELETE FROM candidates WHERE owner_id=?', this.ownerId);
+      await this.db.run(
+        'INSERT INTO settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+        'active_owner',
+        JSON.stringify(this.ownerId),
+      );
+    });
+  }
+  async guestRecordCounts(): Promise<{ visits: number; photos: number }> {
+    return this.serialize(async () => {
+      const visits = await this.db.first<{ count: number }>(
+        "SELECT count(*) AS count FROM visits WHERE owner_id='guest' AND source='gps' AND deleted_at IS NULL",
+      );
+      const photos = await this.db.first<{ count: number }>(
+        "SELECT count(*) AS count FROM photos p JOIN visits v ON v.id=p.visit_id WHERE p.owner_id='guest' AND v.owner_id='guest' AND v.source='gps' AND v.deleted_at IS NULL",
+      );
+      return { visits: visits?.count ?? 0, photos: photos?.count ?? 0 };
+    });
+  }
+  async importGuestRecords(): Promise<{ visits: number; photos: number }> {
+    if (this.ownerId === 'guest') throw new Error('먼저 로그인해 주세요.');
+    return this.transaction(async () => {
+      const active = await this.db.first<{ value: string }>(
+        'SELECT value FROM settings WHERE key=?',
+        'active_owner',
+      );
+      if (!active || JSON.parse(active.value) !== this.ownerId)
+        throw new Error('현재 계정이 바뀌었습니다. 기록을 다시 확인해 주세요.');
+      const visits = await this.db.first<{ count: number }>(
+        "SELECT count(*) AS count FROM visits WHERE owner_id='guest' AND source='gps' AND deleted_at IS NULL",
+      );
+      const photos = await this.db.first<{ count: number }>(
+        "SELECT count(*) AS count FROM photos p JOIN visits v ON v.id=p.visit_id WHERE p.owner_id='guest' AND v.owner_id='guest' AND v.source='gps' AND v.deleted_at IS NULL",
+      );
+      await this.db.run(
+        "UPDATE outbox SET owner_id=? WHERE owner_id='guest' AND ((entity_type='visit' AND entity_id IN (SELECT id FROM visits WHERE owner_id='guest' AND source='gps')) OR (entity_type='photo' AND entity_id IN (SELECT p.id FROM photos p JOIN visits v ON v.id=p.visit_id WHERE p.owner_id='guest' AND v.owner_id='guest' AND v.source='gps')))",
+        this.ownerId,
+      );
+      await this.db.run(
+        "UPDATE photos SET owner_id=? WHERE owner_id='guest' AND visit_id IN (SELECT id FROM visits WHERE owner_id='guest' AND source='gps')",
+        this.ownerId,
+      );
+      await this.db.run(
+        "UPDATE visits SET owner_id=? WHERE owner_id='guest' AND source='gps'",
+        this.ownerId,
+      );
+      return { visits: visits?.count ?? 0, photos: photos?.count ?? 0 };
+    });
+  }
+  private async requireActiveAccount(): Promise<void> {
+    const active = await this.db.first<{ value: string }>(
+      'SELECT value FROM settings WHERE key=?',
+      'active_owner',
+    );
+    if (this.ownerId === 'guest' || !active || JSON.parse(active.value) !== this.ownerId)
+      throw new Error('현재 로그인한 계정의 전송 작업만 처리할 수 있습니다.');
+  }
+  async visitBackupState(): Promise<VisitBackupState> {
+    return this.serialize(async () => {
+      const rows = await this.db.all<{ key: string; value: string }>(
+        'SELECT key,value FROM settings WHERE key IN (?,?,?,?)',
+        this.settingKey('visitBackupEnabled'),
+        this.settingKey('visitBackupLastSuccessAt'),
+        this.settingKey('visitBackupNextAttemptAt'),
+        this.settingKey('visitBackupPauseReason'),
+      );
+      const read = (key: string): unknown => {
+        const row = rows.find((item) => item.key === this.settingKey(key));
+        if (!row) return null;
+        return JSON.parse(row.value);
+      };
+      const timestamp = (key: string) => {
+        const value = read(key);
+        if (value === null) return null;
+        if (
+          typeof value !== 'number' ||
+          !Number.isFinite(value) ||
+          value < 0 ||
+          value > Number.MAX_SAFE_INTEGER
+        )
+          throw new Error('저장된 방문 백업 시각을 확인할 수 없습니다.');
+        return value;
+      };
+      const enabled = read('visitBackupEnabled');
+      if (enabled !== null && typeof enabled !== 'boolean')
+        throw new Error('저장된 방문 백업 설정을 확인할 수 없습니다.');
+      const pauseReason = read('visitBackupPauseReason');
+      if (pauseReason !== null && pauseReason !== 'authentication' && pauseReason !== 'conflict')
+        throw new Error('저장된 방문 백업 상태를 확인할 수 없습니다.');
+      const counts = await this.db.all<{ entityType: string; count: number }>(
+        'SELECT entity_type AS entityType,count(*) AS count FROM outbox WHERE owner_id=? GROUP BY entity_type',
+        this.ownerId,
+      );
+      return {
+        autoEnabled: this.ownerId !== 'guest' && enabled === true,
+        pendingVisits: counts.find((row) => row.entityType === 'visit')?.count ?? 0,
+        pendingPhotos: counts.find((row) => row.entityType === 'photo')?.count ?? 0,
+        lastSuccessAt: timestamp('visitBackupLastSuccessAt'),
+        nextAttemptAt: timestamp('visitBackupNextAttemptAt'),
+        pauseReason,
+      };
+    });
+  }
+  async setVisitBackupEnabled(
+    enabled: boolean,
+    stillCurrent: () => boolean = () => true,
+  ): Promise<void> {
+    if (typeof enabled !== 'boolean') throw new Error('방문 백업 설정을 확인해 주세요.');
+    await this.transaction(async () => {
+      await this.requireActiveAccount();
+      if (!stillCurrent()) throw new Error('로그인 정보가 바뀌어 백업 설정을 보존했습니다.');
+      await this.writeSetting('visitBackupEnabled', enabled);
+      if (!stillCurrent()) throw new Error('로그인 정보가 바뀌어 백업 설정을 보존했습니다.');
+    });
+  }
+  async recordVisitBackupResult(
+    result: {
+      successAt?: number;
+      nextAttemptAt: number | null;
+      pauseReason?: 'authentication' | 'conflict' | null;
+    },
+    stillCurrent: () => boolean = () => true,
+  ): Promise<boolean> {
+    const validTime = (value: unknown) =>
+      typeof value === 'number' &&
+      Number.isFinite(value) &&
+      value >= 0 &&
+      value <= Number.MAX_SAFE_INTEGER;
+    if (
+      (result.successAt !== undefined && !validTime(result.successAt)) ||
+      (result.nextAttemptAt !== null && !validTime(result.nextAttemptAt)) ||
+      (result.pauseReason !== undefined &&
+        result.pauseReason !== null &&
+        result.pauseReason !== 'authentication' &&
+        result.pauseReason !== 'conflict')
+    )
+      throw new Error('방문 백업 시각을 확인해 주세요.');
+    return this.transaction(async () => {
+      await this.requireActiveAccount();
+      if (!stillCurrent()) throw new Error('로그인 정보가 바뀌어 백업 상태를 보존했습니다.');
+      if (result.successAt !== undefined) {
+        const pending = await this.db.first<{ pending: number }>(
+          "SELECT 1 AS pending FROM outbox WHERE owner_id=? AND entity_type='visit' LIMIT 1",
+          this.ownerId,
+        );
+        if (pending) return false;
+        await this.writeSetting('visitBackupLastSuccessAt', result.successAt);
+      }
+      await this.writeSetting('visitBackupNextAttemptAt', result.nextAttemptAt);
+      if (result.pauseReason !== undefined)
+        await this.writeSetting('visitBackupPauseReason', result.pauseReason);
+      if (!stillCurrent()) throw new Error('로그인 정보가 바뀌어 백업 상태를 보존했습니다.');
+      return true;
+    });
+  }
+  async pendingVisitOperations(limit = 100): Promise<QueuedVisitOperation[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+      throw new Error('방문 전송 묶음은 1~100개여야 합니다.');
+    return this.serialize(async () => {
+      await this.requireActiveAccount();
+      return this.db.all<QueuedVisitOperation>(
+        "SELECT id,entity_type AS entityType,entity_id AS entityId,operation,payload AS serializedPayload,created_at AS createdAt,attempts FROM outbox WHERE owner_id=? AND entity_type='visit' ORDER BY created_at,id LIMIT ?",
+        this.ownerId,
+        limit,
+      );
+    });
+  }
+  async noteVisitAttempt(operations: readonly QueuedVisitOperation[]): Promise<void> {
+    await this.transaction(async () => {
+      await this.requireActiveAccount();
+      for (const operation of operations) {
+        const updated = await this.db.run(
+          "UPDATE outbox SET attempts=attempts+1 WHERE owner_id=? AND id=? AND entity_type='visit' AND entity_id=? AND operation=? AND payload=?",
+          this.ownerId,
+          operation.id,
+          operation.entityId,
+          operation.operation,
+          operation.serializedPayload,
+        );
+        if (updated.changes !== 1)
+          throw new Error('전송할 기록이 바뀌었습니다. 대기 목록을 다시 확인해 주세요.');
+      }
+    });
+  }
+  async acknowledgeVisitOperations(
+    sent: readonly QueuedVisitOperation[],
+    acknowledgedIds: readonly string[],
+    stillCurrent: () => boolean = () => true,
+  ): Promise<number> {
+    const ids = new Set(acknowledgedIds);
+    if (
+      ids.size !== acknowledgedIds.length ||
+      [...ids].some((id) => !sent.some((operation) => operation.id === id))
+    )
+      throw new Error('서버가 확인한 작업이 전송한 목록과 일치하지 않습니다.');
+    return this.transaction(async () => {
+      await this.requireActiveAccount();
+      if (!stillCurrent()) throw new Error('로그인 정보가 바뀌어 전송 대기 기록을 보존했습니다.');
+      let acknowledged = 0;
+      for (const operation of sent) {
+        if (!ids.has(operation.id)) continue;
+        const deleted = await this.db.run(
+          "DELETE FROM outbox WHERE owner_id=? AND id=? AND entity_type='visit' AND entity_id=? AND operation=? AND payload=?",
+          this.ownerId,
+          operation.id,
+          operation.entityId,
+          operation.operation,
+          operation.serializedPayload,
+        );
+        acknowledged += deleted.changes;
+      }
+      if (!stillCurrent()) throw new Error('로그인 정보가 바뀌어 전송 대기 기록을 보존했습니다.');
+      return acknowledged;
+    });
   }
   private async writeSetting(key: string, value: unknown) {
     await this.db.run(

@@ -4,7 +4,7 @@
 
 - Read `README.md`, `PROGRESS.md`, `PROJECT_PLAN.md`, `docs/CHECKLIST_STATUS.md`, and `docs/RESUME.md` before changing behavior. Newer dated updates take precedence over older reports.
 - The active app is `travel_visit_tracker/`: Expo 57, React Native, TypeScript, Expo Router, Zustand, SQLite, MapLibre and background GPS. This is a visit tracker, with no implemented pedometer or HealthKit/Health Connect integration.
-- `backend/` is a separate Express/SQLite API. The active Expo app does not yet connect login or server synchronization.
+- `backend/` is a separate Express/SQLite API. The active Expo app connects optional login and account-scoped local records. Manual visit backup and per-account opt-in automatic backup (off by default) are wired to the UI and foreground startup/resume checks, with persisted retries and automatic pauses for 401/409; photo upload and restoration are still pending.
 - `prototype_reference/` and `travel_visit_tracker_flutter_backup/` are reference source. Do not install, modify or migrate these folders unless the task specifically needs them.
 
 ## Preserve work and data
@@ -27,8 +27,8 @@ bash scripts/setup-cloud.sh
 bash scripts/verify-cloud.sh
 ```
 
-The verifier runs mobile typecheck, ESLint, Vitest, backend syntax/native dependency loading, and production Android/iOS JS/Hermes export. It sets offline Expo mode, does not start a persistent service, and does not read personal databases.
+The verifier runs mobile typecheck, ESLint, Vitest, backend syntax/native dependency loading, synthetic mobile-to-backend visit sync, and production Android/iOS JS/Hermes export. It sets offline Expo mode, does not start a persistent service, and does not read personal databases. The sync check uses temporary mobile/server databases and a short-lived loopback server.
 
-For focused iteration use `npm --prefix travel_visit_tracker run check`. If changing the backend, run an isolated temporary-database API smoke check too; the backend currently has no automated test suite. For native configuration changes, report that native rebuild/device verification is still required if unavailable.
+For focused iteration use `npm --prefix travel_visit_tracker run check`. If changing the backend, run `npm --prefix backend test` too; it starts isolated loopback servers with temporary databases and synthetic images. Do not start the actual server against personal data for verification. For native configuration changes, report that native rebuild/device verification is still required if unavailable.
 
 Cloud Linux checks cannot prove signed iOS/Android builds, GPS permission behavior, screen-lock collection, battery behavior, real photos, or future step/health permission integrations. State exactly which commands passed and what remains for a phone.
