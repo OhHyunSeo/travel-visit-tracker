@@ -192,7 +192,7 @@ export class Repository {
       pauseReason?: 'authentication' | 'conflict' | null;
     },
     stillCurrent: () => boolean = () => true,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const validTime = (value: unknown) =>
       typeof value === 'number' &&
       Number.isFinite(value) &&
@@ -207,15 +207,22 @@ export class Repository {
         result.pauseReason !== 'conflict')
     )
       throw new Error('방문 백업 시각을 확인해 주세요.');
-    await this.transaction(async () => {
+    return this.transaction(async () => {
       await this.requireActiveAccount();
       if (!stillCurrent()) throw new Error('로그인 정보가 바뀌어 백업 상태를 보존했습니다.');
-      if (result.successAt !== undefined)
+      if (result.successAt !== undefined) {
+        const pending = await this.db.first<{ pending: number }>(
+          "SELECT 1 AS pending FROM outbox WHERE owner_id=? AND entity_type='visit' LIMIT 1",
+          this.ownerId,
+        );
+        if (pending) return false;
         await this.writeSetting('visitBackupLastSuccessAt', result.successAt);
+      }
       await this.writeSetting('visitBackupNextAttemptAt', result.nextAttemptAt);
       if (result.pauseReason !== undefined)
         await this.writeSetting('visitBackupPauseReason', result.pauseReason);
       if (!stillCurrent()) throw new Error('로그인 정보가 바뀌어 백업 상태를 보존했습니다.');
+      return true;
     });
   }
   async pendingVisitOperations(limit = 100): Promise<QueuedVisitOperation[]> {
@@ -250,6 +257,7 @@ export class Repository {
   async acknowledgeVisitOperations(
     sent: readonly QueuedVisitOperation[],
     acknowledgedIds: readonly string[],
+    stillCurrent: () => boolean = () => true,
   ): Promise<number> {
     const ids = new Set(acknowledgedIds);
     if (
@@ -259,6 +267,7 @@ export class Repository {
       throw new Error('서버가 확인한 작업이 전송한 목록과 일치하지 않습니다.');
     return this.transaction(async () => {
       await this.requireActiveAccount();
+      if (!stillCurrent()) throw new Error('로그인 정보가 바뀌어 전송 대기 기록을 보존했습니다.');
       let acknowledged = 0;
       for (const operation of sent) {
         if (!ids.has(operation.id)) continue;
@@ -272,6 +281,7 @@ export class Repository {
         );
         acknowledged += deleted.changes;
       }
+      if (!stillCurrent()) throw new Error('로그인 정보가 바뀌어 전송 대기 기록을 보존했습니다.');
       return acknowledged;
     });
   }

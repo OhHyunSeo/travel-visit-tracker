@@ -8,6 +8,7 @@ export type VisitOutbox = {
   acknowledgeVisitOperations(
     sent: readonly QueuedVisitOperation[],
     ids: readonly string[],
+    stillCurrent?: () => boolean,
   ): Promise<number>;
 };
 export class VisitSyncClient {
@@ -96,7 +97,12 @@ export class VisitSyncRunner {
     if (!isCurrent()) return { sent: 0, acknowledged: 0, paused: true };
     const ids = await this.client.sendBatch(session, operations);
     if (!isCurrent()) return { sent: operations.length, acknowledged: 0, paused: true };
-    const acknowledged = await outbox.acknowledgeVisitOperations(operations, ids);
-    return { sent: operations.length, acknowledged, paused: false };
+    try {
+      const acknowledged = await outbox.acknowledgeVisitOperations(operations, ids, isCurrent);
+      return { sent: operations.length, acknowledged, paused: !isCurrent() };
+    } catch (error) {
+      if (!isCurrent()) return { sent: operations.length, acknowledged: 0, paused: true };
+      throw error;
+    }
   }
 }

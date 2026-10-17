@@ -28,7 +28,12 @@ function harness() {
     pendingVisitOperations: vi.fn(async () => pending.map((op) => ({ ...op }))),
     noteVisitAttempt: vi.fn(async () => undefined),
     acknowledgeVisitOperations: vi.fn(
-      async (_sent: readonly QueuedVisitOperation[], ids: readonly string[]) => {
+      async (
+        _sent: readonly QueuedVisitOperation[],
+        ids: readonly string[],
+        stillCurrent?: () => boolean,
+      ) => {
+        if (stillCurrent && !stillCurrent()) throw new Error('session changed before commit');
         const before = pending.length;
         pending = pending.filter((op) => !ids.includes(op.id));
         return before - pending.length;
@@ -124,6 +129,42 @@ describe('visit batch transport and safe local acknowledgement', () => {
     });
     expect(await h.runner.run()).toEqual({ sent: 0, acknowledged: 0, paused: true });
     expect(h.send).not.toHaveBeenCalled();
+  });
+  it.each([null, 'replacement-token'])(
+    'preserves the queue if the same account token changes to %s while acknowledgement waits',
+    async (token) => {
+      const h = harness();
+      const acknowledge = h.outbox.acknowledgeVisitOperations.getMockImplementation()!;
+      h.outbox.acknowledgeVisitOperations.mockImplementationOnce(
+        async (sent, ids, stillCurrent) => {
+          // The native transaction can yield after the runner checks its captured session.
+          await Promise.resolve();
+          h.switchSession({ ...session, token });
+          return acknowledge(sent, ids, stillCurrent);
+        },
+      );
+      expect(await h.runner.run()).toEqual({ sent: 1, acknowledged: 0, paused: true });
+      expect(h.send).toHaveBeenCalledOnce();
+      expect(await h.outbox.pendingVisitOperations()).toEqual([operation]);
+    },
+  );
+  it('reports a pause if the session changes after the acknowledgement has already committed', async () => {
+    const h = harness();
+    const acknowledge = h.outbox.acknowledgeVisitOperations.getMockImplementation()!;
+    h.outbox.acknowledgeVisitOperations.mockImplementationOnce(async (sent, ids, stillCurrent) => {
+      const saved = await acknowledge(sent, ids, stillCurrent);
+      h.switchSession({ ...session, token: 'replacement-token' });
+      return saved;
+    });
+    expect(await h.runner.run()).toEqual({ sent: 1, acknowledged: 1, paused: true });
+    expect(await h.outbox.pendingVisitOperations()).toEqual([]);
+  });
+  it('propagates an acknowledgement storage failure when the captured session is still current', async () => {
+    const h = harness();
+    const failure = new Error('synthetic acknowledgement storage failure');
+    h.outbox.acknowledgeVisitOperations.mockRejectedValueOnce(failure);
+    await expect(h.runner.run()).rejects.toBe(failure);
+    expect(await h.outbox.pendingVisitOperations()).toEqual([operation]);
   });
   it('serializes overlapping runs and reads the queue again after the first acknowledgement', async () => {
     const h = harness();

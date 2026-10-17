@@ -42,6 +42,7 @@ function harness(count = 1, enabled = true) {
       if (result.successAt !== undefined) state.lastSuccessAt = result.successAt;
       state.nextAttemptAt = result.nextAttemptAt;
       if (result.pauseReason !== undefined) state.pauseReason = result.pauseReason;
+      return true;
     }),
     pendingVisitOperations: vi.fn(async () => rows.slice(0, 100)),
     noteVisitAttempt: vi.fn(async (sent: readonly QueuedVisitOperation[]) => {
@@ -312,6 +313,34 @@ describe('foreground visit backup coordinator', () => {
       expect(h.state.pauseReason).toBeNull();
     },
   );
+  it('sends a new change queued between the empty snapshot and completion instead of reporting success early', async () => {
+    const h = harness();
+    vi.mocked(h.repository.recordVisitBackupResult).mockImplementationOnce(async () => {
+      h.rows().push(operation(2));
+      return false;
+    });
+    const result = await h.backup.run();
+    expect(h.send).toHaveBeenCalledTimes(2);
+    expect(h.repository.recordVisitBackupResult).toHaveBeenCalledTimes(2);
+    expect(h.rows()).toHaveLength(0);
+    expect(h.state.lastSuccessAt).not.toBeNull();
+    expect(result).toMatchObject({ acknowledged: 2, paused: false });
+  });
+  it('leaves the new change pending if automatic backup is disabled before completion storage', async () => {
+    const h = harness();
+    vi.mocked(h.repository.recordVisitBackupResult).mockImplementationOnce(async () => {
+      h.rows().push(operation(2));
+      h.state.autoEnabled = false;
+      return false;
+    });
+    expect(await h.backup.run()).toMatchObject({
+      acknowledged: 1,
+      message: expect.stringContaining('껐습니다'),
+    });
+    expect(h.send).toHaveBeenCalledTimes(1);
+    expect(h.rows()).toHaveLength(1);
+    expect(h.state.lastSuccessAt).toBeNull();
+  });
   it('never invents a successful backup time for an empty queue or photo-only work', async () => {
     const h = harness(0);
     expect(await h.backup.run(true)).toMatchObject({

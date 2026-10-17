@@ -19,7 +19,7 @@ export type VisitBackupRepository = VisitOutbox & {
       pauseReason?: VisitBackupState['pauseReason'];
     },
     stillCurrent?: () => boolean,
-  ): Promise<void>;
+  ): Promise<boolean>;
 };
 
 const pauseMessage = (reason: VisitBackupState['pauseReason']) =>
@@ -138,7 +138,7 @@ export class VisitBackupCoordinator {
         autoEnabled = state.autoEnabled;
         if (!isCurrent()) return paused();
         if (state.pendingVisits === 0) {
-          await repository.recordVisitBackupResult(
+          const completed = await repository.recordVisitBackupResult(
             {
               ...(acknowledged > 0 ? { successAt: this.now() } : {}),
               nextAttemptAt: null,
@@ -147,12 +147,17 @@ export class VisitBackupCoordinator {
             isCurrent,
           );
           if (!isCurrent()) return paused();
-          this.failures.delete(ownerId!);
-          return result(
-            state.pendingPhotos
-              ? '방문 전송을 마쳤습니다. 사진은 기기에 보관 중이며 아직 백업되지 않습니다.'
-              : '방문 전송을 마쳤습니다.',
-          );
+          if (completed) {
+            this.failures.delete(ownerId!);
+            return result(
+              state.pendingPhotos
+                ? '방문 전송을 마쳤습니다. 사진은 기기에 보관 중이며 아직 백업되지 않습니다.'
+                : '방문 전송을 마쳤습니다.',
+            );
+          }
+          state = await repository.visitBackupState();
+          autoEnabled = state.autoEnabled;
+          if (!isCurrent()) return paused();
         }
         if (!manual() && !state.autoEnabled)
           return result('자동 방문 백업을 껐습니다. 남은 방문은 기기에 보관 중입니다.');

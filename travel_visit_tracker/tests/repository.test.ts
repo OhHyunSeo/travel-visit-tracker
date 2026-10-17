@@ -698,6 +698,88 @@ describe('account-scoped visit outbox acknowledgements', () => {
     expect((await second.snapshot(false)).pending).toBe(1);
   });
 });
+describe('visit backup transaction boundaries', () => {
+  it('does not save a stale completion when a new visit deletion is queued after an empty snapshot', async () => {
+    const account = new Repository(connection, 'account:test:1');
+    await account.activateOwner();
+    await record(account);
+    const sent = await account.pendingVisitOperations();
+    await account.acknowledgeVisitOperations(
+      sent,
+      sent.map((row) => row.id),
+    );
+    await account.recordVisitBackupResult({ successAt: initial, nextAttemptAt: initial + 30000 });
+    const emptySnapshot = account.visitBackupState();
+    const newDeletion = account.deleteVisit('session-A-visit', 'new-delete', initial + 400000);
+    expect((await emptySnapshot).pendingVisits).toBe(0);
+    const completed = await account.recordVisitBackupResult({
+      successAt: initial + 500000,
+      nextAttemptAt: null,
+    });
+    await newDeletion;
+    expect(await account.visitBackupState()).toMatchObject({
+      pendingVisits: 1,
+      lastSuccessAt: initial,
+      nextAttemptAt: initial + 30000,
+    });
+    expect(completed).toBe(false);
+    const remaining = await account.pendingVisitOperations();
+    await account.acknowledgeVisitOperations(
+      remaining,
+      remaining.map((row) => row.id),
+    );
+    expect(
+      await account.recordVisitBackupResult({ successAt: initial + 600000, nextAttemptAt: null }),
+    ).toBe(true);
+    expect((await account.visitBackupState()).lastSuccessAt).toBe(initial + 600000);
+  });
+  it.each(['begin', 'delete'])(
+    'rolls back every ACK when the captured session changes during %s',
+    async (stage) => {
+      const account = new Repository(connection, 'account:test:1');
+      await account.activateOwner();
+      await record(account);
+      await account.addPhoto({
+        id: 'preserved-photo',
+        visitId: 'session-A-visit',
+        uri: 'file:///synthetic-preserved.jpg',
+        createdAt: initial,
+      });
+      const sent = await account.pendingVisitOperations();
+      let current = true;
+      const guarded = new Repository(
+        {
+          ...connection,
+          exec: async (sql) => {
+            await connection.exec(sql);
+            if (stage === 'begin' && sql === 'BEGIN IMMEDIATE') current = false;
+          },
+          run: async (sql, ...params) => {
+            const result = await connection.run(sql, ...params);
+            if (stage === 'delete' && sql.startsWith('DELETE FROM outbox')) current = false;
+            return result;
+          },
+        },
+        account.ownerId,
+      );
+      await expect(
+        guarded.acknowledgeVisitOperations(
+          sent,
+          sent.map((row) => row.id),
+          () => current,
+        ),
+      ).rejects.toThrow('로그인 정보가 바뀌어');
+      expect(await account.pendingVisitOperations()).toEqual(sent);
+      const snapshot = await account.snapshot(false);
+      expect(snapshot.visits).toHaveLength(1);
+      expect(snapshot.photos).toMatchObject([
+        { id: 'preserved-photo', uri: 'file:///synthetic-preserved.jpg' },
+      ]);
+      expect(snapshot.pending).toBe(2);
+      expect(db.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+    },
+  );
+});
 describe('account-scoped visit backup preferences and progress', () => {
   it('counts guest visits and photos separately without enabling guest backup', async () => {
     await record();
