@@ -1,10 +1,99 @@
 # Android 개발·검증 기록
 
-마지막 갱신: 2026-10-16, Asia/Seoul.
+마지막 갱신: 2026-10-17, Asia/Seoul.
 
-10월 16일 보존한 Debug APK를 데이터 보존 업데이트하고, 설치된 바이너리의 SecureStore 백업 제외를 확인했습니다. 실제 비동기 SQLite adapter를 쓴 고유한 임시 파일 DB 시험도 통과했습니다. 기존 방문 4건, 사진 파일 1개, 전송 대기 3건은 전체 행과 사진 내용까지 보존됐습니다. 이전 메모리 DB, 배터리 안내, 지도, 뒤로 가기와 로그인 QA 결과도 아래에 유지합니다.
+10월 17일 새 방문 백업 화면과 Coordinator를 Android에서 확인했습니다. `c95d6ca` 기준 계정 화면·동의·재실행 복구와 실제 native SQLite·HTTP 14개 검사가 PASS입니다. 수정된 세 파일을 `202a2e2`로 바꾼 뒤 같은 HTTP 14개 검사와 실제 DB 경쟁 조건 네 가지도 PASS였습니다. 원본 방문 4건, 사진 파일 1개, 전송 대기 3건의 전체 행·사진 바이트를 보존하고 임시 소스·실행 환경을 복구했습니다. 이전 결과는 아래 이력으로 유지합니다.
 
 현재 실제 Android 휴대폰은 없습니다. 결과는 Debug APK의 정적 검사와 API 37 에뮬레이터 시험이며, 실제 휴대폰이나 출시용 Release 검증으로 보지 않습니다. 전체 체크리스트와 완료 수는 공통 담당 채팅에서 관리합니다.
+
+## 10월 17일 방문 백업 화면·Coordinator와 경쟁 조건
+
+### 소스 기준과 임시 적용
+
+Android 시작 기준은 `f05a3b3`입니다. 공통 **`c95d6caa209086431b371a68cd2ac0d2222aa48b`**에서 계정·설정·layout, 두 store, storage/database·repository·outbox, auth·credentials·session·visitSync·visitBackup의 필요한 JS/TS 파일 14개만 임시 적용했습니다. 원래 있던 5개 파일의 원문·해시와 새로 생기는 9개 파일의 부재를 먼저 보존했습니다. 공통 backend 소스도 같은 커밋의 읽기 전용 사본으로 고정하고 별도 루프백 서버·합성 DB·업로드 경로를 사용했습니다.
+
+첫 화면 검사와 native HTTP 검사 종료 후 공통 수정 **`202a2e250420b10056c518d8d26454035f548615`**의 다음 세 파일만 후속 적용했습니다. 기존 원상 복구 기준은 Android 시작 HEAD 그대로 유지하고 두 단계의 해시를 구분했습니다.
+
+- `travel_visit_tracker/src/storage/repository.ts`
+- `travel_visit_tracker/src/services/visitSync.ts`
+- `travel_visit_tracker/src/services/visitBackup.ts`
+
+두 커밋 사이 backend 내용은 같았습니다. 기존 설치 Debug APK·API 37·SwiftShader·Android 전용 8082만 사용했습니다. 설치 APK의 hash가 10월 15일 보존한 새 APK와 같음을 재확인했고, 새 설치·native rebuild·의존성 설치나 package/lock 변경은 없었습니다. iOS 8081·연결된 iPhone·원래 checkout·공유 진행표는 수정하지 않았습니다.
+
+### `c95d6ca` 실제 계정 화면
+
+화면에서 새 합성 계정을 가입했습니다. 이 계정은 기기·서버 모두 방문 0건이며 원본 게스트 가져오기를 실행하지 않았습니다.
+
+| 실제 화면 흐름 | 결과 |
+| --- | --- |
+| 가입 후 기본 설정 | signed-in·계정 방문/사진/대기 0건, 자동 방문 백업 꺼짐 |
+| 수동 빈 백업 | “전송할 방문이 없습니다.” 표시, 마지막 성공 시각을 만들지 않음 |
+| 자동 백업 동의창 | 대상 계정·서버, 화면이 열려 있을 때의 전송 범위, 사진 백업·다른 기기 복원 미지원 표시 |
+| 동의 취소 | 자동 백업 꺼짐 유지 |
+| 동의 후 켜기 | 자동 백업 켜짐·설명 표시, 기록 꺼짐 유지 |
+| 강제 종료·재실행 | 같은 합성 계정의 세션과 opt-in 복구, 실제 me 성공, 계정 자료 0건 유지 |
+| 자동 백업 끄기·로그아웃 | 꺼짐 확인 후 guest·토큰 없음·기록 꺼짐으로 복귀, native 인증 항목 삭제 |
+| 원본 대조 | 모든 owner의 visits/photos/outbox 전체 행·기존 사진 바이트 불변, integrity `ok` |
+
+로그인 중 native SecureStore 인증 항목의 AES 암호화 저장과 이메일·비밀번호 평문 부재도 확인했습니다. 화면 원본과 계정·서버 값은 로컬에만 보존합니다. **UI의 실제 비어 있지 않은 방문 전송이나 전송 중 프로세스 종료를 확인한 결과는 아닙니다.** `202a2e2`에서 이 가입·동의 UI 전체를 다시 실행하지 않았으며, 그 단계는 아래의 독립 저장·전송 검사와 마지막 guest 상태 확인으로 구분합니다.
+
+### 실제 비동기 native SQLite·HTTP 검사: 두 기준 모두 14개 PASS
+
+`c95d6ca`와 세 파일 수정 후 `202a2e2`에서 **각각 새 고유 파일 DB·새 합성 계정으로 동일한 14개 검사를 실행**했습니다. 실제 앱에 로드된 Repository·Coordinator·VisitSyncClient, `expo-sqlite` 비동기 API와 별도 실제 HTTP 서버를 사용했습니다. production과 같은 네 async adapter 함수, WAL·busy timeout을 사용하고 시험 DB 경로가 원본과 다름을 확인했습니다.
+
+| 확인한 항목 | 두 단계 결과 |
+| --- | --- |
+| 실제 async SQLite·실제 합성 HTTP | PASS |
+| 자동 백업 기본 꺼짐 | 자동 실행은 전송하지 않음 |
+| 수동 방문 ACK·성공 시각 | 방문 1건 ACK 후 성공 시각 저장 |
+| 사진 큐·URI·소수점 시각 | 사진 큐 1건·URI·연결과 소수점 시각 유지 |
+| 빈 큐 수동 실행 | 전송 호출·성공 시각 변경 없음 |
+| 서버 저장 뒤 응답 유실 모사 | 방문 큐·사진 큐 보존, 다음 재시도 시각 저장 |
+| DB 닫기·재개방·일찍 재시도 | 지연 시각 복구, 시각 전 실행은 전송하지 않음 |
+| 같은 작업 UUID 재전송 | ACK 후 방문 큐만 제거, 사진 큐는 유지 |
+| 서버 중복 방지·무결성 | 각 시험 계정의 방문은 고유 ID 2건, integrity `ok` |
+
+14개 세부 플래그는 단계별 결과 파일에 있습니다. 실제 서버의 성공한 sync 응답은 두 단계 합계 6회였고, 각 단계의 서버 방문 수·고유 ID 수는 2/2였습니다. UI 시험 계정의 서버 방문은 끝까지 0건입니다.
+
+응답 유실은 서버가 200 응답을 낸 뒤 client transport가 예외를 내도록 모사했습니다. 재시도 시각은 Coordinator의 주입 가능한 시계를 진행해 검증했습니다. 실제 OS 네트워크 단절·전송 중 앱 강제 종료나 실시간 30초 대기를 수행한 결과로 바꾸지 않습니다.
+
+### `202a2e2` 경쟁 조건: 실제 native DB·합성 ACK 네 가지 PASS
+
+각 경우를 별도 고유 DB에서 실행했습니다. 이 네 검사는 HTTP 대신 합성 ACK 응답을 사용하며, SQLite의 BEGIN·DELETE·COMMIT·ROLLBACK은 실제 비동기 native API입니다.
+
+| 경쟁 조건 | 실제 결과 |
+| --- | --- |
+| 빈 큐 snapshot 뒤 새 방문·삭제 작업 enqueue | 완료 저장 transaction이 false를 반환하고 성공 시각은 null 유지. Coordinator가 다음 배치까지 처리한 뒤에만 완료 저장 |
+| 같은 enqueue 뒤 자동 백업 opt-out | 첫 배치만 ACK, 새 두 작업을 큐에 남기고 성공 시각을 만들지 않음 |
+| ACK가 다른 transaction 뒤에서 대기 중 같은 owner의 token 교체 | captured guard 전달, ACK transaction rollback·Runner paused·ACK 0건, 큐 내용과 사진 URI 보존 |
+| 실제 outbox DELETE 직후 같은 owner의 token 교체 | 실제 삭제 1건 뒤 rollback, Runner paused·ACK 0건. 방문·사진·outbox ID/payload/시각 보존 |
+
+각 DB의 integrity는 `ok`였습니다. 경쟁 시점을 adapter의 제어 지점으로 만들었으며 실제 사용자 DB·세션·방문에는 주입하지 않았습니다. 새 기능 전체 E2E나 모든 동시 실행 조합의 통과로 확대하지 않습니다.
+
+### 자동 검사·보존·종료
+
+각 임시 소스 단계에서 `npm --prefix travel_visit_tracker run check`를 실행해 타입 검사·ESLint·이 worktree의 기존 **90개 테스트**가 PASS였습니다. 공통의 189개 모바일·36개 서버 검사 수를 Android 실행 결과로 바꾸지 않습니다. Android 커밋에는 공통 코드·테스트를 넣지 않습니다.
+
+마지막 원본 대조는 guest·기록 꺼짐, 전체 방문 4건(기존 GPS 3건·개발 1건), 사진 파일 1개, 전송 대기 3건, 모든 owner의 행·기존 사진 바이트 불변·integrity `ok`입니다. 원본 DB에 합성 방문을 넣거나 게스트 가져오기·삭제·초기화하지 않았습니다. 독립 시험 DB **6개와 해당 WAL·SHM의 부재**, 원본 DB의 존재를 확인했습니다.
+
+Inspector helpers·자체 Metro 8082·별도 HTTP 서버·에뮬레이터를 종료하고 전용 연결만 제거했습니다. 원래 있던 5개 파일은 바이트 단위로 복구하고 새 QA 파일 9개는 적용 해시를 확인한 뒤 제거했습니다. package/lock은 그대로입니다. 기존 APK·서명·SDK·AVD·DB·사진·백업·로그·원본 증거도 보존했습니다.
+
+시작 가용량은 20.52GiB, 종료 때는 18.52GiB였습니다. 파일시스템의 해당 시점 값이며 AVD·다른 작업의 사용량을 분리한 결과는 아닙니다. 이번에는 새 native 빌드나 캐시·중간 바이너리 삭제를 하지 않았고, 용량 확보량도 0입니다. 이전 날짜의 정리 결과와 합산해 이번 확보량으로 표시하지 않습니다.
+
+원본 근거는 Git 제외인 `docs/test-results/android-backup-ui-20261017/`에 보존합니다. 공개 문서에는 상태·개수·검증 한계만 적으며 계정·토큰·서버 주소·사진·기기 값과 원본 로그는 올리지 않습니다.
+
+| 근거 | 로컬 파일 |
+| --- | --- |
+| 두 SHA·임시 파일·복구 | `validation-files.json`, `original-*.txt`, `common-*.txt`, `restoration-result.json` |
+| 화면·동의·재실행 | `ui-summary.json`, `consent-summary.json`, `after-*-state.json`, `restored-state.json`, 비공개 화면 XML·PNG |
+| native 인증 항목·원본 대조 | `*-credential.json`, `baseline-data.json`, `after-*-data.json`, `final-data.json`, 비공개 fingerprint 기준 |
+| c95 실제 HTTP 14개 | `c95-native-probe-result.json`, `c95-native-probe-manifest.json`, `c95-complete.json` |
+| 202a 실제 HTTP 14개 | `native-probe-result.json`, `native-probe-manifest.json` |
+| 202a DB 경쟁 조건 네 가지 | `race-probe-result.json`, `race-probe-manifest.json`, `race-probe-source.js` |
+| 서버·임시 DB 제거 | `server-summary.json`, `server-final-counts.json`, `temporary-databases-cleanup.json` |
+| 자동 검사·설치 APK·종료 | `common-check.log`, `common-202a-check.log`, `installed-apk-preserved.json`, `shutdown-status.json`, `metro*.log`, `server.log`, `emulator.log` |
+
+실제 Android 휴대폰·Release·OS 클라우드 백업/복원·배터리와 G1~G4 전체 조건은 남아 있습니다. 사진 업로드·새 기기 복원·여러 기기 삭제 병합과 비어 있지 않은 앱 UI의 전송 중단·복구도 별도입니다. 공통 수정의 Android 제안은 이번 네 조건에서 해결 확인했으며, 결과만 기존 PR #1에 저장합니다.
 
 ## 10월 16일 설치 APK와 실제 비동기 SQLite
 
