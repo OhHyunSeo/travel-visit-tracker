@@ -1,10 +1,70 @@
 # Android 개발·검증 기록
 
-마지막 갱신: 2026-10-17, Asia/Seoul.
+마지막 갱신: 2026-10-18, Asia/Seoul.
 
-10월 17일 새 방문 백업 화면과 Coordinator를 Android에서 확인했습니다. `c95d6ca` 기준 계정 화면·동의·재실행 복구와 실제 native SQLite·HTTP 14개 검사가 PASS입니다. 수정된 세 파일을 `202a2e2`로 바꾼 뒤 같은 HTTP 14개 검사와 실제 DB 경쟁 조건 네 가지도 PASS였습니다. 원본 방문 4건, 사진 파일 1개, 전송 대기 3건의 전체 행·사진 바이트를 보존하고 임시 소스·실행 환경을 복구했습니다. 이전 결과는 아래 이력으로 유지합니다.
+10월 18일 `51c96d2`의 foreground 연결 복구를 별도 native async 파일 DB와 임시 HTTP 서버에서 확인했습니다. 저장된 확인·재시도 시각의 재개방 보존, 무인증 health, 같은 UUID의 이른 재전송, health·DB 갱신 중 상태 변경 보호와 HTTP 오류·timeout 등 13가지가 PASS입니다. 원본 방문 4건·사진 파일 1개·전송 대기 3건의 전체 행·사진 바이트를 보존하고 임시 파일·실행 환경을 복구했습니다. 이전 화면·전송·경쟁 조건 결과는 아래 이력으로 유지합니다.
 
 현재 실제 Android 휴대폰은 없습니다. 결과는 Debug APK의 정적 검사와 API 37 에뮬레이터 시험이며, 실제 휴대폰이나 출시용 Release 검증으로 보지 않습니다. 전체 체크리스트와 완료 수는 공통 담당 채팅에서 관리합니다.
+
+## 10월 18일 foreground 연결 복구
+
+### 고정 소스와 검증 환경
+
+Android 시작 기준은 `cf79090`, 공통 검증 소스는 **`51c96d249b2772517da3d9937cb03e568dc1b2d9`**입니다. 고정 SHA를 받기 전에는 원본 파일·해시·부재와 기존 DB/사진만 확인했고 새 소스를 적용하지 않았습니다. 원본 모든 owner 행·사진 바이트는 10월 17일 기준과 같았습니다. 이후 이전과 같은 필요한 JS/TS 14개만 임시 적용하고 backend의 src·schema도 이 SHA의 별도 읽기 전용 사본으로 고정했습니다.
+
+기존 API 37·SwiftShader AVD, 보존한 Debug APK와 자체 Metro 8082를 사용했습니다. 설치 APK의 hash가 보존한 APK와 같았으며 새 설치·native rebuild·의존성 변경은 없었습니다. 실제 사용자 DB에 합성 방문을 넣거나 게스트 가져오기·초기화하지 않았고, 원래 checkout·iOS 8081·iPhone은 조작하지 않았습니다.
+
+검사는 실제 앱에 로드된 Repository·Coordinator·VisitSyncClient와 `expo-sqlite`의 비동기 API를 사용했습니다. 각각 새 고유 파일 DB를 열어 원본과 다른 경로를 확인하고 WAL·busy timeout을 적용했습니다. 시험 계정·DB·서버 업로드 경로도 원본과 별도입니다. Inspector는 즉시 시작 응답을 받은 뒤 전역 완료 플래그를 polling했습니다.
+
+### 연결 복구 13가지 PASS
+
+전송 transport가 처음 두 번 `TypeError`를 내도록 제어했습니다. 이 두 실패는 실제 HTTP 요청이나 OS Wi-Fi 단절이 아닙니다. 이후 health·정상 ACK와 제어한 HTTP 오류 응답은 실제 임시 HTTP 서버를 사용했습니다. Coordinator의 시계만 주입해 진행했고, 실제 health abort에는 실시간 timer를 사용했습니다.
+
+| 경우 | 실제 결과 |
+| --- | --- |
+| 두 transport 실패 → DB 재개방 → 이른 복구 | 첫 실패 후 retry/check는 30초. 둘째 실패 후 retry는 60초·check는 30초로 저장되고 재개방 후 동일. check 직전 호출은 요청 0건, due 시 무인증 GET health 뒤 긴 retry 전에 같은 작업 UUID ACK |
+| health HTTP 503 | 방문 재전송 없이 connectionCheckAt만 진행. nextAttemptAt·큐·사진·완료 시각 보존 |
+| health 응답 처리 중 opt-out | 자동 꺼짐을 따르고 두 시각·큐·사진 보존, 후속 sync 없음 |
+| health 응답 처리 중 foreground 이탈 | 전송 pause, 두 시각·큐·사진 보존 |
+| health 응답 처리 중 같은 owner token 교체 | 전송 pause, 두 시각·큐·사진 보존 |
+| 연결 확인 CAS의 BEGIN 뒤 foreground 이탈 | 실제 transaction rollback. 일반 backoff로 기존 시각을 덮어쓰지 않음 |
+| CAS 첫 native metadata 쓰기 뒤 token 교체 | 실제 쓰기 뒤 rollback, 원래 두 시각·큐·사진 보존 |
+| CAS 첫 native 쓰기 뒤 DB 오류 주입 | 실제 쓰기 뒤 rollback. 일반 실패 backoff 대신 기존 시각 보존 안내·상태 유지 |
+| CAS 직전 retry/check가 다른 값으로 갱신됨 | 오래된 expected 값의 CAS를 거절하고 새 두 시각·큐 보존 |
+| 실제 HTTP 401 응답 | 인증 pause 저장, 자동 health·재전송 우회 없음 |
+| 실제 HTTP 409 응답 | 충돌 pause 저장, 자동 health·재전송 우회 없음 |
+| 실제 HTTP 500 두 번 | 일반 60초 retry 유지·connectionCheckAt null. 기한 전 health 우회 없음 |
+| 실제 지연 health HTTP·3초 abort | AbortSignal이 발생하고 false 반환. 1회 관측 3,022ms, Authorization 없음 |
+
+정상 복구에서는 방문 큐만 ACK되고 사진 큐·URI·연결·소수점 시각을 보존했습니다. 서버에서 실제 방문 1건·고유 방문 ID 1개·작업 영수증 1개를 직접 대조했습니다. 본 검사 health 요청은 서버 관측 10회였고 모두 GET·Authorization 없음이었습니다. client에서도 credentials omit을 확인했습니다. 준비 도구의 health 호출은 이 10회에 합산하지 않았습니다.
+
+health·CAS 경쟁 시점, DB 오류와 HTTP 401/409/500 응답은 검증용 adapter·transport·서버 제어로 만들었습니다. CAS 자체의 BEGIN·쓰기·ROLLBACK은 실제 비동기 native SQLite입니다. 모든 파일 DB의 integrity가 `ok`였고, 작업 ID·payload·생성 시각·attempts를 포함한 큐 보존을 대조했습니다. 3,022ms는 해당 Debug 에뮬레이터 1회 관측이며 성능 SLA나 실기기 수치가 아닙니다.
+
+실제 사용자 계정의 nonempty 큐·OS 네트워크 변경·전송 중 프로세스 종료·전체 앱 E2E는 별도입니다. 새 “백업 확인 중/다음 백업 확인” 문구의 실제 화면 검사는 하지 않았습니다. 이전 14개 전송 검사와 장시간 화면 꺼짐도 이번에 반복하거나 새 결과로 합산하지 않았습니다.
+
+### 사진 서버 기반과 모바일 범위
+
+고정 backend 사본은 별도 합성 DB를 version 3으로 초기화했습니다. 이번 Android 검사는 방문·health 경로만 사용했으며 새 사진 API를 호출하지 않았습니다. **모바일 사진 전송·동의·다운로드·다른 기기 복원은 여전히 연결 전**입니다. 사진 행·큐·URI 보존 결과를 사진 업로드 성공으로 표시하지 않습니다. 공통 서버 사진 검사 61개도 이 Android 실행 수에 넣지 않습니다.
+
+### 자동 검사·원본 보존·종료
+
+임시 소스에서 `npm --prefix travel_visit_tracker run check`의 타입 검사·ESLint·이 worktree의 기존 **90개 테스트가 PASS**였습니다. 공통 모바일 232개·서버 61개와 Android의 실제 13가지 native 검사는 별도 결과입니다.
+
+마지막 원본은 guest·기록 꺼짐·방문 4건(기존 GPS 3건·개발 1건)·사진 파일 1개·outbox 3건·integrity `ok`입니다. 모든 owner의 visits/photos/outbox 전체 행·기존 사진 바이트는 시작과 같습니다. 별도 시험 DB **12개와 WAL·SHM의 부재**, 원본 DB의 존재를 확인했습니다. timeout 경우에는 별도 DB를 만들지 않았습니다.
+
+자체 Metro·합성 HTTP 서버·Inspector helpers·에뮬레이터를 종료하고 전용 연결만 제거했습니다. 임시 파일 14개 중 기존 5개는 원문과 바이트 단위로 같게 복구하고 새 9개는 적용 해시 확인 후 제거했습니다. package/lock·APK·서명·SDK·AVD·백업·원본 로그·증거는 보존했습니다. 이번에는 새 native 빌드·캐시 삭제나 용량 정리를 하지 않았고 확보량은 0입니다. 시점별 가용량은 준비 18.46GiB·종료 16.73GiB이며 다른 작업·AVD의 사용량을 분리한 값은 아닙니다.
+
+원본은 Git 제외인 `docs/test-results/android-connection-recovery-20261018/`에 보존합니다. 공개 요약에는 계정·token·서버 주소·기기 값·원본 사진·DB·원본 로그를 넣지 않습니다.
+
+| 근거 | 로컬 파일 |
+| --- | --- |
+| 준비·고정 SHA·복구 | `preparation.json`, `validation-files.json`, `original-*.txt`, `common-*.txt`, `restoration-result.json` |
+| 원본·기존 APK 대조 | `prior-baseline-match.json`, `baseline-data.json`, `final-data.json`, `prepared-state.json`, `final-runtime-state.json` |
+| native 13가지·시점 제어 | `native-probe-result.json`, `native-probe-manifest.json`, 비공개 검증 표현식·새 fixture |
+| 실제 HTTP·DBv3·중복 없음 | `server-summary.json`, `server-verification.json` |
+| 시험 DB 제거·종료·자동 검사 | `temporary-databases-cleanup.json`, `shutdown-status.json`, `common-check.log`, `metro.log`, `server.log`, `emulator.log` |
+
+남은 수용 범위는 실제 Android·Release·배터리·OS 백업/복원, nonempty 실제 사용자 UI의 연결 복구·전송 중단, 모바일 사진 전송·새 기기 복원·여러 기기 삭제 병합입니다. 이번 결과로 전체 G1~G4를 완료 처리하지 않습니다.
 
 ## 10월 17일 방문 백업 화면·Coordinator와 경쟁 조건
 

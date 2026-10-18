@@ -1,6 +1,21 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
-갱신: 2026-10-17. 이 문서는 공통 코드에 적용할 내용과 Android에서 확인한 결과를 구분해 기록합니다. Android 채팅이 공통 파일을 직접 커밋하지 않습니다.
+갱신: 2026-10-18. 이 문서는 공통 코드에 적용할 내용과 Android에서 확인한 결과를 구분해 기록합니다. Android 채팅이 공통 파일을 직접 커밋하지 않습니다.
+
+## 10월 18일 foreground 연결 복구 확인
+
+Android `cf79090`에서 공통 **`51c96d249b2772517da3d9937cb03e568dc1b2d9`**의 필요한 14개 JS/TS만 임시 적용했습니다. 별도 native async 파일 DB·합성 계정과 고정 backend 사본의 실제 임시 HTTP를 사용한 연결 복구 13가지가 PASS입니다.
+
+- 두 transport 예외 뒤 retry/check 시각을 저장하고 DB 재개방 후 보존. 확인 기한 전 요청 없이 무인증 GET health 뒤 긴 retry보다 먼저 같은 작업 UUID ACK. 사진 큐·URI·소수점 시각 유지.
+- health HTTP 503은 확인 시각만 진행하며, health 응답 중 opt-out·foreground 이탈·token 변경은 두 시각·큐 보존.
+- 실제 CAS transaction 중 foreground/token 변경·DB 오류는 rollback하며 일반 backoff로 덮어쓰지 않음. expected 시각이 바뀌었으면 새 시각을 유지.
+- 실제 제어 HTTP 401/409는 pause, 500은 일반 retry를 유지하고 health로 우회하지 않음. 실제 지연 health의 약 3초 abort·무인증도 확인.
+
+transport 예외·시계·경쟁 시점·오류 status는 합성 제어입니다. health·ACK는 실제 HTTP이고 DB 쓰기·rollback은 실제 native API입니다. 서버는 방문·고유 ID·영수증 각 1개였고 본 검사 health 10회 모두 GET·Authorization 없음이었습니다. 실제 OS Wi-Fi 단절·nonempty 사용자 UI·전송 중 프로세스 종료의 E2E로 확대하지 않습니다. 새 UI 문구와 이전 14개·장시간 시험은 이번에 다시 실행하지 않았습니다.
+
+backend 합성 DBv3는 확인했지만 새 사진 API는 호출하지 않았습니다. 사진 서버 기반과 **아직 연결하지 않은 모바일 사진 업로드·동의·다운로드·복원**을 구분합니다. 사진 큐 보존은 사진 전송 성공이 아닙니다.
+
+타입·lint·기존 Android worktree 90개 테스트가 PASS이며 공통 232/61개와 구분합니다. 원본 모든 owner 행·사진 바이트·guest 방문 4건·사진 파일 1개·대기 3건·기록 꺼짐·무결성을 유지했습니다. 시험 DB 12개·WAL·SHM 제거, 공통 파일 14개 복구와 자체 프로세스 종료도 확인했습니다. 새 설치·native build·의존성 변경·캐시 삭제는 없었고 iOS·iPhone·원래 checkout은 조작하지 않았습니다. 정확한 한계·소스·근거는 [진행 기록](ANDROID_PROGRESS.md)에 저장합니다.
 
 ## 10월 17일 새 방문 백업·Coordinator Android 확인
 
