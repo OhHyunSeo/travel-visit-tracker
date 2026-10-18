@@ -1,5 +1,10 @@
 import { AuthError, sessionOwner, type Session } from './authClient';
-import { VisitSyncClient, VisitSyncRunner, type VisitOutbox } from './visitSync';
+import {
+  VisitConnectionError,
+  VisitSyncClient,
+  VisitSyncRunner,
+  type VisitOutbox,
+} from './visitSync';
 import type { QueuedVisitOperation, VisitBackupState } from '../storage/outbox';
 
 export type VisitBackupResult = {
@@ -17,7 +22,13 @@ export type VisitBackupRepository = VisitOutbox & {
       successAt?: number;
       nextAttemptAt: number | null;
       pauseReason?: VisitBackupState['pauseReason'];
+      connectionCheckAt?: number | null;
     },
+    stillCurrent?: () => boolean,
+  ): Promise<boolean>;
+  updateVisitConnectionCheck(
+    expected: { nextAttemptAt: number; connectionCheckAt: number },
+    nextCheckAt: number | null,
     stillCurrent?: () => boolean,
   ): Promise<boolean>;
 };
@@ -91,12 +102,41 @@ export class VisitBackupCoordinator {
       if (!manual() && !state.autoEnabled) return result(null, { skipped: true });
       if (!manual() && state.pauseReason)
         return result(pauseMessage(state.pauseReason), { skipped: true });
-      if (!manual() && state.nextAttemptAt !== null && state.nextAttemptAt > this.now())
-        return result(null, { skipped: true });
+      if (!manual() && state.nextAttemptAt !== null && state.nextAttemptAt > this.now()) {
+        try {
+          if (state.connectionCheckAt === null || state.connectionCheckAt > this.now())
+            return result(null, { skipped: true });
+          if (!this.isActive()) return foregroundPaused();
+          const available = await this.client.connectionAvailable(session);
+          if (!isCurrent()) return paused();
+          if (!this.isActive()) return foregroundPaused();
+          const updated = await repository.updateVisitConnectionCheck(
+            { nextAttemptAt: state.nextAttemptAt, connectionCheckAt: state.connectionCheckAt },
+            available ? null : Math.min(state.nextAttemptAt, this.now() + 30000),
+            () => isCurrent() && this.isActive(),
+          );
+          if (!isCurrent()) return paused();
+          if (!updated || !available) return result(null, { skipped: true });
+          state = await repository.visitBackupState();
+          autoEnabled = state.autoEnabled;
+          if (!isCurrent()) return paused();
+          if (!this.isActive()) return foregroundPaused();
+          if (!state.autoEnabled || state.pauseReason !== null)
+            return result(null, { skipped: true });
+          if (state.nextAttemptAt !== null && state.nextAttemptAt > this.now())
+            return result(null, { skipped: true });
+        } catch {
+          if (!isCurrent()) return paused();
+          if (!this.isActive()) return foregroundPaused();
+          return result(
+            '서버 연결 확인 상태를 저장하지 못했습니다. 기존 대기 기록과 재시도 시각을 보존했습니다.',
+          );
+        }
+      }
       if (state.pendingVisits === 0) {
         if (manual() && (state.nextAttemptAt !== null || state.pauseReason !== null))
           await repository.recordVisitBackupResult(
-            { nextAttemptAt: null, pauseReason: null },
+            { nextAttemptAt: null, pauseReason: null, connectionCheckAt: null },
             isCurrent,
           );
         if (!isCurrent()) return paused();
@@ -143,6 +183,7 @@ export class VisitBackupCoordinator {
               ...(acknowledged > 0 ? { successAt: this.now() } : {}),
               nextAttemptAt: null,
               pauseReason: null,
+              connectionCheckAt: null,
             },
             isCurrent,
           );
@@ -164,7 +205,10 @@ export class VisitBackupCoordinator {
         if (sent.acknowledged === 0) break;
       }
       const nextAttemptAt = this.nextRetry(ownerId!);
-      await repository.recordVisitBackupResult({ nextAttemptAt, pauseReason: null }, isCurrent);
+      await repository.recordVisitBackupResult(
+        { nextAttemptAt, pauseReason: null, connectionCheckAt: null },
+        isCurrent,
+      );
       if (!isCurrent()) return paused();
       return result(
         autoEnabled
@@ -184,10 +228,15 @@ export class VisitBackupCoordinator {
             : null;
       if (repository && repository.ownerId === ownerId) {
         try {
+          const nextAttemptAt = pauseReason ? null : this.nextRetry(ownerId!);
           await repository.recordVisitBackupResult(
             {
-              nextAttemptAt: pauseReason ? null : this.nextRetry(ownerId!),
+              nextAttemptAt,
               pauseReason,
+              connectionCheckAt:
+                error instanceof VisitConnectionError && nextAttemptAt !== null
+                  ? Math.min(nextAttemptAt, this.now() + 30000)
+                  : null,
             },
             isCurrent,
           );

@@ -708,19 +708,25 @@ describe('visit backup transaction boundaries', () => {
       sent,
       sent.map((row) => row.id),
     );
-    await account.recordVisitBackupResult({ successAt: initial, nextAttemptAt: initial + 30000 });
+    await account.recordVisitBackupResult({
+      successAt: initial,
+      nextAttemptAt: initial + 30000,
+      connectionCheckAt: initial + 10000,
+    });
     const emptySnapshot = account.visitBackupState();
     const newDeletion = account.deleteVisit('session-A-visit', 'new-delete', initial + 400000);
     expect((await emptySnapshot).pendingVisits).toBe(0);
     const completed = await account.recordVisitBackupResult({
       successAt: initial + 500000,
       nextAttemptAt: null,
+      connectionCheckAt: null,
     });
     await newDeletion;
     expect(await account.visitBackupState()).toMatchObject({
       pendingVisits: 1,
       lastSuccessAt: initial,
       nextAttemptAt: initial + 30000,
+      connectionCheckAt: initial + 10000,
     });
     expect(completed).toBe(false);
     const remaining = await account.pendingVisitOperations();
@@ -795,6 +801,7 @@ describe('account-scoped visit backup preferences and progress', () => {
       pendingPhotos: 1,
       lastSuccessAt: null,
       nextAttemptAt: null,
+      connectionCheckAt: null,
       pauseReason: null,
     });
     await expect(repository.setVisitBackupEnabled(true)).rejects.toThrow('현재 로그인한 계정');
@@ -909,10 +916,254 @@ describe('account-scoped visit backup preferences and progress', () => {
       await expect(account.recordVisitBackupResult({ nextAttemptAt: value })).rejects.toThrow(
         '시각',
       );
+      await expect(
+        account.recordVisitBackupResult({ nextAttemptAt: null, connectionCheckAt: value }),
+      ).rejects.toThrow('시각');
       expect(await account.visitBackupState()).toMatchObject({
         lastSuccessAt: null,
         nextAttemptAt: null,
+        connectionCheckAt: null,
       });
+    },
+  );
+});
+describe('persisted automatic visit connection checks', () => {
+  async function waitingAccount() {
+    const account = new Repository(connection, 'account:test:1');
+    await account.activateOwner();
+    await account.setVisitBackupEnabled(true);
+    await account.recordVisitBackupResult({ successAt: initial - 100, nextAttemptAt: null });
+    await record(account);
+    await account.addPhoto({
+      id: 'connection-photo',
+      visitId: 'session-A-visit',
+      uri: 'file:///synthetic-connection.jpg',
+      createdAt: initial,
+    });
+    const expected = { nextAttemptAt: initial + 300000, connectionCheckAt: initial + 30000 };
+    await account.recordVisitBackupResult({ ...expected, pauseReason: null });
+    return { account, expected };
+  }
+  function allSettings() {
+    return db.prepare('SELECT key,value FROM settings ORDER BY key').all();
+  }
+  function dataRows() {
+    return {
+      visits: db.prepare('SELECT * FROM visits ORDER BY id').all(),
+      photos: db.prepare('SELECT * FROM photos ORDER BY id').all(),
+      outbox: db.prepare('SELECT * FROM outbox ORDER BY id').all(),
+      candidates: db.prepare('SELECT * FROM candidates ORDER BY id').all(),
+    };
+  }
+  it('persists failed checks and clears only retry/check times on recovery after database reopen', async () => {
+    const { account, expected } = await waitingAccount();
+    const originalData = dataRows();
+    const originalSnapshot = await account.snapshot(false);
+    const nextCheckAt = expected.connectionCheckAt + 30000;
+    expect(await account.updateVisitConnectionCheck(expected, nextCheckAt)).toBe(true);
+    db.close();
+    db = new DatabaseSync(join(directory, 'data.sqlite'));
+    connection = adapter(db);
+    const reopened = new Repository(connection, account.ownerId);
+    expect(await reopened.visitBackupState()).toEqual({
+      autoEnabled: true,
+      pendingVisits: 1,
+      pendingPhotos: 1,
+      lastSuccessAt: initial - 100,
+      nextAttemptAt: expected.nextAttemptAt,
+      connectionCheckAt: nextCheckAt,
+      pauseReason: null,
+    });
+    const beforeRecovery = allSettings();
+    expect(
+      await reopened.updateVisitConnectionCheck(
+        { ...expected, connectionCheckAt: nextCheckAt },
+        null,
+      ),
+    ).toBe(true);
+    expect(await reopened.visitBackupState()).toEqual({
+      autoEnabled: true,
+      pendingVisits: 1,
+      pendingPhotos: 1,
+      lastSuccessAt: initial - 100,
+      nextAttemptAt: null,
+      connectionCheckAt: null,
+      pauseReason: null,
+    });
+    const unchangedSettings = (rows: ReturnType<typeof allSettings>) =>
+      rows.filter(
+        (row) =>
+          row.key !== `${account.ownerId}:visitBackupNextAttemptAt` &&
+          row.key !== `${account.ownerId}:visitBackupConnectionCheckAt`,
+      );
+    expect(unchangedSettings(allSettings())).toEqual(unchangedSettings(beforeRecovery));
+    expect(await reopened.snapshot(false)).toEqual(originalSnapshot);
+    expect(dataRows()).toEqual(originalData);
+    expect(db.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+  });
+  it('preserves an omitted check time and stores an explicitly cleared check time', async () => {
+    const { account, expected } = await waitingAccount();
+    await account.recordVisitBackupResult({ nextAttemptAt: expected.nextAttemptAt + 1000 });
+    expect((await account.visitBackupState()).connectionCheckAt).toBe(expected.connectionCheckAt);
+    await account.recordVisitBackupResult({
+      nextAttemptAt: expected.nextAttemptAt + 1000,
+      connectionCheckAt: null,
+    });
+    expect((await account.visitBackupState()).connectionCheckAt).toBe(null);
+  });
+  it.each([
+    'retry changed',
+    'check changed',
+    'opted out',
+    'authentication',
+    'conflict',
+    'photo only',
+  ])('does not change any metadata for a late result after %s', async (change) => {
+    const { account, expected } = await waitingAccount();
+    if (change === 'retry changed')
+      await account.recordVisitBackupResult({ nextAttemptAt: expected.nextAttemptAt + 1000 });
+    else if (change === 'check changed')
+      await account.recordVisitBackupResult({
+        nextAttemptAt: expected.nextAttemptAt,
+        connectionCheckAt: expected.connectionCheckAt + 1000,
+      });
+    else if (change === 'opted out') await account.setVisitBackupEnabled(false);
+    else if (change === 'authentication' || change === 'conflict')
+      await account.recordVisitBackupResult({
+        nextAttemptAt: expected.nextAttemptAt,
+        pauseReason: change,
+      });
+    else {
+      const pending = await account.pendingVisitOperations();
+      await account.acknowledgeVisitOperations(
+        pending,
+        pending.map((row) => row.id),
+      );
+    }
+    const settings = allSettings();
+    const records = dataRows();
+    expect(await account.updateVisitConnectionCheck(expected, null)).toBe(false);
+    expect(await account.updateVisitConnectionCheck(expected, initial + 90000)).toBe(false);
+    expect(allSettings()).toEqual(settings);
+    expect(dataRows()).toEqual(records);
+  });
+  it('checks opted-out state inside the serialized transaction after a queued preference change', async () => {
+    const { account, expected } = await waitingAccount();
+    const optingOut = account.setVisitBackupEnabled(false);
+    const lateResult = account.updateVisitConnectionCheck(expected, null);
+    await optingOut;
+    expect(await lateResult).toBe(false);
+    expect(await account.visitBackupState()).toMatchObject({ autoEnabled: false, ...expected });
+  });
+  it('rejects guest and inactive-account responses without touching either owner', async () => {
+    const { account, expected } = await waitingAccount();
+    const second = new Repository(connection, 'account:test:2');
+    const switching = second.activateOwner();
+    const lateResult = account.updateVisitConnectionCheck(expected, null);
+    await switching;
+    const settings = allSettings();
+    const records = dataRows();
+    await expect(lateResult).rejects.toThrow('현재 로그인한 계정');
+    await expect(repository.updateVisitConnectionCheck(expected, null)).rejects.toThrow(
+      '현재 로그인한 계정',
+    );
+    expect(allSettings()).toEqual(settings);
+    expect(dataRows()).toEqual(records);
+    expect((await account.visitBackupState()).connectionCheckAt).toBe(expected.connectionCheckAt);
+    expect((await second.visitBackupState()).connectionCheckAt).toBe(null);
+  });
+  it.each(['begin', 'settings read', 'queue read', 'retry write', 'check write'])(
+    'rolls back recovery metadata when the captured session changes during %s',
+    async (stage) => {
+      const { account, expected } = await waitingAccount();
+      const settings = allSettings();
+      const records = dataRows();
+      let current = true;
+      const guarded = new Repository(
+        {
+          ...connection,
+          exec: async (sql) => {
+            await connection.exec(sql);
+            if (stage === 'begin' && sql === 'BEGIN IMMEDIATE') current = false;
+          },
+          all: async <T>(sql: string, ...params: (string | number | null)[]) => {
+            const result = await connection.all<T>(sql, ...params);
+            if (stage === 'settings read' && sql.startsWith('SELECT key,value')) current = false;
+            return result;
+          },
+          first: async <T>(sql: string, ...params: (string | number | null)[]) => {
+            const result = await connection.first<T>(sql, ...params);
+            if (stage === 'queue read' && sql.startsWith('SELECT 1 AS pending')) current = false;
+            return result;
+          },
+          run: async (sql, ...params) => {
+            const result = await connection.run(sql, ...params);
+            if (
+              (stage === 'retry write' &&
+                params[0] === `${account.ownerId}:visitBackupNextAttemptAt`) ||
+              (stage === 'check write' &&
+                params[0] === `${account.ownerId}:visitBackupConnectionCheckAt`)
+            )
+              current = false;
+            return result;
+          },
+        },
+        account.ownerId,
+      );
+      await expect(
+        guarded.updateVisitConnectionCheck(expected, null, () => current),
+      ).rejects.toThrow('로그인 정보가 바뀌어');
+      expect(allSettings()).toEqual(settings);
+      expect(dataRows()).toEqual(records);
+      expect(db.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+    },
+  );
+  it('rolls back the first metadata write if storing the check time fails', async () => {
+    const { account, expected } = await waitingAccount();
+    const settings = allSettings();
+    const records = dataRows();
+    const failing = new Repository(
+      {
+        ...connection,
+        run: async (sql, ...params) => {
+          if (params[0] === `${account.ownerId}:visitBackupConnectionCheckAt`)
+            throw new Error('synthetic storage failure');
+          return connection.run(sql, ...params);
+        },
+      },
+      account.ownerId,
+    );
+    await expect(failing.updateVisitConnectionCheck(expected, null)).rejects.toThrow(
+      'synthetic storage failure',
+    );
+    expect(allSettings()).toEqual(settings);
+    expect(dataRows()).toEqual(records);
+  });
+  it.each([NaN, Infinity, -1, Number.MAX_VALUE])(
+    'rejects an invalid expected or next connection time %s without writing',
+    async (value) => {
+      const { account, expected } = await waitingAccount();
+      const settings = allSettings();
+      for (const [captured, nextCheckAt] of [
+        [{ ...expected, nextAttemptAt: value }, null],
+        [{ ...expected, connectionCheckAt: value }, null],
+        [expected, value],
+      ] as const)
+        await expect(account.updateVisitConnectionCheck(captured, nextCheckAt)).rejects.toThrow(
+          '시각',
+        );
+      expect(allSettings()).toEqual(settings);
+    },
+  );
+  it.each(['-1', '1e999', '"invalid"', '9007199254740992'])(
+    'rejects invalid persisted connection metadata %s',
+    async (raw) => {
+      const account = new Repository(connection, 'account:test:1');
+      db.prepare('INSERT INTO settings(key,value) VALUES (?,?)').run(
+        `${account.ownerId}:visitBackupConnectionCheckAt`,
+        raw,
+      );
+      await expect(account.visitBackupState()).rejects.toThrow('시각');
     },
   );
 });

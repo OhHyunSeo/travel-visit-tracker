@@ -63,6 +63,7 @@ const backupState = (overrides: Partial<VisitBackupState> = {}): VisitBackupStat
   pendingPhotos: 2,
   lastSuccessAt: null,
   nextAttemptAt: null,
+  connectionCheckAt: null,
   pauseReason: null,
   ...overrides,
 });
@@ -182,6 +183,22 @@ describe('visit backup app integration', () => {
       await app.getState().backupVisits(false);
       expect(mocks.run).not.toHaveBeenCalled();
       expect(mocks.fetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([true, false])(
+    'only forwards a due connection recovery check while normal retry is delayed (due=%s)',
+    async (due) => {
+      await show(
+        accountA,
+        backupState({
+          autoEnabled: true,
+          nextAttemptAt: Date.now() + 300000,
+          connectionCheckAt: Date.now() + (due ? -1000 : 30000),
+        }),
+      );
+      await app.getState().backupVisits(false);
+      expect(mocks.run).toHaveBeenCalledTimes(due ? 1 : 0);
     },
   );
 

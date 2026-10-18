@@ -11,11 +11,38 @@ export type VisitOutbox = {
     stillCurrent?: () => boolean,
   ): Promise<number>;
 };
+export class VisitConnectionError extends Error {
+  constructor() {
+    super('서버에 연결하지 못했습니다. 대기 기록을 보존했습니다.');
+    this.name = 'VisitConnectionError';
+  }
+}
 export class VisitSyncClient {
   constructor(
     private readonly send: typeof fetch = fetch,
     private readonly development = false,
   ) {}
+  async connectionAvailable(session: Session): Promise<boolean> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    try {
+      const apiUrl = normalizeApiUrl(session.apiUrl, this.development);
+      const response = await this.send(`${apiUrl}/health`, {
+        method: 'GET',
+        redirect: 'error',
+        credentials: 'omit',
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      if (!response.ok) return false;
+      const body = (await response.json()) as { status?: unknown; service?: unknown } | null;
+      return body?.status === 'ok' && body.service === 'travel-visit-tracker-backend';
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
   async sendBatch(
     session: Session,
     operations: readonly QueuedVisitOperation[],
@@ -34,13 +61,18 @@ export class VisitSyncClient {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
     try {
-      const response = await this.send(`${apiUrl}/api/visits/sync`, {
-        method: 'POST',
-        redirect: 'error',
-        signal: controller.signal,
-        headers: { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' },
-        body,
-      });
+      let response: Response;
+      try {
+        response = await this.send(`${apiUrl}/api/visits/sync`, {
+          method: 'POST',
+          redirect: 'error',
+          signal: controller.signal,
+          headers: { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' },
+          body,
+        });
+      } catch {
+        throw new VisitConnectionError();
+      }
       if (!response.ok)
         throw new AuthError(
           response.status === 401
@@ -50,7 +82,14 @@ export class VisitSyncClient {
               : '방문을 전송하지 못했습니다. 대기 기록을 보존했습니다.',
           response.status,
         );
-      const result = (await response.json()) as { acknowledgedIds?: unknown } | null;
+      let result: { acknowledgedIds?: unknown } | null;
+      try {
+        result = (await response.json()) as typeof result;
+      } catch (error) {
+        if (controller.signal.aborted || error instanceof TypeError)
+          throw new VisitConnectionError();
+        throw new Error('서버의 저장 확인 응답을 읽을 수 없습니다. 대기 기록을 보존했습니다.');
+      }
       const ids = result?.acknowledgedIds;
       if (
         !Array.isArray(ids) ||

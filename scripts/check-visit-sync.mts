@@ -13,6 +13,7 @@ import {
   type Session,
 } from "../travel_visit_tracker/src/services/authClient.ts";
 import {
+  VisitConnectionError,
   VisitSyncClient,
   VisitSyncRunner,
 } from "../travel_visit_tracker/src/services/visitSync.ts";
@@ -119,7 +120,7 @@ try {
       new VisitSyncClient(send, true),
     );
   const before = await repository.pendingVisitOperations();
-  await assert.rejects(runner(lostResponse).run(), /synthetic response loss/);
+  await assert.rejects(runner(lostResponse).run(), VisitConnectionError);
   assert.equal((await repository.snapshot(false)).pending, 2);
   assert.equal(
     (await backend.db.get("SELECT COUNT(*) AS count FROM visits")).count,
@@ -252,6 +253,7 @@ try {
     pendingPhotos: 1,
     lastSuccessAt: clock,
     nextAttemptAt: null,
+    connectionCheckAt: null,
     pauseReason: null,
   });
   assert.deepEqual(
@@ -307,6 +309,7 @@ try {
     pendingPhotos: 1,
     lastSuccessAt: firstSuccessAt,
     nextAttemptAt: scheduledAt,
+    connectionCheckAt: scheduledAt,
     pauseReason: null,
   });
   db.close();
@@ -345,6 +348,7 @@ try {
     pendingPhotos: 1,
     lastSuccessAt: clock,
     nextAttemptAt: null,
+    connectionCheckAt: null,
     pauseReason: null,
   });
   assert.deepEqual(
@@ -374,6 +378,58 @@ try {
   console.log(
     "PASS: visit backup coordinator over temporary mobile/server SQLite and HTTP, manual opt-in bypass, photo queue/URI preservation, acknowledged-only success time, persisted retry after response loss, reopened delay skip and same-UUID replay without duplicate visits or receipts",
   );
+
+  await confirmSyntheticVisit(epoch + 3000000);
+  const recoveryWork = await repository.pendingVisitOperations();
+  let unavailable = true;
+  const recoveryCalls: { path: string; authorized: boolean; operationIds: string[] }[] = [];
+  const recoveringTransport: typeof fetch = async (input, options) => {
+    const requestPath = new URL(String(input)).pathname;
+    const operations = options?.body ? JSON.parse(options.body as string).operations : [];
+    recoveryCalls.push({
+      path: requestPath,
+      authorized: new Headers(options?.headers).has("Authorization"),
+      operationIds: operations.map((operation: { id: string }) => operation.id),
+    });
+    if (unavailable) throw new TypeError("synthetic connection unavailable");
+    return fetch(input, options);
+  };
+  clock = epoch + 3500000;
+  const recovering = coordinator(recoveringTransport);
+  assert.equal((await recovering.run()).acknowledged, 0);
+  clock += 30000;
+  assert.equal((await recovering.run()).acknowledged, 0);
+  const waitingForConnection = await repository.visitBackupState();
+  assert.equal(waitingForConnection.nextAttemptAt, clock + 60000);
+  assert.equal(waitingForConnection.connectionCheckAt, clock + 30000);
+  db.close();
+  db = new DatabaseSync(mobilePath);
+  connection = adapter(db);
+  repository = new Repository(connection, sessionOwner(c));
+  assert.deepEqual(await repository.visitBackupState(), waitingForConnection);
+  const recoveredAfterReopen = coordinator(recoveringTransport);
+  clock = waitingForConnection.connectionCheckAt! - 1;
+  assert.equal((await recoveredAfterReopen.run()).skipped, true);
+  assert.equal(recoveryCalls.length, 2);
+  unavailable = false;
+  clock++;
+  assert.ok(clock < waitingForConnection.nextAttemptAt!);
+  assert.equal((await recoveredAfterReopen.run()).acknowledged, 1);
+  assert.deepEqual(recoveryCalls.map((call) => call.path), [
+    "/api/visits/sync", "/api/visits/sync", "/health", "/api/visits/sync",
+  ]);
+  assert.equal(recoveryCalls[2].authorized, false);
+  assert.deepEqual(recoveryCalls[2].operationIds, []);
+  assert.deepEqual(recoveryCalls[3].operationIds, recoveryWork.map((operation) => operation.id));
+  assert.deepEqual(await repository.visitBackupState(), {
+    autoEnabled: true, pendingVisits: 0, pendingPhotos: 1, lastSuccessAt: clock,
+    nextAttemptAt: null, connectionCheckAt: null, pauseReason: null,
+  });
+  assert.deepEqual(await readPhotoWork(), originalPhotoWork);
+  assert.equal((await read(c)).visits.length, 3);
+  assert.equal((await backend.db.get("SELECT COUNT(*) AS count FROM visit_sync_operations WHERE user_id=?", c.user.id)).count, 3);
+  console.log("PASS: foreground connection recovery over real temporary HTTP and SQLite, persisted health-check timing after reopen, credential-free health probe and same-UUID retry before the longer delay, photo work preserved");
+
 } finally {
   if (server)
     await new Promise<void>((resolve, reject) =>

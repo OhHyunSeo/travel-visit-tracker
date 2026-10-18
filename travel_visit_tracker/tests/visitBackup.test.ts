@@ -29,6 +29,7 @@ function harness(count = 1, enabled = true) {
     pendingPhotos: 2,
     lastSuccessAt: null,
     nextAttemptAt: null,
+    connectionCheckAt: null,
     pauseReason: null,
   };
   const repository: VisitBackupRepository = {
@@ -42,6 +43,22 @@ function harness(count = 1, enabled = true) {
       if (result.successAt !== undefined) state.lastSuccessAt = result.successAt;
       state.nextAttemptAt = result.nextAttemptAt;
       if (result.pauseReason !== undefined) state.pauseReason = result.pauseReason;
+      if (result.connectionCheckAt !== undefined)
+        state.connectionCheckAt = result.connectionCheckAt;
+      return true;
+    }),
+    updateVisitConnectionCheck: vi.fn(async (expected, nextCheckAt, guard) => {
+      if (guard && !guard()) throw new Error('changed session');
+      if (
+        !state.autoEnabled ||
+        state.pauseReason ||
+        rows.length === 0 ||
+        state.nextAttemptAt !== expected.nextAttemptAt ||
+        state.connectionCheckAt !== expected.connectionCheckAt
+      )
+        return false;
+      state.connectionCheckAt = nextCheckAt;
+      if (nextCheckAt === null) state.nextAttemptAt = null;
       return true;
     }),
     pendingVisitOperations: vi.fn(async () => rows.slice(0, 100)),
@@ -56,7 +73,9 @@ function harness(count = 1, enabled = true) {
       return before - rows.length;
     }),
   };
-  const send = vi.fn<typeof fetch>(async (_url, request) => {
+  const send = vi.fn<typeof fetch>(async (url, request) => {
+    if (String(url).endsWith('/health'))
+      return Response.json({ status: 'ok', service: 'travel-visit-tracker-backend' });
     const body = JSON.parse(request!.body as string) as { operations: { id: string }[] };
     return Response.json({ acknowledgedIds: body.operations.map((operation) => operation.id) });
   });
@@ -85,6 +104,9 @@ function harness(count = 1, enabled = true) {
     },
     background: () => {
       active = false;
+    },
+    foreground: () => {
+      active = true;
     },
   };
 }
@@ -341,6 +363,110 @@ describe('foreground visit backup coordinator', () => {
     expect(h.rows()).toHaveLength(1);
     expect(h.state.lastSuccessAt).toBeNull();
   });
+  it('rechecks recovered server connectivity before a longer retry and sends the same pending operation', async () => {
+    const h = harness();
+    h.send.mockRejectedValueOnce(new TypeError('synthetic offline'));
+    await h.backup.run();
+    expect(h.state).toMatchObject({ nextAttemptAt: 130000, connectionCheckAt: 130000 });
+    h.advance(30000);
+    h.send.mockRejectedValueOnce(new TypeError('still offline'));
+    await h.backup.run();
+    expect(h.state).toMatchObject({ nextAttemptAt: 190000, connectionCheckAt: 160000 });
+    h.advance(29999);
+    expect(await h.backup.run()).toMatchObject({ skipped: true });
+    expect(h.send).toHaveBeenCalledTimes(2);
+    h.advance(1);
+    expect(await h.backup.run()).toMatchObject({ acknowledged: 1 });
+    expect(h.send.mock.calls.map(([url]) => String(url))).toEqual([
+      `${session.apiUrl}/api/visits/sync`,
+      `${session.apiUrl}/api/visits/sync`,
+      `${session.apiUrl}/health`,
+      `${session.apiUrl}/api/visits/sync`,
+    ]);
+    expect(JSON.parse(h.send.mock.calls[3][1]!.body as string).operations[0].id).toBe(
+      'operation-0',
+    );
+    expect(h.state).toMatchObject({
+      lastSuccessAt: 160000,
+      connectionCheckAt: null,
+      nextAttemptAt: null,
+      pendingPhotos: 2,
+    });
+  });
+  it('persists the next connectivity check after an offline probe without touching completion or pending work', async () => {
+    const h = harness();
+    h.state.nextAttemptAt = 400000;
+    h.state.connectionCheckAt = 100000;
+    h.state.lastSuccessAt = 50000;
+    h.send.mockResolvedValueOnce(new Response(null, { status: 503 }));
+    expect(await h.coordinator().run()).toMatchObject({ skipped: true });
+    expect(h.state).toMatchObject({
+      nextAttemptAt: 400000,
+      connectionCheckAt: 130000,
+      lastSuccessAt: 50000,
+    });
+    expect(h.rows()).toHaveLength(1);
+    h.advance(4000);
+    expect(await h.coordinator().run()).toMatchObject({ skipped: true });
+    expect(h.send).toHaveBeenCalledTimes(1);
+  });
+  it.each([401, 409, 500])(
+    'does not use health checks to bypass an HTTP %s retry or pause',
+    async (status) => {
+      const h = harness();
+      h.send.mockResolvedValueOnce(new Response(null, { status }));
+      await h.backup.run();
+      expect(h.state.connectionCheckAt).toBeNull();
+      h.advance(1000);
+      expect(await h.backup.run()).toMatchObject({ skipped: true });
+      expect(h.send).toHaveBeenCalledTimes(1);
+    },
+  );
+  it.each(['opt-out', 'background', 'token', 'new-retry'])(
+    'does not send or reset newer state when %s happens during the connection probe',
+    async (change) => {
+      const h = harness();
+      h.state.nextAttemptAt = 400000;
+      h.state.connectionCheckAt = 100000;
+      h.send.mockImplementationOnce(async () => {
+        if (change === 'opt-out') h.state.autoEnabled = false;
+        if (change === 'background') h.background();
+        if (change === 'token') h.switchSession({ ...session, token: 'synthetic-replacement' });
+        if (change === 'new-retry') h.state.nextAttemptAt = 500000;
+        return Response.json({ status: 'ok', service: 'travel-visit-tracker-backend' });
+      });
+      const result = await h.backup.run();
+      expect(result.acknowledged).toBe(0);
+      expect(h.send).toHaveBeenCalledTimes(1);
+      expect(h.state.nextAttemptAt).toBe(change === 'new-retry' ? 500000 : 400000);
+      expect(h.state.connectionCheckAt).toBe(100000);
+      expect(h.rows()).toHaveLength(1);
+      expect(h.state.lastSuccessAt).toBeNull();
+    },
+  );
+  it.each(['background', 'storage failure'])(
+    'keeps the prior retry unchanged when %s interrupts connection-state storage',
+    async (reason) => {
+      const h = harness();
+      h.state.nextAttemptAt = 400000;
+      h.state.connectionCheckAt = 100000;
+      vi.mocked(h.repository.updateVisitConnectionCheck).mockImplementationOnce(async () => {
+        if (reason === 'background') h.background();
+        throw new Error('synthetic transaction rollback');
+      });
+      const result = await h.backup.run();
+      expect(result.acknowledged).toBe(0);
+      if (reason === 'background') expect(result.paused).toBe(true);
+      expect(h.state).toMatchObject({
+        nextAttemptAt: 400000,
+        connectionCheckAt: 100000,
+        lastSuccessAt: null,
+      });
+      expect(h.repository.recordVisitBackupResult).not.toHaveBeenCalled();
+      expect(h.send).toHaveBeenCalledTimes(1);
+      expect(h.rows()).toHaveLength(1);
+    },
+  );
   it('never invents a successful backup time for an empty queue or photo-only work', async () => {
     const h = harness(0);
     expect(await h.backup.run(true)).toMatchObject({

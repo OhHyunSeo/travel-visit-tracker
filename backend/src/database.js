@@ -63,9 +63,12 @@ async function openDatabase(filename) {
   try {
     await db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
     const version = (await db.get('PRAGMA user_version')).user_version;
-    if (version > 2) throw new Error('Database schema is newer than this server.');
+    if (version > 3) throw new Error('Database schema is newer than this server.');
     const schema = await fs.readFile(path.join(__dirname, '../data/schema.sql'), 'utf8');
-    await db.exec(`BEGIN IMMEDIATE;\n${schema}\nPRAGMA user_version=2;\nCOMMIT;`);
+    await db.transaction(async (transaction) => {
+      await transaction.exec(schema);
+      await transaction.exec('PRAGMA user_version=3;');
+    });
     return db;
   } catch (error) {
     await db.close();

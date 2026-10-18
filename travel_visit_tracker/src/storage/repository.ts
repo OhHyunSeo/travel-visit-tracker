@@ -130,11 +130,12 @@ export class Repository {
   async visitBackupState(): Promise<VisitBackupState> {
     return this.serialize(async () => {
       const rows = await this.db.all<{ key: string; value: string }>(
-        'SELECT key,value FROM settings WHERE key IN (?,?,?,?)',
+        'SELECT key,value FROM settings WHERE key IN (?,?,?,?,?)',
         this.settingKey('visitBackupEnabled'),
         this.settingKey('visitBackupLastSuccessAt'),
         this.settingKey('visitBackupNextAttemptAt'),
         this.settingKey('visitBackupPauseReason'),
+        this.settingKey('visitBackupConnectionCheckAt'),
       );
       const read = (key: string): unknown => {
         const row = rows.find((item) => item.key === this.settingKey(key));
@@ -169,6 +170,7 @@ export class Repository {
         pendingPhotos: counts.find((row) => row.entityType === 'photo')?.count ?? 0,
         lastSuccessAt: timestamp('visitBackupLastSuccessAt'),
         nextAttemptAt: timestamp('visitBackupNextAttemptAt'),
+        connectionCheckAt: timestamp('visitBackupConnectionCheckAt'),
         pauseReason,
       };
     });
@@ -190,6 +192,7 @@ export class Repository {
       successAt?: number;
       nextAttemptAt: number | null;
       pauseReason?: 'authentication' | 'conflict' | null;
+      connectionCheckAt?: number | null;
     },
     stillCurrent: () => boolean = () => true,
   ): Promise<boolean> {
@@ -201,6 +204,9 @@ export class Repository {
     if (
       (result.successAt !== undefined && !validTime(result.successAt)) ||
       (result.nextAttemptAt !== null && !validTime(result.nextAttemptAt)) ||
+      (result.connectionCheckAt !== undefined &&
+        result.connectionCheckAt !== null &&
+        !validTime(result.connectionCheckAt)) ||
       (result.pauseReason !== undefined &&
         result.pauseReason !== null &&
         result.pauseReason !== 'authentication' &&
@@ -221,6 +227,57 @@ export class Repository {
       await this.writeSetting('visitBackupNextAttemptAt', result.nextAttemptAt);
       if (result.pauseReason !== undefined)
         await this.writeSetting('visitBackupPauseReason', result.pauseReason);
+      if (result.connectionCheckAt !== undefined)
+        await this.writeSetting('visitBackupConnectionCheckAt', result.connectionCheckAt);
+      if (!stillCurrent()) throw new Error('로그인 정보가 바뀌어 백업 상태를 보존했습니다.');
+      return true;
+    });
+  }
+  async updateVisitConnectionCheck(
+    expected: { nextAttemptAt: number; connectionCheckAt: number },
+    nextCheckAt: number | null,
+    stillCurrent: () => boolean = () => true,
+  ): Promise<boolean> {
+    const validTime = (value: unknown) =>
+      typeof value === 'number' &&
+      Number.isFinite(value) &&
+      value >= 0 &&
+      value <= Number.MAX_SAFE_INTEGER;
+    if (
+      !validTime(expected.nextAttemptAt) ||
+      !validTime(expected.connectionCheckAt) ||
+      (nextCheckAt !== null && !validTime(nextCheckAt))
+    )
+      throw new Error('방문 백업 시각을 확인해 주세요.');
+    return this.transaction(async () => {
+      await this.requireActiveAccount();
+      if (!stillCurrent()) throw new Error('로그인 정보가 바뀌어 백업 상태를 보존했습니다.');
+      const rows = await this.db.all<{ key: string; value: string }>(
+        'SELECT key,value FROM settings WHERE key IN (?,?,?,?)',
+        this.settingKey('visitBackupEnabled'),
+        this.settingKey('visitBackupPauseReason'),
+        this.settingKey('visitBackupNextAttemptAt'),
+        this.settingKey('visitBackupConnectionCheckAt'),
+      );
+      const read = (key: string): unknown => {
+        const row = rows.find((item) => item.key === this.settingKey(key));
+        return row ? JSON.parse(row.value) : null;
+      };
+      if (
+        read('visitBackupEnabled') !== true ||
+        read('visitBackupPauseReason') !== null ||
+        read('visitBackupNextAttemptAt') !== expected.nextAttemptAt ||
+        read('visitBackupConnectionCheckAt') !== expected.connectionCheckAt
+      )
+        return false;
+      const pending = await this.db.first<{ pending: number }>(
+        "SELECT 1 AS pending FROM outbox WHERE owner_id=? AND entity_type='visit' LIMIT 1",
+        this.ownerId,
+      );
+      if (!pending) return false;
+      if (!stillCurrent()) throw new Error('로그인 정보가 바뀌어 백업 상태를 보존했습니다.');
+      if (nextCheckAt === null) await this.writeSetting('visitBackupNextAttemptAt', null);
+      await this.writeSetting('visitBackupConnectionCheckAt', nextCheckAt);
       if (!stillCurrent()) throw new Error('로그인 정보가 바뀌어 백업 상태를 보존했습니다.');
       return true;
     });

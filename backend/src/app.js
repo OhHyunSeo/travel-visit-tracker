@@ -9,6 +9,7 @@ const { validateSecret } = require('./config');
 const { openDatabase } = require('./database');
 const { createAuth } = require('./auth');
 const { createPhotos } = require('./photos');
+const { createVisitPhotos } = require('./visitPhotos');
 const { createVisits } = require('./visits');
 const { createLegacyTrips } = require('./legacyTrips');
 const { HttpError, errorHandler } = require('./http');
@@ -38,6 +39,7 @@ async function createBackend(config) {
   const { router: auth, authenticate } = createAuth(db, config.jwtSecret);
   app.use('/api/auth', auth);
   app.use('/api/visits', createVisits(db, authenticate));
+  app.use('/api/visit-photos', createVisitPhotos(db, authenticate, uploadsDir));
   app.use(createPhotos(db, authenticate, uploadsDir));
 
   app.use('/api/geojson', createRegions(dataDir));

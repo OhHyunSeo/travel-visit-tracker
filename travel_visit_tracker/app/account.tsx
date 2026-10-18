@@ -81,8 +81,8 @@ export default function AccountScreen() {
           자동 기록을 멈추고 해당 계정의 기록을 엽니다.
         </Text>
         <Text style={styles.body}>
-          계정의 방문 기록을 서버로 보낼 수 있습니다. 사진 백업과 다른 기기로 기록을 복원하는
-          기능은 아직 준비 중입니다. 앱을 삭제하기 전에는 이 점을 확인해 주세요.
+          계정의 방문 기록을 서버로 보낼 수 있습니다. 사진 백업과 다른 기기로 기록을 복원하는 기능은
+          아직 준비 중입니다. 앱을 삭제하기 전에는 이 점을 확인해 주세요.
         </Text>
         {auth.notice && <Text style={styles.body}>{auth.notice}</Text>}
         {auth.session && (
@@ -141,7 +141,9 @@ export default function AccountScreen() {
                     ? '아직 방문을 전송한 내역이 없습니다.'
                     : `마지막 방문 전송 완료: ${new Date(app.backup.lastSuccessAt).toLocaleString('ko-KR')}`}
                 </Text>
-                {app.backupBusy && <Text style={styles.body}>방문을 전송하고 있습니다.</Text>}
+                {app.backupBusy && (
+                  <Text style={styles.body}>서버 연결과 방문 백업을 확인하고 있습니다.</Text>
+                )}
                 {app.backupMessage && <Text style={styles.body}>{app.backupMessage}</Text>}
                 {app.backup.pauseReason && (
                   <Text style={styles.error}>
@@ -154,12 +156,20 @@ export default function AccountScreen() {
                   !app.backup.pauseReason &&
                   app.backup.nextAttemptAt !== null && (
                     <Text style={styles.body}>
-                      다음 자동 시도: {new Date(app.backup.nextAttemptAt).toLocaleTimeString('ko-KR')}
+                      다음 백업 확인:{' '}
+                      {new Date(
+                        Math.min(
+                          app.backup.nextAttemptAt,
+                          app.backup.connectionCheckAt ?? Infinity,
+                        ),
+                      ).toLocaleTimeString('ko-KR')}
                     </Text>
                   )}
                 <Button
-                  title={app.backupBusy ? '방문 전송 중' : '방문 백업하기'}
-                  disabled={app.busy || app.backupBusy || !auth.session.token || Platform.OS === 'web'}
+                  title={app.backupBusy ? '백업 확인 중' : '방문 백업하기'}
+                  disabled={
+                    app.busy || app.backupBusy || !auth.session.token || Platform.OS === 'web'
+                  }
                   onPress={() => {
                     if (auth.session)
                       void app.backupVisits(true, {

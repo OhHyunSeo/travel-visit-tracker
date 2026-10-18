@@ -296,5 +296,5 @@ it('preserves visit data and retry acknowledgements after reopening the server d
   backend = { close: () => db.close() };
   assert.equal((await db.get('SELECT COUNT(*) AS count FROM visits')).count, 1);
   assert.equal((await db.get('SELECT COUNT(*) AS count FROM visit_sync_operations')).count, 1);
-  assert.equal((await db.get('PRAGMA user_version')).user_version, 2);
+  assert.equal((await db.get('PRAGMA user_version')).user_version, 3);
 });

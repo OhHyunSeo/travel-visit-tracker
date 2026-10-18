@@ -14,5 +14,6 @@ export type VisitBackupState = {
   pendingPhotos: number;
   lastSuccessAt: number | null;
   nextAttemptAt: number | null;
+  connectionCheckAt: number | null;
   pauseReason: 'authentication' | 'conflict' | null;
 };

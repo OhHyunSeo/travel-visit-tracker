@@ -36,6 +36,7 @@ const initialBackup: VisitBackupState = {
   pendingPhotos: 0,
   lastSuccessAt: null,
   nextAttemptAt: null,
+  connectionCheckAt: null,
   pauseReason: null,
 };
 export type BackupExpectation = { ownerId: string; token: string | null };
@@ -179,7 +180,9 @@ export const useAppStore = create<State>((set, get) => {
           !state.autoEnabled ||
           state.pauseReason !== null ||
           state.pendingVisits === 0 ||
-          (state.nextAttemptAt !== null && state.nextAttemptAt > Date.now()))
+          (state.nextAttemptAt !== null &&
+            state.nextAttemptAt > Date.now() &&
+            (state.connectionCheckAt === null || state.connectionCheckAt > Date.now())))
       )
         return;
       set({ backupBusy: true, backupMessage: null });

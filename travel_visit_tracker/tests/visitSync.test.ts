@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { sessionOwner, type Session } from '../src/services/authClient';
-import { VisitSyncClient, VisitSyncRunner } from '../src/services/visitSync';
+import { VisitConnectionError, VisitSyncClient, VisitSyncRunner } from '../src/services/visitSync';
 import type { QueuedVisitOperation } from '../src/storage/outbox';
 
 const session: Session = {
@@ -89,7 +89,7 @@ describe('visit batch transport and safe local acknowledgement', () => {
   it('retries the same operation after a lost response without deleting pending work early', async () => {
     const h = harness();
     h.send.mockRejectedValueOnce(new Error('response lost after server commit'));
-    await expect(h.runner.run()).rejects.toThrow('response lost');
+    await expect(h.runner.run()).rejects.toBeInstanceOf(VisitConnectionError);
     expect(h.outbox.acknowledgeVisitOperations).not.toHaveBeenCalled();
     await h.runner.run();
     expect(h.send.mock.calls[0][1]?.body).toBe(h.send.mock.calls[1][1]?.body);
@@ -193,12 +193,67 @@ describe('visit batch transport and safe local acknowledgement', () => {
             );
           }),
       );
-      const result = expect(h.runner.run()).rejects.toThrow('request timed out');
+      const result = expect(h.runner.run()).rejects.toBeInstanceOf(VisitConnectionError);
       await vi.advanceTimersByTimeAsync(10000);
       await result;
       expect(h.outbox.acknowledgeVisitOperations).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+describe('bounded server connection checks', () => {
+  it('checks only the configured server health without credentials or visit payload', async () => {
+    const send = vi.fn<typeof fetch>(async () =>
+      Response.json({ status: 'ok', service: 'travel-visit-tracker-backend' }),
+    );
+    expect(await new VisitSyncClient(send).connectionAvailable(session)).toBe(true);
+    const [url, request] = send.mock.calls[0];
+    expect(url).toBe(`${session.apiUrl}/health`);
+    expect(request).toMatchObject({
+      method: 'GET',
+      credentials: 'omit',
+      redirect: 'error',
+      cache: 'no-store',
+    });
+    expect(request?.headers).toBeUndefined();
+    expect(request?.body).toBeUndefined();
+  });
+  it.each([null, { status: 'ok' }, { status: 'ok', service: 'unrelated-service' }])(
+    'does not mistake %j for the expected backend',
+    async (body) => {
+      const send = vi.fn<typeof fetch>(async () => Response.json(body));
+      expect(await new VisitSyncClient(send).connectionAvailable(session)).toBe(false);
+    },
+  );
+  it('aborts a stalled health check after three seconds', async () => {
+    vi.useFakeTimers();
+    try {
+      const send = vi.fn<typeof fetch>(
+        (_url, request) =>
+          new Promise((_resolve, reject) => {
+            request?.signal?.addEventListener('abort', () =>
+              reject(new Error('private network failure')),
+            );
+          }),
+      );
+      const pending = new VisitSyncClient(send).connectionAvailable(session);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await pending).toBe(false);
+      expect(send.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('keeps invalid acknowledgement JSON distinct from a network failure', async () => {
+    const client = new VisitSyncClient(async () => new Response('invalid json', { status: 200 }));
+    try {
+      await client.sendBatch(session, [operation]);
+      throw new Error('expected invalid JSON');
+    } catch (error) {
+      expect(error).not.toBeInstanceOf(VisitConnectionError);
+      expect((error as Error).message).toContain('대기 기록을 보존');
     }
   });
 });
