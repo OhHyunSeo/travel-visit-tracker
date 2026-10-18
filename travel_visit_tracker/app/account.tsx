@@ -47,10 +47,25 @@ export default function AccountScreen() {
     }
     Alert.alert(
       '자동 방문 백업을 켤까요?',
-      `${auth.session.user.email}\n${auth.session.apiUrl}\n\n이 계정의 방문 기록과 방문 삭제 요청을 앱 화면이 열려 있는 동안 서버로 보냅니다. 사진 백업과 다른 기기 복원은 아직 지원하지 않습니다.`,
+      `${auth.session.user.email}\n${auth.session.apiUrl}\n\n이 계정의 방문 기록과 방문 삭제 요청을 앱 화면이 열려 있는 동안 서버로 보냅니다. 사진은 포함하지 않습니다. 사진은 별도 확인 후 수동으로 보내며 다른 기기 복원은 아직 준비 중입니다.`,
       [
         { text: '취소', style: 'cancel' },
         { text: '자동 방문 백업 켜기', onPress: () => void app.setBackupEnabled(true, expected) },
+      ],
+    );
+  };
+  const sendPhotos = () => {
+    if (!auth.session?.token || !backupVisible) return;
+    const expected: BackupExpectation = {
+      ownerId: sessionOwner(auth.session),
+      token: auth.session.token,
+    };
+    Alert.alert(
+      '사진을 이 계정으로 보낼까요?',
+      `${auth.session.user.email}\n${auth.session.apiUrl}\n\n이 계정의 방문 기록과 삭제 요청을 먼저 보낸 뒤, 앱에 보관된 JPEG·PNG 첨부본을 보냅니다. 한 번에 사진 최대 20개의 서버 저장을 확인하며, 파일당 최대 10MiB입니다. HEIC·WebP와 없거나 지원 범위를 넘는 파일은 대기에 남습니다.\n\n전송 중에는 앱 화면을 열어 두세요. 자동 사진 전송과 다른 기기 복원은 아직 준비 중입니다. 전송이 끝나도 기기의 사진은 보관합니다.`,
+      [
+        { text: '취소', style: 'cancel' },
+        { text: '확인하고 전송', onPress: () => void app.backupPhotos(expected) },
       ],
     );
   };
@@ -59,7 +74,7 @@ export default function AccountScreen() {
     const owner = sessionOwner(auth.session);
     Alert.alert(
       '게스트 기록을 이 계정으로 옮길까요?',
-      `${auth.session.user.email}\n방문 ${guest.visits}개와 사진 ${guest.photos}개를 옮깁니다. 이후 로그아웃해도 계정 기록으로 보관됩니다. 옮긴 방문은 이 계정의 백업 설정에 따라 서버로 전송됩니다. 사진 백업과 다른 기기 복원은 아직 지원하지 않습니다.`,
+      `${auth.session.user.email}\n방문 ${guest.visits}개와 사진 ${guest.photos}개를 옮깁니다. 이후 로그아웃해도 계정 기록으로 보관됩니다. 옮긴 방문은 이 계정의 백업 설정에 따라 서버로 전송됩니다. 사진은 별도 확인 후 수동으로 보내며 다른 기기 복원은 아직 준비 중입니다.`,
       [
         { text: '취소', style: 'cancel' },
         {
@@ -81,8 +96,9 @@ export default function AccountScreen() {
           자동 기록을 멈추고 해당 계정의 기록을 엽니다.
         </Text>
         <Text style={styles.body}>
-          계정의 방문 기록을 서버로 보낼 수 있습니다. 사진 백업과 다른 기기로 기록을 복원하는 기능은
-          아직 준비 중입니다. 앱을 삭제하기 전에는 이 점을 확인해 주세요.
+          계정의 방문 기록과 지원하는 사진을 서버로 보낼 수 있습니다. 사진은 별도 확인 후 수동으로
+          전송합니다. 다른 기기로 기록을 복원하는 기능은 아직 준비 중이므로 앱을 삭제하기 전에는 이
+          점을 확인해 주세요.
         </Text>
         {auth.notice && <Text style={styles.body}>{auth.notice}</Text>}
         {auth.session && (
@@ -134,7 +150,7 @@ export default function AccountScreen() {
                   방문 변경사항 {app.backup.pendingVisits}건이 전송을 기다립니다.
                 </Text>
                 <Text style={styles.body}>
-                  사진 변경사항 {app.backup.pendingPhotos}건은 아직 백업되지 않습니다.
+                  사진 변경사항 {app.backup.pendingPhotos}건은 아래 사진 백업에서 따로 보냅니다.
                 </Text>
                 <Text style={styles.body}>
                   {app.backup.lastSuccessAt === null
@@ -168,7 +184,11 @@ export default function AccountScreen() {
                 <Button
                   title={app.backupBusy ? '백업 확인 중' : '방문 백업하기'}
                   disabled={
-                    app.busy || app.backupBusy || !auth.session.token || Platform.OS === 'web'
+                    app.busy ||
+                    app.backupBusy ||
+                    app.photoBackupBusy ||
+                    !auth.session.token ||
+                    Platform.OS === 'web'
                   }
                   onPress={() => {
                     if (auth.session)
@@ -195,6 +215,49 @@ export default function AccountScreen() {
               </>
             ) : (
               <Text style={styles.body}>이 계정의 전송 상태를 읽고 있습니다.</Text>
+            )}
+          </View>
+        )}
+        {auth.session && (
+          <View style={styles.card}>
+            <Text style={styles.heading}>사진 백업</Text>
+            <Text style={styles.body}>{auth.session.apiUrl}</Text>
+            <Text style={styles.body}>
+              앱에 보관된 JPEG·PNG 첨부본을 확인 후 전송합니다. 자동 방문 백업에는 사진이 포함되지
+              않습니다. 다른 기기 복원은 아직 준비 중입니다.
+            </Text>
+            {backupVisible ? (
+              <>
+                <Text style={styles.body}>
+                  전송 대기 {app.photoBackup.pendingPhotos}건 · 서버 저장 확인{' '}
+                  {app.photoBackup.backedUpPhotos}개
+                </Text>
+                <Text style={styles.body}>
+                  HEIC·WebP, 없는 파일과 전송 실패는 대기에 남습니다. 형식을 자동으로 바꾸거나
+                  기기의 첨부본을 삭제하지 않습니다.
+                </Text>
+                {app.photoBackupBusy && (
+                  <Text style={styles.body}>
+                    방문을 확인하고 사진을 전송하고 있습니다. 화면을 열어 두세요.
+                  </Text>
+                )}
+                {app.photoBackupMessage && (
+                  <Text style={styles.body}>{app.photoBackupMessage}</Text>
+                )}
+                <Button
+                  title={app.photoBackupBusy ? '사진 전송 중' : '사진 백업하기'}
+                  disabled={
+                    app.busy ||
+                    app.backupBusy ||
+                    app.photoBackupBusy ||
+                    !auth.session.token ||
+                    Platform.OS === 'web'
+                  }
+                  onPress={sendPhotos}
+                />
+              </>
+            ) : (
+              <Text style={styles.body}>이 계정의 사진 전송 상태를 읽고 있습니다.</Text>
             )}
           </View>
         )}

@@ -1,4 +1,4 @@
-export const schemaVersion = 1;
+export const schemaVersion = 2;
 export const schemaSql = `
 PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -10,5 +10,19 @@ CREATE INDEX IF NOT EXISTS visits_owner_region ON visits(owner_id,region_id,conf
 CREATE TABLE IF NOT EXISTS photos (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, visit_id TEXT NOT NULL REFERENCES visits(id) ON DELETE CASCADE, uri TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, operation TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS outbox_owner ON outbox(owner_id,created_at);
-PRAGMA user_version = 1;
+CREATE TABLE IF NOT EXISTS photo_backup_metadata (
+  photo_id TEXT PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
+  owner_id TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  serialized_payload TEXT NOT NULL,
+  sha256 TEXT NOT NULL CHECK(length(sha256)=64),
+  byte_length INTEGER NOT NULL CHECK(byte_length>0 AND byte_length<=10485760),
+  mime_type TEXT NOT NULL CHECK(mime_type IN ('image/jpeg','image/png')),
+  revision INTEGER CHECK(revision IS NULL OR (revision>0 AND revision<=9007199254740991)),
+  original_path TEXT,
+  thumbnail_path TEXT,
+  uploaded_at INTEGER CHECK(uploaded_at IS NULL OR (uploaded_at>=0 AND uploaded_at<=9007199254740991))
+);
+CREATE INDEX IF NOT EXISTS photo_backup_owner ON photo_backup_metadata(owner_id,uploaded_at);
+PRAGMA user_version = 2;
 `;

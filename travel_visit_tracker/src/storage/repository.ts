@@ -1,6 +1,13 @@
 import { schemaSql, schemaVersion } from './schema';
 import { dwellPolicy } from '../domain/dwell';
-import type { QueuedVisitOperation, VisitBackupState } from './outbox';
+import type {
+  QueuedVisitOperation,
+  VisitBackupState,
+  QueuedPhotoOperation,
+  PhotoFingerprint,
+  PhotoAcknowledgement,
+  PhotoBackupState,
+} from './outbox';
 import type {
   Candidate,
   Photo,
@@ -19,6 +26,21 @@ export interface SqlConnection {
 }
 // All owners on one connection must share the same transaction queue.
 const connectionTails = new WeakMap<SqlConnection, Promise<unknown>>();
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const validTimestamp = (value: unknown): value is number =>
+  typeof value === 'number' &&
+  Number.isFinite(value) &&
+  value >= 0 &&
+  value <= Number.MAX_SAFE_INTEGER;
+class StalePhotoOperationError extends Error {}
+type StoredPhotoFingerprint = {
+  owner_id: string;
+  operation_id: string;
+  serialized_payload: string;
+  sha256: string;
+  byte_length: number;
+  mime_type: string;
+};
 export class Repository {
   constructor(
     private readonly db: SqlConnection,
@@ -340,6 +362,259 @@ export class Repository {
       }
       if (!stillCurrent()) throw new Error('로그인 정보가 바뀌어 전송 대기 기록을 보존했습니다.');
       return acknowledged;
+    });
+  }
+  async pendingPhotoOperations(
+    limit = 100,
+    after?: { createdAt: number; id: string },
+  ): Promise<QueuedPhotoOperation[]> {
+    if (
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 100 ||
+      (after !== undefined &&
+        (!after ||
+          !validTimestamp(after.createdAt) ||
+          typeof after.id !== 'string' ||
+          !after.id ||
+          after.id.length > 400))
+    )
+      throw new Error('사진 전송 묶음은 1~100개이며 이어 볼 위치가 올바르게 설정되어야 합니다.');
+    return this.serialize(async () => {
+      await this.requireActiveAccount();
+      return this.db.all<QueuedPhotoOperation>(
+        `SELECT id,entity_type AS entityType,entity_id AS entityId,operation,payload AS serializedPayload,created_at AS createdAt,attempts FROM outbox WHERE owner_id=? AND entity_type='photo' ${after ? 'AND (created_at>? OR (created_at=? AND id>?))' : ''} ORDER BY created_at,id LIMIT ?`,
+        this.ownerId,
+        ...(after ? [after.createdAt, after.createdAt, after.id] : []),
+        limit,
+      );
+    });
+  }
+  async photoBackupState(): Promise<PhotoBackupState> {
+    return this.serialize(async () => {
+      const pending = await this.db.first<{ count: number }>(
+        "SELECT count(*) AS count FROM outbox WHERE owner_id=? AND entity_type='photo'",
+        this.ownerId,
+      );
+      const uploaded = await this.db.first<{ count: number }>(
+        "SELECT count(*) AS count FROM photo_backup_metadata m JOIN photos p ON p.id=m.photo_id AND p.owner_id=m.owner_id JOIN visits v ON v.id=p.visit_id AND v.owner_id=p.owner_id WHERE m.owner_id=? AND m.uploaded_at IS NOT NULL AND v.source='gps' AND v.deleted_at IS NULL",
+        this.ownerId,
+      );
+      return { pendingPhotos: pending?.count ?? 0, backedUpPhotos: uploaded?.count ?? 0 };
+    });
+  }
+  private validatePhotoFingerprint(fingerprint: PhotoFingerprint): void {
+    if (
+      !fingerprint ||
+      typeof fingerprint.sha256 !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(fingerprint.sha256) ||
+      !Number.isSafeInteger(fingerprint.byteLength) ||
+      fingerprint.byteLength < 1 ||
+      fingerprint.byteLength > 10 * 1024 * 1024 ||
+      !['image/jpeg', 'image/png'].includes(fingerprint.mimeType)
+    )
+      throw new Error('사진 첨부본의 형식·크기·해시를 확인해 주세요. 기존 파일은 보존했습니다.');
+  }
+  private assertCurrentPhotoSession(stillCurrent: () => boolean): void {
+    if (!stillCurrent())
+      throw new Error('로그인 정보나 화면 상태가 바뀌어 사진 대기를 보존했습니다.');
+  }
+  private async livePhotoOperation(operation: QueuedPhotoOperation): Promise<Photo | null> {
+    if (
+      !operation ||
+      operation.entityType !== 'photo' ||
+      operation.operation !== 'upsert' ||
+      typeof operation.id !== 'string' ||
+      !uuidPattern.test(operation.id) ||
+      typeof operation.entityId !== 'string' ||
+      !uuidPattern.test(operation.entityId) ||
+      typeof operation.serializedPayload !== 'string' ||
+      !validTimestamp(operation.createdAt)
+    )
+      throw new Error('사진 전송 대기 내용을 확인해 주세요.');
+    const queued = await this.db.first<{ id: string }>(
+      "SELECT id FROM outbox WHERE owner_id=? AND id=? AND entity_type='photo' AND entity_id=? AND operation='upsert' AND payload=? AND created_at=?",
+      this.ownerId,
+      operation.id,
+      operation.entityId,
+      operation.serializedPayload,
+      operation.createdAt,
+    );
+    if (!queued) return null;
+    let photo: Photo;
+    try {
+      const value: unknown = JSON.parse(operation.serializedPayload);
+      if (
+        !value ||
+        typeof value !== 'object' ||
+        Array.isArray(value) ||
+        Object.keys(value).length !== 4 ||
+        Object.keys(value).some((key) => !['id', 'visitId', 'uri', 'createdAt'].includes(key))
+      )
+        throw new Error('invalid photo');
+      photo = value as Photo;
+      if (
+        photo.id !== operation.entityId ||
+        typeof photo.visitId !== 'string' ||
+        !uuidPattern.test(photo.visitId) ||
+        typeof photo.uri !== 'string' ||
+        !photo.uri ||
+        !validTimestamp(photo.createdAt)
+      )
+        throw new Error('invalid photo');
+    } catch {
+      throw new Error('저장된 사진 전송 내용을 확인할 수 없습니다. 기존 대기 작업을 보존했습니다.');
+    }
+    const stored = await this.db.first<Photo>(
+      "SELECT p.id,p.visit_id AS visitId,p.uri,p.created_at AS createdAt FROM photos p JOIN visits v ON v.id=p.visit_id AND v.owner_id=p.owner_id WHERE p.id=? AND p.owner_id=? AND v.source='gps' AND v.deleted_at IS NULL",
+      photo.id,
+      this.ownerId,
+    );
+    if (
+      !stored ||
+      stored.visitId !== photo.visitId ||
+      stored.uri !== photo.uri ||
+      stored.createdAt !== photo.createdAt
+    )
+      return null;
+    const parentPending = await this.db.first<{ pending: number }>(
+      "SELECT 1 AS pending FROM outbox WHERE owner_id=? AND entity_type='visit' AND entity_id=? LIMIT 1",
+      this.ownerId,
+      photo.visitId,
+    );
+    return parentPending ? null : photo;
+  }
+  private async storedPhotoFingerprint(photoId: string): Promise<StoredPhotoFingerprint | null> {
+    return this.db.first<StoredPhotoFingerprint>(
+      'SELECT owner_id,operation_id,serialized_payload,sha256,byte_length,mime_type FROM photo_backup_metadata WHERE photo_id=?',
+      photoId,
+    );
+  }
+  private requireMatchingPhotoFingerprint(
+    stored: StoredPhotoFingerprint,
+    operation: QueuedPhotoOperation,
+    fingerprint: PhotoFingerprint,
+  ): void {
+    if (
+      stored.owner_id !== this.ownerId ||
+      stored.operation_id !== operation.id ||
+      stored.serialized_payload !== operation.serializedPayload ||
+      stored.sha256 !== fingerprint.sha256 ||
+      stored.byte_length !== fingerprint.byteLength ||
+      stored.mime_type !== fingerprint.mimeType
+    )
+      throw new Error(
+        '사진 첨부본이나 전송 작업이 바뀌었습니다. 기존 파일과 대기 작업을 보존했습니다.',
+      );
+  }
+  async preparePhotoOperation(
+    operation: QueuedPhotoOperation,
+    fingerprint: PhotoFingerprint,
+    stillCurrent: () => boolean = () => true,
+  ): Promise<boolean> {
+    this.validatePhotoFingerprint(fingerprint);
+    return this.transaction(async () => {
+      await this.requireActiveAccount();
+      this.assertCurrentPhotoSession(stillCurrent);
+      const photo = await this.livePhotoOperation(operation);
+      if (!photo) return false;
+      const stored = await this.storedPhotoFingerprint(photo.id);
+      if (stored) this.requireMatchingPhotoFingerprint(stored, operation, fingerprint);
+      this.assertCurrentPhotoSession(stillCurrent);
+      if (!stored)
+        await this.db.run(
+          'INSERT INTO photo_backup_metadata(photo_id,owner_id,operation_id,serialized_payload,sha256,byte_length,mime_type) VALUES (?,?,?,?,?,?,?)',
+          photo.id,
+          this.ownerId,
+          operation.id,
+          operation.serializedPayload,
+          fingerprint.sha256,
+          fingerprint.byteLength,
+          fingerprint.mimeType,
+        );
+      this.assertCurrentPhotoSession(stillCurrent);
+      const attempted = await this.db.run(
+        "UPDATE outbox SET attempts=attempts+1 WHERE owner_id=? AND id=? AND entity_type='photo' AND entity_id=? AND operation='upsert' AND payload=? AND created_at=?",
+        this.ownerId,
+        operation.id,
+        operation.entityId,
+        operation.serializedPayload,
+        operation.createdAt,
+      );
+      if (attempted.changes !== 1) throw new StalePhotoOperationError();
+      this.assertCurrentPhotoSession(stillCurrent);
+      return true;
+    }).catch((error) => {
+      if (error instanceof StalePhotoOperationError) return false;
+      throw error;
+    });
+  }
+  async acknowledgePhotoOperation(
+    operation: QueuedPhotoOperation,
+    fingerprint: PhotoFingerprint,
+    acknowledgement: PhotoAcknowledgement,
+    uploadedAt: number,
+    stillCurrent: () => boolean = () => true,
+  ): Promise<boolean> {
+    this.validatePhotoFingerprint(fingerprint);
+    if (!validTimestamp(uploadedAt)) throw new Error('사진 전송 완료 시각을 확인해 주세요.');
+    return this.transaction(async () => {
+      await this.requireActiveAccount();
+      this.assertCurrentPhotoSession(stillCurrent);
+      const photo = await this.livePhotoOperation(operation);
+      if (!photo) return false;
+      const stored = await this.storedPhotoFingerprint(photo.id);
+      if (!stored)
+        throw new Error('사진 첨부본을 확인한 전송 기록이 없습니다. 대기 작업을 보존했습니다.');
+      this.requireMatchingPhotoFingerprint(stored, operation, fingerprint);
+      const remote = acknowledgement?.photo;
+      const canonicalId = photo.id.toLowerCase();
+      if (
+        !remote ||
+        acknowledgement.acknowledgedId !== operation.id.toLowerCase() ||
+        remote.id !== canonicalId ||
+        remote.visitId !== photo.visitId.toLowerCase() ||
+        remote.createdAt !== photo.createdAt ||
+        remote.sha256 !== fingerprint.sha256 ||
+        remote.byteLength !== fingerprint.byteLength ||
+        remote.mimeType !== fingerprint.mimeType ||
+        !Number.isSafeInteger(remote.revision) ||
+        remote.revision < 1 ||
+        remote.originalPath !== `/api/visit-photos/${canonicalId}/original` ||
+        remote.thumbnailPath !== `/api/visit-photos/${canonicalId}/thumbnail`
+      )
+        throw new Error('서버가 확인한 사진이 전송한 첨부본과 일치하지 않습니다.');
+      this.assertCurrentPhotoSession(stillCurrent);
+      const saved = await this.db.run(
+        'UPDATE photo_backup_metadata SET revision=?,original_path=?,thumbnail_path=?,uploaded_at=? WHERE photo_id=? AND owner_id=? AND operation_id=? AND serialized_payload=? AND sha256=? AND byte_length=? AND mime_type=?',
+        remote.revision,
+        remote.originalPath,
+        remote.thumbnailPath,
+        uploadedAt,
+        photo.id,
+        this.ownerId,
+        operation.id,
+        operation.serializedPayload,
+        fingerprint.sha256,
+        fingerprint.byteLength,
+        fingerprint.mimeType,
+      );
+      if (saved.changes !== 1) throw new StalePhotoOperationError();
+      this.assertCurrentPhotoSession(stillCurrent);
+      const deleted = await this.db.run(
+        "DELETE FROM outbox WHERE owner_id=? AND id=? AND entity_type='photo' AND entity_id=? AND operation='upsert' AND payload=? AND created_at=?",
+        this.ownerId,
+        operation.id,
+        operation.entityId,
+        operation.serializedPayload,
+        operation.createdAt,
+      );
+      if (deleted.changes !== 1) throw new StalePhotoOperationError();
+      this.assertCurrentPhotoSession(stillCurrent);
+      return true;
+    }).catch((error) => {
+      if (error instanceof StalePhotoOperationError) return false;
+      throw error;
     });
   }
   private async writeSetting(key: string, value: unknown) {

@@ -143,7 +143,7 @@ export class VisitBackupCoordinator {
         return result(
           manual()
             ? state.pendingPhotos
-              ? '전송할 방문은 없습니다. 사진 백업은 아직 지원하지 않습니다.'
+              ? '전송할 방문은 없습니다. 사진은 사진 백업에서 따로 보내 주세요.'
               : '전송할 방문이 없습니다.'
             : null,
           { skipped: true },
@@ -192,7 +192,7 @@ export class VisitBackupCoordinator {
             this.failures.delete(ownerId!);
             return result(
               state.pendingPhotos
-                ? '방문 전송을 마쳤습니다. 사진은 기기에 보관 중이며 아직 백업되지 않습니다.'
+                ? '방문 전송을 마쳤습니다. 대기 사진은 사진 백업에서 따로 보내 주세요.'
                 : '방문 전송을 마쳤습니다.',
             );
           }

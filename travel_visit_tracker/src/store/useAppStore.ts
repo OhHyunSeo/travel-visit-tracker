@@ -3,10 +3,14 @@ import * as Crypto from 'expo-crypto';
 import { AppState } from 'react-native';
 import type { AppSnapshot } from '../domain/types';
 import { getRepository, repositoryForOwner } from '../storage/database';
-import type { VisitBackupState } from '../storage/outbox';
+import type { PhotoBackupState, VisitBackupState } from '../storage/outbox';
 import { sessionOwner } from '../services/authClient';
 import { VisitBackupCoordinator } from '../services/visitBackup';
 import { VisitSyncClient } from '../services/visitSync';
+import { PhotoBackupCoordinator } from '../services/photoBackup';
+import { PhotoSyncClient } from '../services/photoSync';
+import { preparePhotoFile } from '../services/photoFile';
+import { photoFetch } from '../services/photoTransport';
 import { attachPhoto, removePhotoFiles, resolvePhotoUri } from '../services/photos';
 import { startTracking, stopTracking, reconcileTracking } from '../services/tracking';
 import { useAuthStore } from './useAuthStore';
@@ -55,6 +59,20 @@ const visitBackup = new VisitBackupCoordinator(
   Date.now,
   () => AppState.currentState === 'active',
 );
+const photoBackup = new PhotoBackupCoordinator(
+  () => useAuthStore.getState().session,
+  repositoryForOwner,
+  new PhotoSyncClient(photoFetch, __DEV__),
+  preparePhotoFile,
+  async (expected) => {
+    if (!matchesBackupAccount(expected) || AppState.currentState !== 'active')
+      throw new Error('사진 전송을 시작할 수 없습니다.');
+    const result = await visitBackup.run(true);
+    if (result.ownerId !== expected.ownerId || result.paused)
+      throw new Error('방문 전송을 확인한 뒤 사진 백업을 다시 눌러 주세요.');
+  },
+  () => AppState.currentState === 'active',
+);
 type State = AppSnapshot & {
   ready: boolean;
   busy: boolean;
@@ -63,6 +81,9 @@ type State = AppSnapshot & {
   backupOwnerId: string;
   backupBusy: boolean;
   backupMessage: string | null;
+  photoBackup: PhotoBackupState;
+  photoBackupBusy: boolean;
+  photoBackupMessage: string | null;
   initialize(): Promise<void>;
   refresh(): Promise<void>;
   clearError(): void;
@@ -76,6 +97,7 @@ type State = AppSnapshot & {
   importGuest(expectedOwner: string): Promise<void>;
   backupVisits(manual?: boolean, expected?: BackupExpectation): Promise<void>;
   setBackupEnabled(enabled: boolean, expected: BackupExpectation): Promise<void>;
+  backupPhotos(expected: BackupExpectation): Promise<void>;
 };
 export const useAppStore = create<State>((set, get) => {
   const action = async (operation: () => Promise<unknown>) => {
@@ -101,11 +123,15 @@ export const useAppStore = create<State>((set, get) => {
     backupOwnerId: 'guest',
     backupBusy: false,
     backupMessage: null,
+    photoBackup: { pendingPhotos: 0, backedUpPhotos: 0 },
+    photoBackupBusy: false,
+    photoBackupMessage: null,
     clearError: () => set({ error: null }),
     refresh: async () => {
       const repository = await getRepository();
       const snapshot = await repository.snapshot(__DEV__);
       const backup = await repository.visitBackupState();
+      const photoState = await repository.photoBackupState();
       if ((await getRepository()).ownerId !== repository.ownerId) return get().refresh();
       snapshot.photos = snapshot.photos.map((photo) => ({
         ...photo,
@@ -120,8 +146,11 @@ export const useAppStore = create<State>((set, get) => {
       set({
         ...snapshot,
         backup,
+        photoBackup: photoState,
         backupOwnerId: repository.ownerId,
-        ...(previous.backupOwnerId !== repository.ownerId ? { backupMessage: null } : {}),
+        ...(previous.backupOwnerId !== repository.ownerId
+          ? { backupMessage: null, photoBackupMessage: null }
+          : {}),
       });
     },
     initialize: async () => {
@@ -164,7 +193,7 @@ export const useAppStore = create<State>((set, get) => {
       if (enabled && changed && matchesBackupAccount(expected)) void get().backupVisits(false);
     },
     backupVisits: async (manual = true, renderedAccount) => {
-      if (!get().ready || get().busy || get().backupBusy) return;
+      if (!get().ready || get().busy || get().backupBusy || get().photoBackupBusy) return;
       const session = useAuthStore.getState().session;
       if (!session?.token) return;
       const expected = { ownerId: sessionOwner(session), token: session.token };
@@ -208,6 +237,41 @@ export const useAppStore = create<State>((set, get) => {
             set({ backupMessage: '전송 상태를 다시 읽지 못했습니다. 기기 기록을 확인해 주세요.' });
         }
         set({ backupBusy: false });
+      }
+    },
+    backupPhotos: async (renderedAccount) => {
+      if (!get().ready || get().busy || get().backupBusy || get().photoBackupBusy) return;
+      const session = useAuthStore.getState().session;
+      if (
+        !session?.token ||
+        !renderedAccount ||
+        AppState.currentState !== 'active' ||
+        !matchesBackupAccount(renderedAccount) ||
+        get().backupOwnerId !== renderedAccount.ownerId
+      )
+        return;
+      const expected = { ownerId: sessionOwner(session), token: session.token };
+      set({ photoBackupBusy: true, photoBackupMessage: null });
+      let message: string | null = null;
+      try {
+        const result = await photoBackup.run(expected);
+        if (matchesBackupAccount(expected) && result.ownerId === expected.ownerId)
+          message = result.message;
+      } catch {
+        if (matchesBackupAccount(expected))
+          message = '사진 전송을 확인하지 못했습니다. 사진과 대기 작업은 기기에 보관 중입니다.';
+      } finally {
+        try {
+          await get().refresh();
+          if (matchesBackupAccount(expected) && message) set({ photoBackupMessage: message });
+        } catch {
+          if (matchesBackupAccount(expected))
+            set({
+              photoBackupMessage:
+                '사진 전송 상태를 다시 읽지 못했습니다. 대기 작업을 확인해 주세요.',
+            });
+        }
+        set({ photoBackupBusy: false });
       }
     },
     developmentVisit: (regionId) =>

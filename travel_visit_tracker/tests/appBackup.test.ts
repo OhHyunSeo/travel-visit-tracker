@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   getRepository: vi.fn(),
   repositoryForOwner: vi.fn(),
   run: vi.fn(),
+  photoRun: vi.fn(),
   fetch: vi.fn(),
 }));
 
@@ -44,6 +45,13 @@ vi.mock('../src/services/visitBackup', () => ({
     run = mocks.run;
   },
 }));
+vi.mock('../src/services/photoBackup', () => ({
+  PhotoBackupCoordinator: class {
+    run = mocks.photoRun;
+  },
+}));
+vi.mock('../src/services/photoFile', () => ({ preparePhotoFile: vi.fn() }));
+vi.mock('../src/services/photoTransport', () => ({ photoFetch: mocks.fetch }));
 
 const accountA: Session = {
   apiUrl: 'https://backup.example.test',
@@ -104,6 +112,10 @@ function repository(ownerId: string, state = backupState()) {
     state,
     snapshot: vi.fn(async () => snapshot(ownerId, state.pendingVisits + state.pendingPhotos)),
     visitBackupState: vi.fn(async () => ({ ...state })),
+    photoBackupState: vi.fn(async () => ({
+      pendingPhotos: state.pendingPhotos,
+      backedUpPhotos: 0,
+    })),
     setVisitBackupEnabled: vi.fn(async (enabled: boolean, stillCurrent: () => boolean) => {
       if (!stillCurrent()) throw new Error('changed session');
       state.autoEnabled = enabled;
@@ -152,6 +164,14 @@ beforeEach(async () => {
     return value;
   });
   mocks.run.mockResolvedValue(completed());
+  mocks.photoRun.mockResolvedValue({
+    ownerId: owner(accountA),
+    acknowledged: 2,
+    remaining: 0,
+    skipped: 0,
+    paused: false,
+    message: '사진 2개를 전송했습니다.',
+  });
   app = (await import('../src/store/useAppStore')).useAppStore;
   app.setState({ ready: true });
 });
@@ -322,5 +342,100 @@ describe('visit backup app integration', () => {
       backup: { lastSuccessAt: null, pendingVisits: 3, pendingPhotos: 2 },
       backupMessage: expect.stringContaining('다시 읽지 못했습니다'),
     });
+  });
+});
+
+describe('explicit manual photo backup app integration', () => {
+  it('never starts photo backup from refreshing or automatic visit backup', async () => {
+    await show(accountA, backupState({ autoEnabled: true }));
+    await app.getState().refresh();
+    await app.getState().backupVisits(false);
+    expect(mocks.run).toHaveBeenCalledTimes(1);
+    expect(mocks.photoRun).not.toHaveBeenCalled();
+  });
+  it('passes only the explicitly confirmed owner and token to photo backup', async () => {
+    await show(accountA);
+    await app.getState().backupPhotos(expectation(accountA));
+    expect(mocks.photoRun).toHaveBeenCalledExactlyOnceWith(expectation(accountA));
+    expect(app.getState().photoBackupMessage).toBe('사진 2개를 전송했습니다.');
+    expect(app.getState().photoBackupBusy).toBe(false);
+  });
+  it.each(['owner', 'token'])(
+    'rejects an old photo confirmation after %s changes',
+    async (change) => {
+      await show(accountA);
+      const latest = change === 'owner' ? accountB : { ...accountA, token: 'replacement-token' };
+      await show(latest);
+      await app.getState().backupPhotos(expectation(accountA));
+      expect(mocks.photoRun).not.toHaveBeenCalled();
+      expect(app.getState().photoBackupMessage).toBeNull();
+    },
+  );
+  it('requires a confirmation and an active foreground session', async () => {
+    await show(null);
+    await app.getState().backupPhotos(expectation(accountA));
+    await show(accountA);
+    await app.getState().backupPhotos(undefined as unknown as ReturnType<typeof expectation>);
+    mocks.appState.currentState = 'background';
+    await app.getState().backupPhotos(expectation(accountA));
+    expect(mocks.photoRun).not.toHaveBeenCalled();
+  });
+  it.each(['owner', 'token'])(
+    'does not show a delayed result after an account %s change',
+    async (change) => {
+      await show(accountA);
+      const pending = deferred<{ ownerId: string; message: string }>();
+      mocks.photoRun.mockReturnValueOnce(pending.promise);
+      const uploading = app.getState().backupPhotos(expectation(accountA));
+      const latest = change === 'owner' ? accountB : { ...accountA, token: 'replacement-token' };
+      await show(latest);
+      pending.resolve({ ownerId: owner(accountA), message: 'old-account-private-result' });
+      await uploading;
+      expect(app.getState().photoBackupMessage).toBeNull();
+      expect(app.getState().photoBackupBusy).toBe(false);
+      expect(app.getState().backupOwnerId).toBe(owner(latest));
+    },
+  );
+  it('blocks duplicate photo clicks and visit triggers during a photo run', async () => {
+    await show(accountA);
+    const pending = deferred<{ ownerId: string; message: string }>();
+    mocks.photoRun.mockReturnValueOnce(pending.promise);
+    const uploading = app.getState().backupPhotos(expectation(accountA));
+    await app.getState().backupPhotos(expectation(accountA));
+    await app.getState().backupVisits(true);
+    await app.getState().backupVisits(false);
+    expect(mocks.photoRun).toHaveBeenCalledTimes(1);
+    expect(mocks.run).not.toHaveBeenCalled();
+    pending.resolve({ ownerId: owner(accountA), message: '사진 전송 완료' });
+    await uploading;
+    expect(app.getState().photoBackupBusy).toBe(false);
+  });
+  it('does not start a photo run while the visit button is already processing', async () => {
+    await show(accountA);
+    const pending = deferred<VisitBackupResult>();
+    mocks.run.mockReturnValueOnce(pending.promise);
+    const uploading = app.getState().backupVisits(true);
+    await app.getState().backupPhotos(expectation(accountA));
+    expect(mocks.photoRun).not.toHaveBeenCalled();
+    pending.resolve(completed());
+    await uploading;
+  });
+  it('normalizes errors without showing transport details or attachment paths', async () => {
+    await show(accountA);
+    mocks.photoRun.mockRejectedValueOnce(new Error('private-token file:///private/path'));
+    await app.getState().backupPhotos(expectation(accountA));
+    expect(app.getState().photoBackupMessage).toBe(
+      '사진 전송을 확인하지 못했습니다. 사진과 대기 작업은 기기에 보관 중입니다.',
+    );
+    expect(app.getState().photoBackupBusy).toBe(false);
+  });
+  it('releases the photo action when reading the final state fails', async () => {
+    await show(accountA);
+    mocks.getRepository.mockRejectedValueOnce(new Error('private database details'));
+    await app.getState().backupPhotos(expectation(accountA));
+    expect(app.getState().photoBackupMessage).toBe(
+      '사진 전송 상태를 다시 읽지 못했습니다. 대기 작업을 확인해 주세요.',
+    );
+    expect(app.getState().photoBackupBusy).toBe(false);
   });
 });

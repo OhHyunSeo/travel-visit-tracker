@@ -10,6 +10,7 @@ npm --prefix backend test
 (
   cd travel_visit_tracker
   node --import tsx ../scripts/check-visit-sync.mts
+  node --import tsx ../scripts/check-photo-sync.mts
 )
 (
   cd backend
