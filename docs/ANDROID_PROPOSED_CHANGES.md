@@ -12,6 +12,8 @@
 
 추가 용량 정리 요청으로 사용하지 않는 Gradle transforms·Android Studio cache/index·npm 다운로드 캐시 약 6.51GiB를 삭제했습니다. 삭제 직후 실제 가용량 증가는 확인되지 않아 확보량으로 표시하지 않습니다. AVD·SDK·JDK·의존성·APK·방문·사진·백업·LocalHistory·로그·근거와 원래 checkout·iOS는 보존했습니다. 삭제 경로·정확한 바이트·공간 측정·후속 미실행 범위는 [진행 기록](ANDROID_PROGRESS.md)에 있습니다.
 
+이후 사용자가 두 Time Machine 로컬 백업 삭제를 별도로 허용해 Mac 데이터 볼륨의 9월 28일·10월 12일 두 스냅샷만 삭제하고 부재를 확인했습니다. 정리 전후 후속 측정에서 실제 가용량은 17.36→57.98GiB(약 62.3GB), 관측 증가는 40.62GiB(약 43.6GB)였습니다. Android 캐시 확보량과 중복 합산하지 않습니다. 프로젝트 `.snapshots/`·현재 소스·기기 데이터·AVD·사진·APK·검증 자료와 외장·원격 백업은 삭제하지 않았습니다. 새 개발·native 검사 없이 용량 정리와 기록만 수행했습니다.
+
 ## 10월 18일 foreground 연결 복구 확인
 
 Android `cf79090`에서 공통 **`51c96d249b2772517da3d9937cb03e568dc1b2d9`**의 필요한 14개 JS/TS만 임시 적용했습니다. 별도 native async 파일 DB·합성 계정과 고정 backend 사본의 실제 임시 HTTP를 사용한 연결 복구 13가지가 PASS입니다.
