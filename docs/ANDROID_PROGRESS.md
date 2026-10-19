@@ -2,11 +2,79 @@
 
 마지막 갱신: 2026-10-19, Asia/Seoul.
 
-10월 19일에는 중단된 사진 백업 준비의 저장·종료만 마쳤습니다. 공통 `809efe0`의 소스 사본 37개와 QA 전용 DB 이름은 준비했으나 적용하지 않았습니다. 사진 native·UI 검사는 **NOT RUN**입니다. 원본 schema v1·방문 4건·사진 파일 1개·전송 대기 3건과 전체 행·사진 바이트를 다시 읽기 전용으로 대조한 뒤 전용 에뮬레이터를 종료했습니다. 사용자 요청으로 재생성 가능한 캐시 약 6.51GiB를 삭제했으며, 이후 두 Time Machine 로컬 백업의 삭제도 별도로 허용받았습니다. 로컬 백업 정리 전후의 후속 측정에서 실제 가용량은 약 17.36GiB에서 57.98GiB로 증가했습니다.
+10월 19일 사용자의 개발 재개 요청 뒤 공통 **`809efe0`의 수동 사진 백업을 Android에서 검증**했습니다. 실제 native 파일 준비 1개, 별도 비동기 SQLite·실제 사진 multipart/HTTP 통합 9개가 PASS입니다. 0건 합성 계정의 실제 화면에서도 사진 전용 확인창의 취소·수동 확인·매 실행 재확인을 통과했습니다. 원본 v1 DB·방문 4건·사진 파일 1개·전송 대기 3건을 보존하고 공통 임시 파일 37개를 복구했으며 전용 실행 환경을 종료했습니다. 아래 준비·종료 및 용량 정리 기록은 재개 전의 이력입니다.
 
 10월 18일 `51c96d2`에서 실행한 연결 복구 13가지 PASS와 이전 화면·전송·경쟁 조건 결과는 아래 이력으로 유지합니다. 이 결과를 `809efe0`의 사진 검증으로 합산하지 않습니다.
 
 현재 실제 Android 휴대폰은 없습니다. 결과는 Debug APK의 정적 검사와 API 37 에뮬레이터 시험이며, 실제 휴대폰이나 출시용 Release 검증으로 보지 않습니다. 전체 체크리스트와 완료 수는 공통 담당 채팅에서 관리합니다.
+
+## 10월 19일 재개: 수동 사진 백업 native·확인창 검증
+
+### 고정 소스와 원본 DB 분리
+
+Android 시작은 **`a456f18808777c7da76aa49aa56ba7f96a448878`**, 공통 동작은 **`809efe0e012622b2e454b422dc8ef120b6d0e3ea`**입니다. 원격 공통 HEAD `1739ed1`은 문서만 추가한 상태이며 검증 파일은 같은 내용임을 확인했습니다. 이전에 준비한 37개 원본·부재·고정 사본의 해시를 다시 대조하고 새 실행 근거 폴더로 보존했습니다.
+
+production 22개·테스트 14개·Vitest 설정 1개를 임시 적용했습니다. 실제 앱 UI에 쓰는 database 파일명 한 곳만 고유 QA DB로 바꾸고 별도 적용 해시를 기록했습니다. 사진 파일·repository·동기화 소스와 고정 backend 사본 12개는 공통 SHA 그대로입니다. 기존 원본 `trip-painting-v1.db`를 v2 앱으로 열거나 migration하지 않았습니다. native 통합 검사는 매번 별도 고유 파일 DB를 사용했습니다.
+
+기존 Debug APK·API 37·SwiftShader·CPU 4개, 전용 localhost 8082·임시 합성 HTTP만 사용했습니다. 새 native 빌드·설치·의존성 설치와 package/lock 변경은 없습니다. Node 24.21.0과 기존 backend 의존성은 읽기 전용으로 재사용했습니다. 원래 checkout·iOS 8081·iPhone은 조작하지 않았습니다.
+
+### native 파일 준비 1개 PASS
+
+합성 PNG를 `.jpg` 이름으로 저장한 뒤 실제 `preparePhotoFile`을 호출했습니다. native File 복사·SHA-256·바이트 수·내용 기반 PNG 판별과 `attachment.png` rename이 통과했습니다. 전송 body가 실제 `File`인 것도 확인했습니다. 합성 원본을 바꿔도 이미 준비한 전송 사본은 같은 바이트를 유지했고, 원래 바이트로 돌린 뒤 dispose가 전용 cache만 지우고 첨부본은 유지함을 확인했습니다. 이 변경은 합성 파일에만 수행했습니다.
+
+### 실제 비동기 SQLite·expo/fetch multipart 통합 9개 PASS
+
+실제 앱에 로드된 Repository·PhotoBackupCoordinator·PhotoSyncClient·VisitBackupCoordinator, native async SQLite adapter와 `preparePhotoFile`·`photoFetch`를 사용했습니다. 검증용 시점·계정 변화와 응답 유실은 명시적으로 주입했으며 DB 쓰기·rollback, 파일 API와 이후 HTTP는 실제 실행입니다.
+
+| 통합 경우 | 결과 |
+| --- | --- |
+| 별도 v1→v2 보존 갱신 | v1 합성 DB의 두 owner visits/photos/outbox 전체 행·사진 URI·payload·attempts·소수점 시각 유지, 빈 사진 metadata 테이블 추가, integrity `ok` |
+| PNG·JPEG 실제 multipart | 부모 방문 선행 전송, 사진 2건 ACK와 metadata 원자 저장. 기기 파일·서버 첨부 bytes·native 해시·크기·MIME 일치 |
+| 서버 200 뒤 응답 유실 모사·DB 재개방 | 큐·작업 UUID·고정 해시 유지. 첨부 bytes를 바꾼 합성 재시도는 HTTP 전에 차단. 원래 bytes 복구 후 같은 UUID 실제 재전송, 서버 사진·영수증 각 1개 |
+| 잘못된 사진 다음 정상 사진 | HEIC·누락·10MiB 초과·잘못된 헤더·서버가 해독하지 못하는 PNG의 대기 5건 보존. 다음 JPEG 1건 성공, 건너뛴 이유·수 정확 |
+| 오래된 동의·foreground 이탈 주입 | 파일 준비·사진 HTTP·metadata 쓰기 없이 거절, 대기 보존 |
+| 실제 HTTP 200 뒤 같은 owner token 변경 | 이전 세션 ACK 차단·큐와 미완료 metadata 보존. 현재 세션의 같은 UUID 재시도는 서버 중복 없음 |
+| ACK metadata 실제 쓰기 뒤 token 변경 | 실제 SQL rollback, 완료 metadata·큐 삭제 없음. 수동 재시도 성공·서버 중복 없음 |
+| ACK outbox 실제 DELETE 뒤 token 변경 | DELETE 1건 뒤 실제 rollback, payload·작업 UUID·미완료 metadata 복구. 수동 재시도 성공 |
+| ACK metadata 실제 쓰기 뒤 DB 오류 주입 | 실제 rollback, 큐·metadata·기기 첨부본 보존. 수동 재시도 성공·서버 중복 없음 |
+
+서버 관측 사진 POST는 **14회이며 모두 실제 multipart boundary**가 있었습니다. 이 중 해독 불가 합성 PNG 1회는 실제 400이고 나머지는 성공·멱등 재전송입니다. 최종 서버 사진·사진 영수증은 **각 8개**입니다. 별도 서버 DB v3와 저장 파일을 직접 대조해 8개 첨부본 모두 metadata의 해시·크기와 같고 썸네일이 별도 파일임을 확인했습니다. 서버 integrity는 `ok`입니다. 요청 횟수와 고유 저장 수를 합산하지 않습니다.
+
+첫 검사 도구는 Inspector에 직접 넣은 중첩 async 함수가 native Promise보다 먼저 반환해 DB 준비 단계에서 조기 실패했습니다. 사진 POST는 0회였으며 제품 결함으로 판단하지 않았습니다. 이전 native 검사와 같은 TypeScript ES2015 generator 변환을 적용한 뒤 위 9개를 다시 실행해 통과했습니다. 사전 도구가 남긴 자체 합성 파일 18개는 앱을 멈춘 뒤 정확한 전용 이름만 정리했고 실패 근거도 보존했습니다. 최종 native 시험 DB 9개는 close/delete 후 DB·WAL·SHM 부재를 확인했습니다.
+
+### 0건 합성 계정의 실제 확인창 PASS
+
+실제 계정 화면에서 새 합성 계정을 가입했습니다. 이 계정은 QA DB·서버 모두 방문·사진·전송 대기 0건이며 원본 게스트 가져오기를 실행하지 않았습니다.
+
+| 실제 화면 흐름 | 결과 |
+| --- | --- |
+| 사진 백업하기 → 전용 확인창 | 대상 계정·서버, JPEG/PNG·20개·10MiB·미지원/누락 대기·원본 보관·복원 미지원 표시 |
+| 첫 확인창 취소 | 창만 닫힘, 사진 POST 0회 |
+| 다시 열기 → 확인하고 전송 | 다시 명시적 확인 요구, “전송할 사진이 없습니다” 안내. 사진 대기·서버 저장 확인 0건, 방문 성공 시각 null 유지 |
+| 수동 실행 뒤 다시 열기 → 취소 | 세 번째도 확인창 표시, 앞선 동의를 재사용해 자동 전송하지 않음 |
+| 로그아웃 | QA guest·기록 꺼짐·0건, native 인증 항목 삭제 |
+
+로그인 중 인증 항목의 AES 암호화와 이메일·비밀번호 평문 부재를 확인했습니다. UI 계정의 서버 방문·사진·사진 영수증은 끝까지 0건입니다. **사진이 있는 계정의 전체 UI 전송을 확인한 결과는 아닙니다.** 실제 사진 본문과 ACK·재시도는 위 독립 native 통합 검사 결과로 구분합니다.
+
+### 자동 검사·원본 보존·복구와 남은 범위
+
+QA 파일명 오버라이드를 포함한 임시 소스에서 `bash scripts/verify-cloud.sh`가 PASS였습니다. 모바일 타입·ESLint·**14개 파일/378개 테스트**, 기존 backend syntax·native dependency load와 Android/iOS 생산용 JS/Hermes export를 포함합니다. `setup-cloud.sh`를 다시 실행하거나 의존성을 재설치하지 않았습니다. 공통 서버 61개 검사는 이번에 반복하지 않았으며 별도 고정 서버의 실제 native HTTP·파일 대조와 구분합니다.
+
+시작·종료 읽기 전용 대조에서 원본 모든 owner visits/photos/outbox 전체 행·기존 사진 바이트가 같았습니다. 최종 원본은 guest·기록 꺼짐·방문 4건(GPS 3건·개발 1건)·사진 파일 1개·대기 3건·schema v1·integrity `ok`입니다. 독립 QA UI DB는 v2·전체 방문/사진/outbox/metadata 0건·integrity `ok`를 확인했습니다.
+
+앱·자체 Metro·HTTP를 먼저 멈춰 혼합 소스 재로딩을 차단한 뒤, 기존 14개 파일을 원문·해시로 복구하고 새 임시 파일 23개를 제거했습니다. 총 37개의 존재 여부·바이트를 다시 확인했으며 package/lock·보존 Debug APK hash도 그대로입니다. QA UI DB·WAL·SHM 3개만 제거했고, 합성 사진 첨부본과 전송 cache도 0개였습니다. 자체 reverse 8082·3002와 에뮬레이터를 종료했습니다. 서버 합성 DB·첨부본·fixture·원본 로그·화면·실패/성공 근거는 로컬 Git 제외 폴더에 남깁니다.
+
+새 캐시·Time Machine·SDK·AVD·원본 자료 정리는 하지 않았습니다. 종료 가용량은 57,331,204,096 bytes(약 53.39GiB)이며 이번 확보량으로 표시하지 않습니다. 전송 중 프로세스 종료·실제 OS 네트워크 전환·비어 있지 않은 계정의 전체 UI·자동 사진 백업·다운로드/새 기기 복원·여러 기기 삭제 병합·Android 실기기·Release는 NOT RUN입니다. P3-10 전체와 G1~G4 완료를 뜻하지 않습니다.
+
+근거는 Git 제외 `docs/test-results/android-photo-backup-20261019/`에 있습니다. 계정·token·서버 주소·QA 이름·원본 DB·사진·화면·로그는 공개 PR에 포함하지 않습니다.
+
+| 근거 | 로컬 파일 |
+| --- | --- |
+| 고정 SHA·임시 적용·원문 복구 | `validation-files.json`, `common-*.txt`, `original-*.txt`, `qa-database-override.ts` |
+| native 파일·9개 통합과 서버 대조 | `native-file-snapshot-result.json`, `native-probe-result.json`, `server-summary.json`, `server-data-verification.json` |
+| 실제 화면·인증 | `ui-*-result.json`, `ui-*-state.json`, `signed-in-credential.json`, `logged-out-credential.json`, 로컬 XML/PNG |
+| 원본·종료·시험 파일·APK 보존 | `baseline-data.json`, `final-data.json`, `shutdown-status.json`, `native-file-cleanup-summary.json`, `apk-preservation.json` |
+| 자동 검사·도구 조기 실패 근거 | `verification.log`, `harness-raw-async-failure-*.json`, `harness-early-db-cleanup.json` |
 
 ## 10월 19일 사진 백업 준비 저장·종료와 용량 정리
 

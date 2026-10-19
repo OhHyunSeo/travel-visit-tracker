@@ -2,6 +2,20 @@
 
 갱신: 2026-10-19. 이 문서는 공통 코드에 적용할 내용과 Android에서 확인한 결과를 구분해 기록합니다. Android 채팅이 공통 파일을 직접 커밋하지 않습니다.
 
+## 10월 19일 재개: 수동 사진 백업 Android 확인 완료
+
+Android 시작 `a456f18`, 공통 **`809efe0e012622b2e454b422dc8ef120b6d0e3ea`**의 source 37개를 임시 적용했습니다. database 이름 한 곳만 새 QA DB로 오버라이드했고 실제 원본 v1 DB는 열거나 migration하지 않았습니다. 새 native 빌드·설치·의존성 변경 없이 기존 Debug APK·API 37·자체 8082와 합성 HTTP를 사용했습니다.
+
+native File의 복사·SHA-256·내용 기반 MIME rename·고정 첨부 사본·dispose 보존 1개가 PASS입니다. 별도 실제 async SQLite·expo/fetch multipart 통합 **9개도 PASS**입니다. v1→v2의 두 owner 전체 행 보존, JPEG/PNG 원본 bytes 전송·ACK/metadata, 서버 200 뒤 응답 유실·재개방·고정 해시·동일 UUID 재시도, 잘못된 사진 5건 뒤 정상 JPEG 진행, 동의/화면/계정 guard와 실제 ACK SQL 쓰기·DELETE 뒤 rollback을 확인했습니다. 응답 유실·계정 변화·DB 오류 시점은 주입했으며 native SQL·파일·이후 HTTP는 실제입니다. 서버 사진 POST 14회·고유 사진/사진 영수증 각 8개, 모든 저장 첨부본 해시·크기와 별도 썸네일도 직접 대조했습니다.
+
+0건 합성 계정의 실제 UI에서 계정·서버·형식/크기/범위·원본 보관 안내, 취소, 재확인 후 빈 전송, 수동 실행 뒤에도 매번 다시 확인하는 흐름이 PASS입니다. 사진 POST는 없었고 방문 성공 시각도 만들지 않았습니다. 이는 사진이 있는 계정의 전체 UI 전송 결과가 아니며 독립 native 사진 전송 결과와 구분합니다. 로그아웃·native 인증 항목 삭제도 확인했습니다.
+
+QA 임시 소스의 `bash scripts/verify-cloud.sh`는 타입·lint·모바일 378개·기존 backend syntax/native load·양쪽 JS/Hermes export PASS입니다. 공통 서버 61개는 이번에 반복하지 않았습니다. Inspector 도구의 중첩 async 조기 반환을 기존 generator 변환으로 고친 뒤 9개를 통과했으며 제품 소스는 수정하지 않았습니다. 정확한 실제 결과와 실패/성공 근거는 [진행 기록](ANDROID_PROGRESS.md)에 보존했습니다.
+
+원본 모든 owner 행·사진 bytes와 guest 방문 4건·사진 1개·대기 3건·기록 꺼짐·schema v1·integrity `ok`는 그대로입니다. 앱·자체 서버를 먼저 종료한 뒤 원래 14개·새 23개, 총 37개 파일을 복구 대조했습니다. 시험 DB·WAL·SHM·합성 첨부본·전송 cache 부재, QA UI DB 제거, 자체 reverse·에뮬레이터 종료와 package/lock·APK hash 보존을 확인했습니다. 원래 checkout·iOS·iPhone·SDK·AVD·기존 증거는 조작하지 않았고 새 캐시·Time Machine 삭제도 없습니다.
+
+공통 제품 코드의 수정 제안은 새로 없습니다. 실제 OS 네트워크 변화·전송 중 앱 종료·nonempty 계정 전체 UI·자동 사진 전송·다운로드/복원·여러 기기 삭제 병합·Android 실기기·Release와 P3-10 전체는 계속 남깁니다. 아래 사진 NOT RUN은 개발 재개 전의 저장 이력입니다.
+
 ## 10월 19일 사진 백업은 준비 상태로 저장·종료
 
 공통 **`809efe0e012622b2e454b422dc8ef120b6d0e3ea`**의 production 22개·테스트 14개·설정 1개와 backend 12개의 고정 사본을 준비했습니다. 고유 QA DB 이름으로만 바꾼 database 사본도 준비했지만, **소스 37개와 QA 이름 모두 실제 파일에는 적용하지 않았습니다.** 현재 원본 존재 여부·해시와 고정 사본·QA 이름 한 곳 변경·package/lock 불변을 재확인했습니다.
