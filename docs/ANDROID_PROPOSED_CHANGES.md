@@ -1,6 +1,16 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
-갱신: 2026-10-18. 이 문서는 공통 코드에 적용할 내용과 Android에서 확인한 결과를 구분해 기록합니다. Android 채팅이 공통 파일을 직접 커밋하지 않습니다.
+갱신: 2026-10-19. 이 문서는 공통 코드에 적용할 내용과 Android에서 확인한 결과를 구분해 기록합니다. Android 채팅이 공통 파일을 직접 커밋하지 않습니다.
+
+## 10월 19일 사진 백업은 준비 상태로 저장·종료
+
+공통 **`809efe0e012622b2e454b422dc8ef120b6d0e3ea`**의 production 22개·테스트 14개·설정 1개와 backend 12개의 고정 사본을 준비했습니다. 고유 QA DB 이름으로만 바꾼 database 사본도 준비했지만, **소스 37개와 QA 이름 모두 실제 파일에는 적용하지 않았습니다.** 현재 원본 존재 여부·해시와 고정 사본·QA 이름 한 곳 변경·package/lock 불변을 재확인했습니다.
+
+사용자의 저장·종료 요청으로 사진 native·UI 검사는 **NOT RUN**입니다. File cache 복사·MIME rename, JPEG/PNG 실제 expo/fetch multipart, 별도 v1→v2 migration·사진 ACK·재시도·계정 guard·수동 동의 UI는 다음 검증 범위입니다. 아래 `51c96d2`의 방문 연결 복구 13가지 PASS를 이 사진 소스의 결과로 합치지 않습니다.
+
+10월 18일 종료 명령은 자동 승인 검토의 사용량 한도로 실행되지 않았습니다. 10월 19일 이미 실행 중인 전용 에뮬레이터에서 원본 모든 owner 행·사진 바이트, guest 방문 4건·사진 1개·대기 3건·기록 꺼짐·schema v1·integrity `ok`와 QA DB 부재를 읽기 전용으로 확인하고 종료했습니다. 전용 8082·3002와 reverse는 없었고 새 서버·앱·빌드·설치·migration을 시작하지 않았습니다.
+
+추가 용량 정리 요청으로 사용하지 않는 Gradle transforms·Android Studio cache/index·npm 다운로드 캐시 약 6.51GiB를 삭제했습니다. 삭제 직후 실제 가용량 증가는 확인되지 않아 확보량으로 표시하지 않습니다. AVD·SDK·JDK·의존성·APK·방문·사진·백업·LocalHistory·로그·근거와 원래 checkout·iOS는 보존했습니다. 삭제 경로·정확한 바이트·공간 측정·후속 미실행 범위는 [진행 기록](ANDROID_PROGRESS.md)에 있습니다.
 
 ## 10월 18일 foreground 연결 복구 확인
 

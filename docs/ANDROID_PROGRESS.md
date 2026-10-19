@@ -1,10 +1,61 @@
 # Android 개발·검증 기록
 
-마지막 갱신: 2026-10-18, Asia/Seoul.
+마지막 갱신: 2026-10-19, Asia/Seoul.
 
-10월 18일 `51c96d2`의 foreground 연결 복구를 별도 native async 파일 DB와 임시 HTTP 서버에서 확인했습니다. 저장된 확인·재시도 시각의 재개방 보존, 무인증 health, 같은 UUID의 이른 재전송, health·DB 갱신 중 상태 변경 보호와 HTTP 오류·timeout 등 13가지가 PASS입니다. 원본 방문 4건·사진 파일 1개·전송 대기 3건의 전체 행·사진 바이트를 보존하고 임시 파일·실행 환경을 복구했습니다. 이전 화면·전송·경쟁 조건 결과는 아래 이력으로 유지합니다.
+10월 19일에는 중단된 사진 백업 준비의 저장·종료만 마쳤습니다. 공통 `809efe0`의 소스 사본 37개와 QA 전용 DB 이름은 준비했으나 적용하지 않았습니다. 사진 native·UI 검사는 **NOT RUN**입니다. 원본 schema v1·방문 4건·사진 파일 1개·전송 대기 3건과 전체 행·사진 바이트를 다시 읽기 전용으로 대조한 뒤 전용 에뮬레이터를 종료했습니다. 사용자 요청에 따라 재생성 가능한 캐시 약 6.51GiB를 삭제했으나, 삭제 직후 실제 가용량 증가는 확인되지 않았습니다.
+
+10월 18일 `51c96d2`에서 실행한 연결 복구 13가지 PASS와 이전 화면·전송·경쟁 조건 결과는 아래 이력으로 유지합니다. 이 결과를 `809efe0`의 사진 검증으로 합산하지 않습니다.
 
 현재 실제 Android 휴대폰은 없습니다. 결과는 Debug APK의 정적 검사와 API 37 에뮬레이터 시험이며, 실제 휴대폰이나 출시용 Release 검증으로 보지 않습니다. 전체 체크리스트와 완료 수는 공통 담당 채팅에서 관리합니다.
+
+## 10월 19일 사진 백업 준비 저장·종료와 용량 정리
+
+### 고정 소스는 사본만 준비, 사진 검사는 NOT RUN
+
+Android 시작 HEAD는 `6d3777c`, 준비한 공통 기준은 **`809efe0e012622b2e454b422dc8ef120b6d0e3ea`**입니다. production JS/TS 22개, 테스트 14개, Vitest 설정 1개로 총 37개 파일의 기존 내용·부재와 고정 소스 사본을 보존했습니다. backend src·schema 사본 12개도 같은 SHA로 고정했습니다. 공통 database 소스의 DB 이름 한 곳만 고유 QA 파일명으로 바꾼 사본을 별도 준비했습니다.
+
+**37개 소스와 QA DB 이름 변경은 실제 작업 파일에 적용하지 않았습니다.** 10월 19일 현재 파일의 기존 존재 여부·원문 해시, 고정 사본·backend 사본의 Git 원본 해시, QA 사본의 이름 한 곳만 변경되었음을 모두 재확인했습니다. package/lock도 변함없습니다. 원본을 덮어쓴 적이 없으므로 복원한 파일 수는 0개이며, 37개를 복원했다고 표시하지 않습니다.
+
+사용자가 진행하던 범위까지만 저장하고 마무리하도록 요청해 사진 native·UI 시나리오를 시작하지 않았습니다. 10월 18일의 최종 종료 명령은 자동 승인 검토의 사용량 한도로 실행되지 않았고, 10월 19일 실제 상태를 확인한 뒤 종료를 완료했습니다. 새 서버·Metro·앱 실행, 새 에뮬레이터 시작, 설치·빌드·DB migration은 하지 않았습니다. 공통의 모바일·서버 자동 검사 결과도 이번 Android 실행으로 계산하지 않습니다.
+
+| 준비된 후속 검사 | 이번 실행 |
+| --- | --- |
+| native File의 cache 복사·MIME별 rename·파일 보존 | NOT RUN |
+| JPEG/PNG의 실제 expo/fetch multipart·서버 사진 저장 | NOT RUN |
+| 별도 QA DB의 v1→v2 migration·기존 행 보존 | NOT RUN |
+| 사진 ACK transaction·응답 유실·중복 재시도·계정 전환 guard | NOT RUN |
+| 0건 합성 계정의 수동 사진 백업·매 실행 동의·계정 범위 UI | NOT RUN |
+
+다시 검증할 때도 원본 v1 DB를 v2 소스로 열지 않습니다. 사본 해시를 재확인하고 고유 QA DB·합성 계정·합성 사진으로만 시작해야 합니다. 원본 게스트 가져오기와 사진 쓰기는 하지 않습니다.
+
+### 원본과 실제 종료 상태
+
+10월 18일 baseline과 10월 19일 종료 직전 읽기 전용 대조에서 모든 owner의 visits/photos/outbox 전체 행·기존 사진 바이트가 같았습니다. 최종 상태는 guest·기록 꺼짐·방문 4건(기존 GPS 3건·개발 1건)·사진 파일 1개·outbox 3건·schema version 1·integrity `ok`입니다. 준비한 QA DB와 WAL·SHM은 기기에 없었습니다.
+
+이미 실행 중이던 전용 API 37 에뮬레이터만 종료했습니다. 종료 전 전용 8082·3002 리스너와 adb reverse는 없었습니다. 사진 준비에서 Metro·HTTP·Inspector를 시작한 적이 없으며, 다른 프로세스와 원래 checkout·iOS·iPhone은 조작하지 않았습니다. APK 두 개의 해시도 정리 전후 같습니다. 소스 사본·합성 fixture·원본 로그와 검증 자료는 Git 제외 경로에 보존합니다.
+
+### 사용하지 않는 캐시 정리와 실제 공간 측정
+
+사용자의 Mac 저장공간 정리 요청에 따라 Android Studio·Gradle 빌드가 실행 중이지 않은 상태에서 다음 네 경로만 삭제했습니다. SDK·NDK·JDK·Gradle 의존성 다운로드와 wrapper, AVD 전체·DB·사진·APK·서명·소스·기존 증거·백업·Android Studio LocalHistory는 보존했습니다. 원래 checkout과 iOS 캐시는 정리하지 않았습니다.
+
+| 삭제한 재생성 가능 캐시 | 삭제 전 할당 크기 |
+| --- | ---: |
+| `~/.gradle/caches/9.3.1/transforms` | 3,544,608,768 bytes |
+| `~/Library/Caches/Google/AndroidStudio2026.2.1/caches` | 530,694,144 bytes |
+| `~/Library/Caches/Google/AndroidStudio2026.2.1/index` | 911,638,528 bytes |
+| `~/.npm/_cacache` | 1,999,638,528 bytes |
+| 합계 | **6,986,579,968 bytes, 약 6.51GiB** |
+
+실제 파일시스템 가용량은 삭제 직전 **18,461,765,632 bytes(약 17.19GiB)**, 삭제 직후 **18,458,112,000 bytes(약 17.19GiB)**였습니다. **6.51GiB를 실제 확보했다고 주장하지 않습니다.** 시점 차이는 다른 프로세스의 쓰기·파일시스템 공간 회수도 포함합니다. 읽기 전용 조회에서 9월 28일·10월 12일의 purgeable Time Machine 로컬 스냅샷 두 개가 확인되어 삭제한 블록을 보유할 가능성이 있으나, 그 영향이나 개별 확보량은 측정하지 않았습니다. 이 단계에서는 로컬 백업을 보존했습니다. 다음 native 빌드·Studio 실행·패키지 설치 때 삭제한 캐시를 다시 생성하거나 내려받을 수 있습니다.
+
+원본 근거는 Git 제외인 `docs/test-results/android-photo-backup-20261018/`에 있습니다. 공개 문서·PR에는 실제 계정·비밀번호·token·서버 주소·QA 파일 식별자·기기 원본 DB·사진·로그를 넣지 않습니다.
+
+| 근거 | 로컬 파일 |
+| --- | --- |
+| 고정 사본·기존 파일과 QA 이름 | `validation-files.json`, `common-*.txt`, `original-*.txt`, `qa-database-override.ts`, `frozen-backend/` |
+| 원본 보존 대조 | `baseline-data.json`, `final-data.json`, `private-baseline-fingerprints.json` |
+| 미적용 확인·종료·미실행 범위 | `restoration-result.json`, `shutdown-status.json`, `stop-status.json` |
+| 삭제 경로·측정 바이트·APK 보존 | `disk-cleanup.json` |
 
 ## 10월 18일 foreground 연결 복구
 
