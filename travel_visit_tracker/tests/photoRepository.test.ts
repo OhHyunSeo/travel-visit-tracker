@@ -91,8 +91,7 @@ afterEach(() => {
 });
 
 describe('account-scoped photo preparation and acknowledgements', () => {
-  it('preserves the v1 rows, settings, URIs and outbox through additive v2 migration and reopen', async () => {
-    db.exec('DROP TABLE photo_backup_metadata; PRAGMA user_version=1;');
+  it('preserves rows, settings, URIs and outbox through repeated initialization and reopen', async () => {
     const operation = await photo();
     const previous = Object.fromEntries(
       ['settings', 'region_packs', 'regions', 'candidates', 'visits', 'photos', 'outbox'].map(
@@ -100,7 +99,7 @@ describe('account-scoped photo preparation and acknowledgements', () => {
       ),
     );
     await account.initialize(pack, regions);
-    expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 2 });
+    expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 3 });
     for (const [table, records] of Object.entries(previous)) expect(rows(table)).toEqual(records);
     expect(await account.photoBackupState()).toEqual({ pendingPhotos: 1, backedUpPhotos: 0 });
     db.close();

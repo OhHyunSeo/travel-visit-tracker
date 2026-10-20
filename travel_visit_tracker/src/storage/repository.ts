@@ -1,4 +1,4 @@
-import { schemaSql, schemaVersion } from './schema';
+import { migrateSchema } from './migrations';
 import { dwellPolicy } from '../domain/dwell';
 import type {
   QueuedVisitOperation,
@@ -55,17 +55,18 @@ export class Repository {
     return next;
   }
   private transaction<T>(operation: () => Promise<T>): Promise<T> {
-    return this.serialize(async () => {
-      await this.db.exec('BEGIN IMMEDIATE');
-      try {
-        const result = await operation();
-        await this.db.exec('COMMIT');
-        return result;
-      } catch (error) {
-        await this.db.exec('ROLLBACK');
-        throw error;
-      }
-    });
+    return this.serialize(() => this.inTransaction(operation));
+  }
+  private async inTransaction<T>(operation: () => Promise<T>): Promise<T> {
+    await this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = await operation();
+      await this.db.exec('COMMIT');
+      return result;
+    } catch (error) {
+      await this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
   private settingKey(key: string) {
     return `${this.ownerId}:${key}`;
@@ -106,7 +107,7 @@ export class Repository {
         "SELECT count(*) AS count FROM visits WHERE owner_id='guest' AND source='gps' AND deleted_at IS NULL",
       );
       const photos = await this.db.first<{ count: number }>(
-        "SELECT count(*) AS count FROM photos p JOIN visits v ON v.id=p.visit_id WHERE p.owner_id='guest' AND v.owner_id='guest' AND v.source='gps' AND v.deleted_at IS NULL",
+        "SELECT count(*) AS count FROM photos p JOIN visits v ON v.id=p.visit_id AND v.owner_id=p.owner_id WHERE p.owner_id='guest' AND v.source='gps' AND v.deleted_at IS NULL",
       );
       return { visits: visits?.count ?? 0, photos: photos?.count ?? 0 };
     });
@@ -124,16 +125,25 @@ export class Repository {
         "SELECT count(*) AS count FROM visits WHERE owner_id='guest' AND source='gps' AND deleted_at IS NULL",
       );
       const photos = await this.db.first<{ count: number }>(
-        "SELECT count(*) AS count FROM photos p JOIN visits v ON v.id=p.visit_id WHERE p.owner_id='guest' AND v.owner_id='guest' AND v.source='gps' AND v.deleted_at IS NULL",
+        "SELECT count(*) AS count FROM photos p JOIN visits v ON v.id=p.visit_id AND v.owner_id=p.owner_id WHERE p.owner_id='guest' AND v.source='gps' AND v.deleted_at IS NULL",
       );
-      await this.db.run(
-        "UPDATE outbox SET owner_id=? WHERE owner_id='guest' AND ((entity_type='visit' AND entity_id IN (SELECT id FROM visits WHERE owner_id='guest' AND source='gps')) OR (entity_type='photo' AND entity_id IN (SELECT p.id FROM photos p JOIN visits v ON v.id=p.visit_id WHERE p.owner_id='guest' AND v.owner_id='guest' AND v.source='gps')))",
+      const collision = await this.db.first<{ conflict: number }>(
+        `SELECT 1 AS conflict FROM visits g JOIN visits a ON a.owner_id=? AND (a.id=g.id OR a.session_id=g.session_id) WHERE g.owner_id='guest' AND g.source='gps'
+UNION ALL SELECT 1 FROM photos g JOIN visits v ON v.id=g.visit_id AND v.owner_id=g.owner_id JOIN photos a ON a.owner_id=? AND a.id=g.id WHERE g.owner_id='guest' AND v.source='gps'
+UNION ALL SELECT 1 FROM outbox g JOIN outbox a ON a.owner_id=? AND a.id=g.id WHERE g.owner_id='guest' AND ((g.entity_type='visit' AND g.entity_id IN (SELECT id FROM visits WHERE owner_id='guest' AND source='gps')) OR (g.entity_type='photo' AND g.entity_id IN (SELECT p.id FROM photos p JOIN visits v ON v.id=p.visit_id AND v.owner_id=p.owner_id WHERE p.owner_id='guest' AND v.source='gps'))) LIMIT 1`,
+        this.ownerId,
+        this.ownerId,
         this.ownerId,
       );
+      if (collision)
+        throw new Error(
+          '같은 식별자의 기록이 이미 있어 가져오기를 멈췄습니다. 양쪽 기록을 보존했습니다.',
+        );
       await this.db.run(
-        "UPDATE photos SET owner_id=? WHERE owner_id='guest' AND visit_id IN (SELECT id FROM visits WHERE owner_id='guest' AND source='gps')",
+        "UPDATE outbox SET owner_id=? WHERE owner_id='guest' AND ((entity_type='visit' AND entity_id IN (SELECT id FROM visits WHERE owner_id='guest' AND source='gps')) OR (entity_type='photo' AND entity_id IN (SELECT p.id FROM photos p JOIN visits v ON v.id=p.visit_id AND v.owner_id=p.owner_id WHERE p.owner_id='guest' AND v.source='gps')))",
         this.ownerId,
       );
+      // Composite FKs move photos and their frozen metadata with the parent visit.
       await this.db.run(
         "UPDATE visits SET owner_id=? WHERE owner_id='guest' AND source='gps'",
         this.ownerId,
@@ -486,8 +496,9 @@ export class Repository {
   }
   private async storedPhotoFingerprint(photoId: string): Promise<StoredPhotoFingerprint | null> {
     return this.db.first<StoredPhotoFingerprint>(
-      'SELECT owner_id,operation_id,serialized_payload,sha256,byte_length,mime_type FROM photo_backup_metadata WHERE photo_id=?',
+      'SELECT owner_id,operation_id,serialized_payload,sha256,byte_length,mime_type FROM photo_backup_metadata WHERE photo_id=? AND owner_id=?',
       photoId,
+      this.ownerId,
     );
   }
   private requireMatchingPhotoFingerprint(
@@ -657,24 +668,25 @@ export class Repository {
     pack: { id: string; version: string; count: number },
     regions: { id: string; name: string }[],
   ) {
-    const version = await this.db.first<{ user_version: number }>('PRAGMA user_version');
-    if (version && version.user_version > schemaVersion)
-      throw new Error('이 앱보다 새로운 데이터입니다. 앱을 업데이트해 주세요.');
-    await this.db.exec(schemaSql);
-    await this.transaction(async () => {
-      await this.db.run(
-        'INSERT INTO region_packs(id,version,count) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version,count=excluded.count',
-        pack.id,
-        pack.version,
-        pack.count,
-      );
-      for (const region of regions)
+    await this.serialize(async () => {
+      // This PRAGMA is ineffective inside BEGIN, so enable it while holding the queue first.
+      await this.db.exec('PRAGMA foreign_keys = ON;');
+      await this.inTransaction(async () => {
+        await migrateSchema(this.db);
         await this.db.run(
-          'INSERT INTO regions(id,pack_id,name) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name',
-          region.id,
+          'INSERT INTO region_packs(id,version,count) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version,count=excluded.count',
           pack.id,
-          region.name,
+          pack.version,
+          pack.count,
         );
+        for (const region of regions)
+          await this.db.run(
+            'INSERT INTO regions(id,pack_id,name) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name',
+            region.id,
+            pack.id,
+            region.name,
+          );
+      });
     });
   }
   private async candidate(): Promise<Candidate | null> {
@@ -690,7 +702,7 @@ export class Repository {
         this.ownerId,
       );
       const photos = await this.db.all<Photo>(
-        `SELECT p.id,p.visit_id AS visitId,p.uri,p.created_at AS createdAt FROM photos p JOIN visits v ON v.id=p.visit_id WHERE p.owner_id=? AND v.owner_id=? AND v.deleted_at IS NULL ${includeDevelopment ? '' : "AND v.source='gps'"}`,
+        `SELECT p.id,p.visit_id AS visitId,p.uri,p.created_at AS createdAt FROM photos p JOIN visits v ON v.id=p.visit_id AND v.owner_id=p.owner_id WHERE p.owner_id=? AND v.owner_id=? AND v.deleted_at IS NULL ${includeDevelopment ? '' : "AND v.source='gps'"}`,
         this.ownerId,
         this.ownerId,
       );
