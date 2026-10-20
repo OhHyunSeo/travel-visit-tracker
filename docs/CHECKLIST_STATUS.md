@@ -1,6 +1,6 @@
 # 개발 체크리스트
 
-2026-10-20: 모바일 DB v3의 계정+UUID 격리와 기존 v1/v2 자료 보존 갱신을 구현했습니다. 새 보존·격리 24개를 포함해 모바일 타입·린트·402개, 서버 61개, 실제 임시 HTTP와 양쪽 JS/Hermes export가 PASS입니다. 두 계정의 같은 UUID·서로 다른 첨부 바이트와 재개방·ACK·한쪽 삭제 격리도 확인했습니다. **v3 native DB 검증·다운로드·복원은 미실행**이며 완료 수 23/54와 G1~G4 미완료를 유지합니다. 원래 기기 DB·사진은 열거나 바꾸지 않았습니다.
+2026-10-20: 모바일 DB v3의 계정+UUID 격리와 기존 v1/v2 자료 보존 갱신을 구현했습니다. 새 보존·격리 24개를 포함해 모바일 타입·린트·402개, 서버 61개, 실제 임시 HTTP와 양쪽 JS/Hermes export가 PASS입니다. 두 계정의 같은 UUID·서로 다른 첨부 바이트와 재개방·ACK·한쪽 삭제 격리도 확인했습니다. Android 에뮬레이터의 실제 비동기 SQLite·별도 파일 DB에서도 v3 보존·격리 24개를 통과하고 원래 v1·전체 자료·사진을 보존했습니다. **iPhone v3·다운로드·복원은 미실행**이며 완료 수 23/54와 G1~G4 미완료를 유지합니다. 원래 기기 DB·사진은 열거나 바꾸지 않았습니다.
 
 ## 앞선 사진 전송 검증
 
@@ -23,7 +23,7 @@
 | P1-05 | 완료 | 고정된 Expo 57/RN 0.86/MapLibre 11.5 조합의 양쪽 Debug 지도·위치 실행 결과 기록. 양쪽 초기 실행과 iPhone 짧은 잠금 확인. 전체 현장·배터리는 P2-11/12에 남김 |
 | P1-06 | 완료 | 228개 실제 경계 전체 유효성, Polygon·MultiPolygon·합성 hole 검증 |
 | P1-07 | 부분 완료 / 검증 대기 | 한국 개발 팩 228개 있음. 최신 출시용 경계와 안정적 ID 전환 미완료 |
-| P1-08 | 완료 | SQLite schema version, owner scope, UUID와 UNIQUE 제약·트랜잭션 테스트. v3의 계정+UUID·복합 FK·v1/v2 보존/롤백 합성 검사 추가, 새 v3 native 검증은 대기 |
+| P1-08 | 완료 | SQLite schema version, owner scope, UUID와 UNIQUE 제약·트랜잭션 테스트. v3의 계정+UUID·복합 FK·v1/v2 보존/롤백 합성 검사 추가, Android v3 native 24개 PASS, iPhone v3 대기 |
 | P1-09 | 완료 | Android와 iOS 시뮬레이터 방문 복원·지도 색칠·지역 상세 검증 |
 | P1-10 | 완료 | 개발 방문 입력부터 지도·기록·수집 화면 흐름, 생산용 Hermes의 개발 입력 제외 확인. 네이티브 Release는 P4-09에서 검증 |
 | P1-11 | 완료 | 영속 사진 경로·파일, 취소·연결 실패 회귀, 양쪽 시뮬레이터 재실행 복원 확인 |
@@ -53,9 +53,9 @@
 | P3-07 | 완료 | 로그인·로그아웃·만료 토큰·SecureStore·명시적 게스트 가져오기 구현. 양쪽 native 인증과 별도 합성 DB의 계정 격리·GPS 가져오기·사진 URI·큐 보존 검증. 시스템 백업·전체 접근성·새 기기 복원은 별도 수용 시험에 남김 |
 | P3-08 | 완료 | 영속 outbox·배치·30초~5분 retry·앱 수동/foreground 자동 전송·중단 복원 구현. iPhone/Android 별도 native 파일 DB+실HTTP 응답 유실·재개방·동일 UUID retry 검증. 앱 전송 중 OS process kill은 P3-12/AT-16에 남김 |
 | P3-09 | 완료 | 계정·작업 UUID 멱등 서버, ACK 뒤 계정·payload 일치 큐 처리. 실HTTP·양쪽 별도 native DB와 202a ACK 트랜잭션 세션 guard/rollback 검증. 사진 큐·사용자 기록 보존 |
-| P3-10 | 부분 완료 | 수동 전송·매 실행 확인·고정 해시·UUID·원자적 ACK 구현. v2 소스의 양쪽 각각 native 파일1/통합9개와 합성 사진1건 화면 전송 PASS. v3 계정+UUID 보존 갱신 합성 검사 완료, v3 native·자동 사진 전송·다운로드·복원 대기 |
+| P3-10 | 부분 완료 | 수동 전송·매 실행 확인·고정 해시·UUID·원자적 ACK 구현. v2 소스의 양쪽 각각 native 파일1/통합9개와 합성 사진1건 화면 전송 PASS. v3 계정+UUID 보존 갱신 합성 검사 완료, Android v3 native 24개 PASS, iPhone v3·자동 사진 전송·다운로드·복원 대기 |
 | P3-11 | 부분 완료 | 계정별 방문·사진 서버 격리, 부모 tombstone 뒤 사진 업로드/조회 차단, ACK 보호. 여러 기기 병합·사진 자체 삭제 feed·물리 삭제·복원은 대기 |
-| P3-12 | 부분 완료 | 모바일 402개·서버 61개·실제 임시 HTTP에서 v3 보존 갱신·동일 UUID 계정 격리 추가 확인. 앞선 v2 양쪽 별도 native DB의 사진 전송·재시도·ACK SQL rollback·파일 보존과 합성1건 화면 전송 PASS. v3 native·전송 중 강제 종료·전체 병합/복원 대기 |
+| P3-12 | 부분 완료 | 모바일 402개·서버 61개·실제 임시 HTTP에서 v3 보존 갱신·동일 UUID 계정 격리 추가 확인. 앞선 v2 양쪽 별도 native DB의 사진 전송·재시도·ACK SQL rollback·파일 보존과 합성1건 화면 전송 PASS. Android v3 native 24개 PASS, iPhone v3·전송 중 강제 종료·전체 병합/복원 대기 |
 | P3-13 | 부분 완료 / 검증 대기 | 변경사항·완료시각·재시도 표시와 foreground 실행. transport 실패 뒤 영속 check시각·약30초 주기/3초 health로 긴 retry 전 복구 구현. HTTP500/401/409 우회 금지, 세션·동의·시각 guard 회귀·실HTTP·Android 별도 native DB 13개 PASS. OS 복귀 이벤트·nonempty 실제 앱 E2E는 미검증 |
 | P3-14 | 미착수 | 영속 DB·사진 저장소, HTTPS, 백업·복원 방법을 갖춘 테스트 서버에서 G3를 검증한다. |
 | P4-01 | 부분 완료 / 검증 대기 | Stitch 화면 조회와 지역 수집 방향만 있음. 최종 시안 확정 전 |
