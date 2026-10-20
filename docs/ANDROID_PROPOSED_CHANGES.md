@@ -1,6 +1,16 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
-갱신: 2026-10-19. 이 문서는 공통 코드에 적용할 내용과 Android에서 확인한 결과를 구분해 기록합니다. Android 채팅이 공통 파일을 직접 커밋하지 않습니다.
+갱신: 2026-10-20. 이 문서는 공통 코드에 적용할 내용과 Android에서 확인한 결과를 구분해 기록합니다. Android 채팅이 공통 파일을 직접 커밋하지 않습니다.
+
+## 10월 20일 모바일 DB v3 Android native 24개 PASS
+
+Android `1f299fb`에서 공통 **`2bae436b9f128219d6e81593139071526749b28a`**를 고정했습니다. 기존 목록에 새 migration·migration 테스트·고정 v2 SQL을 더한 40개를 보존한 뒤 DB 파일명·SecureStore key/service만 QA 이름으로 바꿨습니다. 기존 APK·API 37·자체 8082에서 실제 async SQLite 파일 DB 24개를 사용했습니다. 측정한 native SQLite는 3.50.3이며 Repository BEGIN 전에 FK=1을 확인했습니다.
+
+v1/v2 모든 owner 행·settings·후보·URI·payload·attempts·소수점 시각·v2 metadata·native PNG bytes 보존·재개방, 복사/교체 SQL 뒤 및 COMMIT 전 오류 rollback, 같은 UUID의 A/B·fingerprint·ACK 격리, cross-owner FK 거절·owner 한정 삭제, guest GPS·photo metadata cascade, 네 종류 충돌과 가져오기 SQL 실패 rollback이 모두 PASS입니다. 오류 시점은 adapter 제어 또는 native trigger로 주입했으며 실제 디스크 장애·전원 차단으로 표시하지 않습니다. HTTP와 실제 서버 계정은 만들지 않았습니다.
+
+원본의 7개 저장 테이블 전체 행·settings·스키마 정의·모든 owner 사진 bytes와 기존 인증 항목은 시작·종료가 같습니다. 원본은 guest 4/1/3·기록 꺼짐·schema v1·integrity `ok`입니다. 24개 시험 DB/WAL/SHM·합성 PNG 폴더 부재와 QA UI DB v3·0건·무결성 확인 후 제거를 마쳤습니다. 앱·Metro를 먼저 멈춘 뒤 기존14/신규26, 총40개 소스 원문·부재·해시와 package/lock·APK hash를 복구 대조했고 자체 reverse·에뮬레이터도 종료했습니다.
+
+임시 QA 소스의 `bash scripts/verify-cloud.sh`는 타입·lint·모바일 402개·기존 backend syntax/native load·양쪽 JS/Hermes PASS입니다. 공통 서버 61개·HTTP와 앞선 v2 사진 native/UI를 이번 결과로 합산하지 않습니다. 새 빌드·설치·의존성·기존 캐시/백업 정리와 원래 checkout·iOS·iPhone 조작은 없습니다. 추가 제품 수정 제안은 없으며 다운로드·복원 기능이나 실제 Android·Release·전체 수용 시험 완료는 아닙니다. 상세 고정 소스·24개 항목·원본 보존·복구 근거는 [진행 기록](ANDROID_PROGRESS.md)에 보존했습니다.
 
 ## 10월 19일 후속: 사진이 있는 계정의 실제 UI 전송 확인
 

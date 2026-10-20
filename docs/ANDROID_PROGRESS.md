@@ -1,12 +1,65 @@
 # Android 개발·검증 기록
 
-마지막 갱신: 2026-10-19, Asia/Seoul.
+마지막 갱신: 2026-10-20, Asia/Seoul.
+
+10월 20일 공통 **`2bae436`의 모바일 DB v3을 실제 Android 비동기 SQLite 파일 DB 24개에서 검증해 모두 PASS**였습니다. v1/v2의 모든 owner 행·설정·사진 URI/bytes·큐·metadata 보존·재개방, 같은 UUID의 계정 격리, 복합 FK와 가져오기 cascade·충돌·실제 SQL rollback을 확인했습니다. 원본의 7개 저장 테이블·설정·스키마·사진 bytes·인증 항목과 guest 4/1/3·DB v1을 보존했습니다. 임시 소스 40개와 실행 환경은 복구·종료했습니다. 다운로드·복원 기능과 실제 Android 휴대폰 통과를 뜻하지 않습니다.
 
 10월 19일 공통 **`809efe0`의 수동 사진 백업을 Android에서 검증**했습니다. 앞선 native 파일 준비 1개·비동기 SQLite/실제 multipart 통합 9개와 빈 계정 확인창 결과에 이어, **방문 1건·PNG 1개가 있는 합성 계정의 실제 화면 전송도 PASS**입니다. 확인 전·취소 후 전송 없음, 확인 뒤 방문 먼저·사진 정확히 1회, 완료 표시·ACK·기기 첨부본 유지와 매 실행 재확인을 확인했습니다. 원본 v1 DB·방문 4건·사진 파일 1개·전송 대기 3건과 기존 인증 항목을 보존하고 공통 임시 파일 37개·전용 실행 환경을 복구·종료했습니다.
 
 10월 18일 `51c96d2`에서 실행한 연결 복구 13가지 PASS와 이전 화면·전송·경쟁 조건 결과는 아래 이력으로 유지합니다. 이 결과를 `809efe0`의 사진 검증으로 합산하지 않습니다.
 
 현재 실제 Android 휴대폰은 없습니다. 결과는 Debug APK의 정적 검사와 API 37 에뮬레이터 시험이며, 실제 휴대폰이나 출시용 Release 검증으로 보지 않습니다. 전체 체크리스트와 완료 수는 공통 담당 채팅에서 관리합니다.
+
+## 10월 20일 모바일 DB v3 native 검증: 24개 PASS
+
+### 고정 소스와 안전한 적용
+
+Android 시작은 **`1f299fb5fb37757efb9f7c86e92fea3e08683fc3`**, 공통 고정 소스는 **`2bae436b9f128219d6e81593139071526749b28a`**입니다. 이전 37개 목록에 새 `src/storage/migrations.ts`, `tests/migrations.test.ts`, 고정 `tests/fixtures/schema-v2.sql`을 포함해 **40개**의 원문·부재·고정 소스·적용 해시를 보존했습니다. production 23개·테스트 15개·fixture 1개·Vitest 설정 1개입니다.
+
+database 이름 한 곳과 SecureStore key/service만 새 QA 이름으로 바꾸고 그 차이를 별도 기록했습니다. migration·schema·Repository와 고정 v2 fixture는 해당 SHA 그대로입니다. 원래 개인 v1 DB는 v3 앱으로 열지 않았습니다. 기존 Debug APK·API 37·CPU 4개·SwiftShader·전용 8082만 사용했고 새 native 빌드·설치·의존성 변경은 없었습니다.
+
+실제 앱에 로드된 Repository·migration을 native `expo-sqlite`의 네 async adapter 함수와 고유 파일 DB에서 실행했습니다. 각 DB 경로가 원본과 다름을 확인하고 WAL·busy timeout을 사용했습니다. Inspector 코드는 기존에 검증한 ES2015 generator 변환을 적용했습니다. 측정된 native SQLite는 **3.50.3**이며, Repository가 실행하는 각 `BEGIN IMMEDIATE` 직전에 `foreign_keys=1`을 확인했습니다. 초기 연결을 FK OFF로 열거나 재개방한 뒤에도 initialize가 BEGIN 전에 켜는 것을 확인했습니다.
+
+### 합성 자료와 실제 결과
+
+`migrations.test.ts`와 고정 v2 SQL의 24개 시나리오를 실제 비동기 native 파일 DB에 옮겨 실행했습니다. guest/A/B, 활성·삭제·개발 방문, 사진 URI, 소수점 시각, outbox payload/attempts, 후보·설정, 미완료/업로드 metadata와 실제 native PNG bytes를 사용했습니다. 준비된 사진 fingerprint와 ACK는 합성 값이며 HTTP 서버·실제 서버 계정은 만들지 않았습니다.
+
+| 묶음 | 수 | 실제 결과 |
+| --- | ---: | --- |
+| v1/v2→v3·재개방 | 2 | 세 owner의 기존 모든 테이블 행·설정·후보·URI·payload·attempts·소수점 시각 보존. v2의 미완료/완료 metadata·native PNG bytes 유지, 재개방·v3 재초기화 통과 |
+| migration/지역 초기화 실패 | 8 | 새 테이블 생성·사진/metadata 복사·기존 테이블 제거·이름 교체·버전 쓰기 SQL 뒤 오류 6가지, COMMIT 직전 오류 1가지, migration 뒤 지역 초기화 오류 1가지. 실제 rollback으로 행·스키마·이전 버전 보존, 재개방 후 재시도 통과 |
+| 불명확한 기존 저장 구조 | 4 | photos/metadata owner 불일치 2가지, 버전 -1/0/99 묶음, 예상 밖 중간 테이블. 소유권 추정·조용한 행 손실·버전 재표시 없이 기존 구조와 행 보존 |
+| 같은 연결의 동시 요청 | 1 | 두 initialize와 후속 개발 방문 쓰기를 함께 요청. 실제 async 연결에서 직렬 처리·방문 1건 유지, 중첩 transaction 오류 없음 |
+| 같은 UUID·fingerprint·ACK | 1 | A/B의 같은 방문·사진·작업 UUID 동시 저장. owner별 URI·다른 파일 해시·사진 준비·시도 횟수 독립. A ACK만 완료되고 B 큐·metadata·attempts 보존 |
+| FK·owner 한정 삭제 | 2 | 다른 owner의 방문/사진을 참조하는 자식·metadata SQL 거절. Repository 삭제가 다른 owner를 보존하며, 물리 DELETE의 사진→metadata cascade도 해당 owner에만 적용 |
+| guest GPS 가져오기 | 1 | outbox를 옮긴 뒤 부모 방문 owner 변경으로 사진·고정 metadata가 실제 ON UPDATE CASCADE. URI·frozen payload 유지, 개발 자료는 guest에 잔류, 같은 UUID의 B 자료 불변 |
+| 가져오기 충돌·SQL 실패 | 5 | 방문 ID·session·사진 ID·작업 ID 충돌 4가지에서 양쪽 모든 행 불변. outbox 실제 이동 뒤 부모 UPDATE trigger의 SQL ABORT 1가지에서 부모·자식·metadata·outbox 전체 rollback |
+
+행·스키마 비교는 실제 native SELECT 결과를 사용했습니다. 보존·재개방과 계정 관계 검사에서 `foreign_key_check` 빈 결과와 integrity `ok`를 확인했습니다. 일부 오류는 실제 SQL이 완료된 다음 adapter가 예외를 내도록 주입했고, 가져오기 실패는 native SQLite trigger의 ABORT입니다. 실제 디스크 장애·전원 차단이나 프로세스 중간 종료의 결과로 확대하지 않습니다. COMMIT 실패 경우는 **COMMIT 실행 전** 오류이며 이미 커밋한 내용을 rollback한 것으로 표시하지 않습니다.
+
+### 원본·인증·파일·소스 복구
+
+이번 시작·종료에는 원본 DB를 읽기 복사한 뒤 호스트 사본을 read-only로 열어 **7개 저장 테이블 전체 행·settings·스키마 정의·모든 owner 사진 bytes**를 대조했습니다. 이전 10월 19일 visits/photos/outbox 보존 해시와도 같았습니다. 최종 원본은 guest·기록 꺼짐·방문 4건·사진 파일 1개·대기 3건·schema v1·integrity `ok`입니다. QA 외 인증 저장 항목 해시도 같고 QA 인증 항목·실제 세션은 끝까지 부재였습니다.
+
+24개 시험 DB는 각각 close/delete하고 DB·WAL·SHM 부재를 확인했습니다. 각 시험의 전용 native PNG 폴더도 제거돼 남은 폴더는 0개입니다. 앱용 QA DB는 v3·방문/사진/outbox/metadata 0건·integrity `ok`를 확인한 뒤 DB/WAL/SHM 3개만 정리했습니다.
+
+앱·자체 Metro를 먼저 멈춘 뒤 기존 파일 **14개**를 원문으로 복구하고 새 임시 파일 **26개**를 제거했습니다. 40개 전체 존재 여부·바이트와 package/lock·보존 APK hash가 같습니다. 자체 reverse 8082와 에뮬레이터도 종료했습니다. HTTP 서버·실제 서버 계정은 시작하지 않았습니다. 원래 checkout·iOS 8081·iPhone·SDK·AVD·기존 캐시·백업·증거는 조작하지 않았습니다.
+
+### 자동 검사와 남은 범위
+
+QA DB·인증 이름 오버라이드를 포함한 임시 소스의 `bash scripts/verify-cloud.sh`가 PASS입니다. Node 24.21.0의 모바일 타입·ESLint·**15개 파일/402개**, 기존 backend syntax/native dependency load, Android/iOS JS/Hermes export를 포함합니다. 기존 의존성을 읽기 전용 재사용했고 `setup-cloud.sh`나 새 의존성 설치는 로컬에서 반복하지 않았습니다. 공통 서버 61개·실제 임시 HTTP 검사는 이번에 반복하지 않았으며 위 24개는 실제 native 저장 검사로 구분합니다.
+
+제품 소스의 추가 수정 제안은 없습니다. 이번 결과는 저장 구조의 보존·격리 기반입니다. 사진 다운로드·복원·cursor/다운로드 대기·중단 재개 기능 완료, 실제 Android 휴대폰·Release·OS 백업/복원·실제 저장 공간 부족/전원 차단을 뜻하지 않습니다. 앞선 `809efe0`의 사진 native·UI 결과를 v3에서 반복한 것으로 합산하지 않으며 P3-10 전체·G1~G4 완료 수도 변경하지 않습니다.
+
+로컬 Git 제외 근거: `docs/test-results/android-storage-v3-20261020/`. 개인 DB·사진·인증·기기 원본 로그·QA 식별자는 공개 문서와 PR에 넣지 않습니다.
+
+| 근거 | 로컬 파일 |
+| --- | --- |
+| 고정 SHA·새 migration/fixture·복구 해시 | `validation-files.json`, `common-*.txt`, `original-*.txt`, `schema-v2.sql`, QA 이름 사본 |
+| 24개 실제 native case·engine 버전 | `native-probe-result.json`, `private-native-probe-result.json`, generator 변환 probe |
+| 원본 전체 테이블·설정·사진·인증 | `baseline-data.json`, `final-data.json`, `private-original-all-tables.json`, `*-credential.json` |
+| 시험 DB·PNG·실행 환경·APK 보존 | `native-cleanup-summary.json`, `shutdown-status.json`, `apk-preservation.json` |
+| 자동 검사·실행 로그 | `verification.log`, `metro.log`, `emulator.log` |
 
 ## 10월 19일 후속: 사진이 있는 계정의 실제 UI 전송 PASS
 
