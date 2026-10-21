@@ -1,13 +1,20 @@
 import { AuthError, sessionOwner, type Session } from './authClient';
 import { RestoreClient, RestoreFileError } from './restoreSync';
 import type { RestoredFile } from './restoreFile';
-import type { RemotePhoto, RestoreState } from '../storage/restore';
+import type {
+  RemotePhoto,
+  RestoreState,
+  RestoredPhotoFile,
+  RestoredFileCondition,
+} from '../storage/restore';
 import type { RestoreRepository } from '../storage/restoreRepository';
 
 export type RestoreConsent = { ownerId: string; token: string };
 export type RestoreResult = {
   ownerId: string | null;
   downloaded: number;
+  repaired: number;
+  checked: number;
   pending: number;
   paused: boolean;
   message: string;
@@ -20,13 +27,22 @@ export class RestoreCoordinator {
     private repositoryForOwner: (owner: string) => Promise<RestoringRepository>,
     private client: RestoreClient,
     private stageFile: (photo: RemotePhoto, bytes: Uint8Array) => Promise<RestoredFile>,
+    private inspectFile: (candidate: RestoredPhotoFile) => Promise<RestoredFileCondition>,
     private isActive: () => boolean = () => true,
     private observeInterruption: (stop: () => void) => () => void = () => () => {},
   ) {}
   run(consent: RestoreConsent): Promise<RestoreResult> {
     const session = this.currentSession();
     const reject = (message: string) =>
-      Promise.resolve({ ownerId: null, downloaded: 0, pending: 0, paused: true, message });
+      Promise.resolve({
+        ownerId: null,
+        downloaded: 0,
+        repaired: 0,
+        checked: 0,
+        pending: 0,
+        paused: true,
+        message,
+      });
     if (
       !session?.token ||
       session.token !== consent?.token ||
@@ -51,6 +67,8 @@ export class RestoreCoordinator {
   private async perform(session: Session, consent: RestoreConsent): Promise<RestoreResult> {
     let interrupted = false,
       downloaded = 0,
+      repaired = 0,
+      checked = 0,
       pending = 0,
       cleanupFailed = false;
     let repository: RestoreRepository | undefined;
@@ -74,6 +92,8 @@ export class RestoreCoordinator {
     const result = (message: string, paused = false): RestoreResult => ({
       ownerId: consent.ownerId,
       downloaded,
+      repaired,
+      checked,
       pending,
       paused,
       message:
@@ -111,6 +131,7 @@ export class RestoreCoordinator {
       }
       // Drain deletions before discovering/downloading photos, including after a restart.
       let photosRemain = false;
+      let unchecked = 0;
       if (!visitsRemain) {
         for (let page = 0; page < 10; page++) {
           const data = await this.client.photos(session, state.photoCursor);
@@ -120,6 +141,34 @@ export class RestoreCoordinator {
           state = { ...state, photoCursor: data.cursor };
           photosRemain = data.hasMore;
           if (!data.hasMore) break;
+        }
+        {
+          const seenChecks = new Set<string>();
+          let wrapped = state.verifyScan === 0;
+          while (seenChecks.size < 20) {
+            const candidates = await repository.fileChecks(20 - seenChecks.size);
+            check();
+            if (!candidates.length) {
+              if (wrapped) break;
+              await repository.rewindFileChecks(current);
+              wrapped = true;
+              continue;
+            }
+            let repeated = false;
+            for (const candidate of candidates) {
+              const identity = candidate.photo.id + ':' + candidate.uri;
+              if (seenChecks.has(identity)) {
+                repeated = true;
+                break;
+              }
+              seenChecks.add(identity);
+              const condition = await this.inspectFile(candidate);
+              check();
+              if (await repository.recordFileCheck(candidate, condition, current)) checked++;
+              check();
+            }
+            if (repeated) break;
+          }
         }
         const seen = new Set<string>();
         let wrapped = state.photoScan === 0,
@@ -148,7 +197,10 @@ export class RestoreCoordinator {
               file = await this.stageFile(photo, bytes);
               check();
               keep = await repository.completePhoto(photo, file.uri, current);
-              if (keep) downloaded++;
+              if (keep) {
+                downloaded++;
+                if (disposition.replaceUri !== null) repaired++;
+              }
               check();
             } catch (error) {
               // A commit may have succeeded even if its response was lost. Preserve on uncertainty.
@@ -180,10 +232,12 @@ export class RestoreCoordinator {
       const final: RestoreState = await repository.state();
       check();
       pending = final.pendingPhotos + final.pendingVisits;
+      unchecked = final.uncheckedPhotos;
       return result(
-        pending || visitsRemain || photosRemain
-          ? `사진 ${downloaded}개를 받았습니다. 남은 복원 대기 ${pending}건은 보관 중입니다. 보내지 않은 변경이나 겹치는 기록을 확인한 뒤 다시 복원을 눌러 주세요.${visitsRemain || photosRemain ? ' 서버 목록도 다음 실행에서 이어받습니다.' : ''}`
-          : `서버의 방문을 확인하고 사진 ${downloaded}개를 받았습니다. 기존 기기 기록과 사진 파일은 보관했습니다.`,
+        pending || visitsRemain || photosRemain || unchecked
+          ? `사진 ${downloaded}개를 받았습니다. 남은 복원 대기 ${pending}건은 보관 중입니다. 보내지 않은 변경이나 겹치는 기록을 확인한 뒤 다시 복원을 눌러 주세요.${visitsRemain || photosRemain ? ' 서버 목록도 다음 실행에서 이어받습니다.' : ''}` +
+              (unchecked ? ` 이전에 받은 사진 ${unchecked}개는 다음 실행에서 점검합니다.` : '')
+          : `서버의 방문과 이전 다운로드 ${checked}개를 점검하고 사진 ${downloaded}개를 받았습니다.${repaired ? ` 이 중 ${repaired}개는 없거나 손상된 다운로드를 새 사본으로 복구했습니다.` : ''} 기존 파일은 보관했습니다.`,
       );
     } catch (error) {
       if (repository) {

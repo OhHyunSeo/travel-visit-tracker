@@ -57,7 +57,10 @@ vi.mock('../src/services/restore', () => ({
     run = mocks.restoreRun;
   },
 }));
-vi.mock('../src/services/restoreFile', () => ({ stageRestoredFile: vi.fn() }));
+vi.mock('../src/services/restoreFile', () => ({
+  stageRestoredFile: vi.fn(),
+  inspectRestoredFile: vi.fn(),
+}));
 vi.mock('../src/services/restoreTransport', () => ({ restoreFetch: mocks.fetch }));
 vi.mock('../src/services/photoFile', () => ({ preparePhotoFile: vi.fn() }));
 vi.mock('../src/services/photoTransport', () => ({ photoFetch: mocks.fetch }));

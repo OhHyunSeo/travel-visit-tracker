@@ -74,7 +74,7 @@ export default function AccountScreen() {
     const expected = { ownerId: sessionOwner(auth.session), token: auth.session.token };
     Alert.alert(
       '이 계정의 기록을 받을까요?',
-      `${auth.session.user.email}\n${auth.session.apiUrl}\n\n서버의 방문과 JPEG, PNG 사진을 기기에 받습니다. 서버에서 삭제한 방문은 숨기며 기기의 기존 사진 파일은 보관합니다. 보내지 않은 변경이나 겹치는 기록은 복원 대기에 남습니다.\n\n한 번에 새 사진을 최대 20개 받습니다. 앱 화면을 열어 두세요. 연결이 끊기면 다시 눌러 이어받을 수 있습니다.`,
+      `${auth.session.user.email}\n${auth.session.apiUrl}\n\n서버의 방문과 JPEG, PNG 사진을 기기에 받습니다. 서버에서 삭제한 방문은 숨기며 기기의 기존 사진 파일은 보관합니다. 보내지 않은 변경이나 겹치는 기록은 복원 대기에 남습니다.\n\n이전에 받은 사진을 한 번에 최대 20개 점검하고, 없거나 손상된 다운로드는 새 사본으로 연결합니다. 이전 파일은 보관하며 사용자 사진은 바꾸지 않습니다. 한 번에 새 사진을 최대 20개 받습니다. 앱 화면을 열어 두세요. 연결이 끊기면 다시 눌러 이어받을 수 있습니다.`,
       [
         { text: '취소', style: 'cancel' },
         { text: '확인하고 받기', onPress: () => void app.restoreRecords(expected) },
@@ -279,14 +279,27 @@ export default function AccountScreen() {
           <View style={styles.card}>
             <Text style={styles.heading}>기록 복원</Text>
             <Text style={styles.body}>
-              이 계정의 서버 기록을 기기에 받습니다. 기존 사진을 바꾸거나 보내지 않은 변경을
-              덮어쓰지 않습니다. 기기에만 보관된 기록은 다른 기기에서 받을 수 없습니다.
+              이 계정의 서버 기록을 기기에 받습니다. 이전에 받은 다운로드도 점검하고 손상되거나
+              없어진 파일은 새 사본으로 연결합니다. 기존 파일과 보내지 않은 변경은 보관합니다.
+              기기에만 보관된 기록은 다른 기기에서 받을 수 없습니다.
             </Text>
             {backupVisible ? (
               <>
                 <Text style={styles.body}>
                   복원 대기 방문 {app.restore.pendingVisits}건, 사진 {app.restore.pendingPhotos}건
                 </Text>
+                {app.restore.uncheckedPhotos > 0 && (
+                  <Text style={styles.body}>
+                    이전에 받은 사진 {app.restore.uncheckedPhotos}개는 점검을 기다립니다. 복원을
+                    눌러 이어서 확인할 수 있습니다.
+                  </Text>
+                )}
+                {app.restore.damagedPhotos > 0 && (
+                  <Text style={styles.body}>
+                    없거나 손상된 다운로드 {app.restore.damagedPhotos}개를 다시 받아야 합니다. 이전
+                    파일은 보관합니다.
+                  </Text>
+                )}
                 {app.restore.blocked > 0 && (
                   <Text style={styles.body}>
                     대기 중 {app.restore.blocked}건은 기기의 변경사항이나 파일을 확인해야 합니다.

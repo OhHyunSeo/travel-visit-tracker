@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bytes, photo, visit } from './restoreFixture';
-import { stageRestoredFile } from '../src/services/restoreFile.native';
+import { stageRestoredFile, inspectRestoredFile } from '../src/services/restoreFile.native';
 const mock = vi.hoisted(() => ({
   paths: { document: '', cache: '' },
   random: vi.fn(),
@@ -171,5 +171,45 @@ describe('exclusive verified restore files', () => {
     });
     expect(existsSync(temporary())).toBe(false);
     expect(existsSync(durable())).toBe(false);
+  });
+});
+
+describe('restored-file inspection', () => {
+  it('distinguishes valid, empty, missing and same-sized corrupted downloads without writing them', async () => {
+    const p = photo(visit());
+    const staged = await stageRestoredFile(p, bytes);
+    const c = { photo: p, uri: staged.uri };
+    expect(await inspectRestoredFile(c)).toBe('valid');
+    writeFileSync(durable(), new Uint8Array());
+    expect(await inspectRestoredFile(c)).toBe('damaged');
+    expect(statSync(durable()).size).toBe(0);
+    writeFileSync(durable(), new Uint8Array(bytes.length).fill(7));
+    expect(await inspectRestoredFile(c)).toBe('damaged');
+    expect(readFileSync(durable())).toEqual(Buffer.from(new Uint8Array(bytes.length).fill(7)));
+    unlinkSync(durable());
+    expect(await inspectRestoredFile(c)).toBe('missing');
+    expect(existsSync(durable())).toBe(false);
+    await staged.dispose(false);
+  });
+  it('does not classify a read/hash failure as corruption', async () => {
+    const p = photo(visit());
+    const staged = await stageRestoredFile(p, bytes);
+    mock.digest.mockRejectedValueOnce(Error('unreadable native crypto'));
+    await expect(inspectRestoredFile({ photo: p, uri: staged.uri })).rejects.toMatchObject({
+      reason: 'storage',
+    });
+    expect(readFileSync(durable())).toEqual(Buffer.from(bytes));
+    await staged.dispose(false);
+  });
+  it.each([
+    'visit-photos/user.png',
+    'visit-photos/../secret.png',
+    'file:///private/secret.png',
+    'https://elsewhere.test/a.png',
+  ])('rejects an unowned path before file access: %s', async (uri) => {
+    await expect(inspectRestoredFile({ photo: photo(visit()), uri })).rejects.toMatchObject({
+      reason: 'storage',
+    });
+    expect(mock.digest).not.toHaveBeenCalled();
   });
 });

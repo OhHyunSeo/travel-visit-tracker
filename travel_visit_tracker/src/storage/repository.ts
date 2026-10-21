@@ -423,7 +423,7 @@ UNION ALL SELECT 1 FROM outbox g JOIN outbox a ON a.owner_id=? AND a.id=g.id WHE
         this.ownerId,
       );
       const uploaded = await this.db.first<{ count: number }>(
-        "SELECT count(*) AS count FROM photos p JOIN visits v ON v.id=p.visit_id AND v.owner_id=p.owner_id WHERE p.owner_id=? AND v.source='gps' AND v.deleted_at IS NULL AND (EXISTS (SELECT 1 FROM photo_backup_metadata m WHERE m.owner_id=p.owner_id AND m.photo_id=p.id AND m.uploaded_at IS NOT NULL) OR EXISTS (SELECT 1 FROM restore_photos r WHERE r.owner_id=p.owner_id AND r.id=p.id AND r.state='applied'))",
+        "SELECT count(*) AS count FROM photos p JOIN visits v ON v.id=p.visit_id AND v.owner_id=p.owner_id WHERE p.owner_id=? AND v.source='gps' AND v.deleted_at IS NULL AND (EXISTS (SELECT 1 FROM photo_backup_metadata m WHERE m.owner_id=p.owner_id AND m.photo_id=p.id AND m.uploaded_at IS NOT NULL) OR EXISTS (SELECT 1 FROM restore_photos r WHERE r.owner_id=p.owner_id AND r.id=p.id AND r.state='applied') OR EXISTS (SELECT 1 FROM restore_files f WHERE f.owner_id=p.owner_id AND f.photo_id=p.id AND f.uri=p.uri))",
         this.ownerId,
       );
       return { pendingPhotos: pending?.count ?? 0, backedUpPhotos: uploaded?.count ?? 0 };

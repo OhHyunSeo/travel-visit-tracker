@@ -1,7 +1,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import * as Crypto from 'expo-crypto';
-import type { RemotePhoto } from '../storage/restore';
-import { remotePhoto } from '../storage/restore';
+import type { RemotePhoto, RestoredPhotoFile, RestoredFileCondition } from '../storage/restore';
+import { remotePhoto, restoredPhotoUri } from '../storage/restore';
 import { RestoreFileError } from './restoreSync';
 export type RestoredFile = { uri: string; dispose(keep: boolean): Promise<void> };
 
@@ -15,6 +15,22 @@ async function verify(file: File, photo: RemotePhoto) {
   const digest = await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, bytes);
   const hash = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
   if (hash !== photo.sha256) throw new RestoreFileError('invalid');
+}
+export async function inspectRestoredFile(
+  candidate: RestoredPhotoFile,
+): Promise<RestoredFileCondition> {
+  const photo = remotePhoto(candidate.photo);
+  // No absolute paths, external URIs, user attachments or arbitrary server filenames.
+  if (!restoredPhotoUri(candidate.uri)) throw new RestoreFileError('storage');
+  const file = new File(Paths.document, candidate.uri);
+  try {
+    if (!file.exists) return 'missing';
+    await verify(file, photo);
+    return 'valid';
+  } catch (error) {
+    if (error instanceof RestoreFileError && error.reason === 'invalid') return 'damaged';
+    throw new RestoreFileError('storage');
+  }
 }
 export async function stageRestoredFile(
   metadata: RemotePhoto,

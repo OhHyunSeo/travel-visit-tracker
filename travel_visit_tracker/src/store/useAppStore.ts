@@ -7,7 +7,7 @@ import type { PhotoBackupState, VisitBackupState } from '../storage/outbox';
 import { emptyRestoreState, type RestoreState } from '../storage/restore';
 import { RestoreCoordinator } from '../services/restore';
 import { RestoreClient } from '../services/restoreSync';
-import { stageRestoredFile } from '../services/restoreFile';
+import { stageRestoredFile, inspectRestoredFile } from '../services/restoreFile';
 import { restoreFetch } from '../services/restoreTransport';
 import { sessionOwner } from '../services/authClient';
 import { VisitBackupCoordinator } from '../services/visitBackup';
@@ -83,6 +83,7 @@ const restore = new RestoreCoordinator(
   repositoryForOwner,
   new RestoreClient(restoreFetch, __DEV__),
   stageRestoredFile,
+  inspectRestoredFile,
   () => AppState.currentState === 'active',
   (stop) => {
     const subscription = AppState.addEventListener('change', (state) => {

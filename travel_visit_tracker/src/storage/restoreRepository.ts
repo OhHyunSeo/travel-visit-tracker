@@ -5,6 +5,9 @@ import {
   remoteVisit,
   visitPage,
   photoPage,
+  restoredPhotoUri,
+  type RestoredPhotoFile,
+  type RestoredFileCondition,
   type RemotePhoto,
   type RemoteVisit,
   type RestorePage,
@@ -13,11 +16,20 @@ import {
 
 type Current = () => boolean;
 type Row = { id: string; revision: number; payload: string; state: string };
+type FileRow = { uri: string; payload: string; state: string };
 type Read = <T>(operation: () => Promise<T>) => Promise<T>;
 type Write = <T>(current: Current, operation: () => Promise<T>) => Promise<T>;
 const immutableVisit = (v: RemoteVisit) =>
   JSON.stringify([v.sessionId, v.regionId, v.startedAt, v.confirmedAt, v.source]);
 const immutablePhoto = (v: RemotePhoto) => JSON.stringify({ ...v, revision: 0 });
+const matchesPhoto = (row: Row | null, photo: RemotePhoto): boolean => {
+  if (!row || row.id !== photo.id || row.revision !== photo.revision) return false;
+  try {
+    return JSON.stringify(remotePhoto(JSON.parse(row.payload))) === JSON.stringify(photo);
+  } catch {
+    return false;
+  }
+};
 export class RestoreRepository {
   constructor(
     private db: SqlConnection,
@@ -63,8 +75,9 @@ export class RestoreRepository {
         photoCursor: number;
         visitScan: number;
         photoScan: number;
+        verifyScan: number;
       }>(
-        'SELECT visit_cursor AS visitCursor,photo_cursor AS photoCursor,visit_scan AS visitScan,photo_scan AS photoScan FROM restore_state WHERE owner_id=?',
+        'SELECT visit_cursor AS visitCursor,photo_cursor AS photoCursor,visit_scan AS visitScan,photo_scan AS photoScan,verify_scan AS verifyScan FROM restore_state WHERE owner_id=?',
         this.ownerId,
       );
       const v = await this.db.first<{ count: number; blocked: number }>(
@@ -75,12 +88,18 @@ export class RestoreRepository {
         "SELECT count(*) AS count,coalesce(sum(state='blocked'),0) AS blocked FROM restore_photos WHERE owner_id=? AND state IN ('pending','blocked')",
         this.ownerId,
       );
+      const files = await this.db.first<{ unchecked: number; damaged: number }>(
+        "SELECT coalesce(sum(f.state='unchecked'),0) AS unchecked,coalesce(sum(f.state IN ('missing','damaged')),0) AS damaged FROM restore_files f JOIN photos p ON p.owner_id=f.owner_id AND p.id=f.photo_id AND p.uri=f.uri JOIN visits v ON v.owner_id=p.owner_id AND v.id=p.visit_id WHERE f.owner_id=? AND v.deleted_at IS NULL AND v.source='gps'",
+        this.ownerId,
+      );
       return {
         ...emptyRestoreState,
         ...s,
         pendingVisits: v?.count ?? 0,
         pendingPhotos: p?.count ?? 0,
         blocked: (v?.blocked ?? 0) + (p?.blocked ?? 0),
+        uncheckedPhotos: files?.unchecked ?? 0,
+        damagedPhotos: files?.damaged ?? 0,
       };
     });
   }
@@ -273,10 +292,111 @@ export class RestoreRepository {
       await this.scan('photo', 0);
     });
   }
+  async fileChecks(limit = 20): Promise<RestoredPhotoFile[]> {
+    return this.read(async () => {
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20)
+        throw Error('사진 점검 범위를 확인해 주세요.');
+      const scan = await this.db.first<{ scan: number }>(
+        'SELECT verify_scan AS scan FROM restore_state WHERE owner_id=?',
+        this.ownerId,
+      );
+      const rows = await this.db.all<{ payload: string; uri: string }>(
+        "SELECT r.payload,p.uri FROM restore_files f JOIN photos p ON p.owner_id=f.owner_id AND p.id=f.photo_id AND p.uri=f.uri JOIN restore_photos r ON r.owner_id=p.owner_id AND r.id=p.id JOIN visits v ON v.owner_id=p.owner_id AND v.id=p.visit_id WHERE f.owner_id=? AND f.state IN ('unchecked','valid') AND r.state='applied' AND v.deleted_at IS NULL AND v.source='gps' AND r.revision>? ORDER BY r.revision LIMIT ?",
+        this.ownerId,
+        scan?.scan ?? 0,
+        limit,
+      );
+      const result: RestoredPhotoFile[] = [];
+      for (const row of rows) {
+        const photo = remotePhoto(JSON.parse(row.payload));
+        if (!(await this.fileBinding(photo, row.uri)))
+          throw Error('다운로드 출처를 확인할 수 없어 기존 파일을 보존했습니다.');
+        result.push({ photo, uri: row.uri });
+      }
+      return result;
+    });
+  }
+  async rewindFileChecks(current: Current) {
+    await this.write(current, async () => {
+      await this.ensure();
+      await this.db.run('UPDATE restore_state SET verify_scan=0 WHERE owner_id=?', this.ownerId);
+    });
+  }
+  private async fileBinding(photo: RemotePhoto, uri: string): Promise<FileRow | null> {
+    if (!restoredPhotoUri(uri)) return null;
+    const bound = await this.db.first<FileRow>(
+      'SELECT uri,payload,state FROM restore_files WHERE owner_id=? AND photo_id=? AND uri=?',
+      this.ownerId,
+      photo.id,
+      uri,
+    );
+    if (!bound || bound.state === 'preserved') return null;
+    try {
+      if (immutablePhoto(remotePhoto(JSON.parse(bound.payload))) !== immutablePhoto(photo))
+        return null;
+    } catch {
+      return null;
+    }
+    const references = await this.db.first<{ count: number }>(
+      'SELECT count(*) AS count FROM photos WHERE uri=?',
+      uri,
+    );
+    return references?.count === 1 ? bound : null;
+  }
+  async recordFileCheck(
+    candidate: RestoredPhotoFile,
+    condition: RestoredFileCondition,
+    current: Current,
+  ): Promise<boolean> {
+    const photo = remotePhoto(candidate.photo);
+    if (!restoredPhotoUri(candidate.uri) || !['valid', 'missing', 'damaged'].includes(condition))
+      throw Error('사진 점검 자료를 확인할 수 없습니다.');
+    return this.write(current, async () => {
+      await this.ensure();
+      const r = await this.db.first<Row>(
+        'SELECT * FROM restore_photos WHERE owner_id=? AND id=?',
+        this.ownerId,
+        photo.id,
+      );
+      const photos = await this.rows('photos', photo.id),
+        p = photos[0];
+      const matches =
+        r?.state === 'applied' &&
+        matchesPhoto(r, photo) &&
+        photos.length === 1 &&
+        p.uri === candidate.uri &&
+        String(p.visit_id).toLowerCase() === photo.visitId &&
+        p.created_at === photo.createdAt &&
+        (await this.fileBinding(photo, candidate.uri));
+      // Do not let an obsolete check replace a newer path or prevent later items being checked.
+      await this.db.run(
+        'UPDATE restore_state SET verify_scan=max(verify_scan,?) WHERE owner_id=?',
+        photo.revision,
+        this.ownerId,
+      );
+      if (!matches) return false;
+      await this.db.run(
+        'UPDATE restore_files SET state=? WHERE owner_id=? AND photo_id=? AND uri=?',
+        condition,
+        this.ownerId,
+        photo.id,
+        candidate.uri,
+      );
+      if (condition !== 'valid') {
+        await this.status('photos', photo.id, 'pending', 'repair');
+        await this.db.run(
+          'UPDATE restore_state SET photo_scan=min(photo_scan,?) WHERE owner_id=?',
+          photo.revision - 1,
+          this.ownerId,
+        );
+      }
+      return true;
+    });
+  }
   private async disposition(
     photo: RemotePhoto,
   ): Promise<
-    | { kind: 'download'; visitId: string }
+    | { kind: 'download'; visitId: string; replaceUri: string | null }
     | { kind: 'blocked' | 'deleted' | 'existing'; problem: string | null }
   > {
     const r = await this.db.first<Row>(
@@ -295,13 +415,17 @@ export class RestoreRepository {
     const photos = await this.rows('photos', photo.id);
     if (photos.length) {
       const p = photos[0];
-      return photos.length === 1 &&
+      const matches =
+        photos.length === 1 &&
         String(p.visit_id).toLowerCase() === photo.visitId &&
-        p.created_at === photo.createdAt
-        ? { kind: 'existing', problem: null }
-        : { kind: 'blocked', problem: 'conflict' };
+        p.created_at === photo.createdAt;
+      if (!matches) return { kind: 'blocked', problem: 'conflict' };
+      const binding = typeof p.uri === 'string' ? await this.fileBinding(photo, p.uri) : null;
+      if (binding && ['missing', 'damaged'].includes(binding.state))
+        return { kind: 'download', visitId: parent.id as string, replaceUri: p.uri as string };
+      return { kind: 'existing', problem: null };
     }
-    return { kind: 'download', visitId: parent.id as string };
+    return { kind: 'download', visitId: parent.id as string, replaceUri: null };
   }
   async photoDisposition(photo: RemotePhoto, current: Current) {
     const value = remotePhoto(photo);
@@ -311,11 +435,7 @@ export class RestoreRepository {
         this.ownerId,
         value.id,
       );
-      if (
-        !queued ||
-        queued.payload !== JSON.stringify(value) ||
-        !['pending', 'blocked'].includes(queued.state)
-      )
+      if (!queued || !matchesPhoto(queued, value) || !['pending', 'blocked'].includes(queued.state))
         return { kind: 'stale' as const };
       const result = await this.disposition(value);
       if (result.kind !== 'download') {
@@ -327,30 +447,32 @@ export class RestoreRepository {
   }
   async blockPhoto(photo: RemotePhoto, current: Current) {
     await this.write(current, async () => {
+      const value = remotePhoto(photo),
+        queued = await this.db.first<Row>(
+          'SELECT * FROM restore_photos WHERE owner_id=? AND id=?',
+          this.ownerId,
+          value.id,
+        );
+      if (!matchesPhoto(queued, value) || !queued) return;
       const changed = await this.db.run(
         "UPDATE restore_photos SET state='blocked',problem='invalidFile' WHERE owner_id=? AND id=? AND payload=? AND state IN ('pending','blocked')",
         this.ownerId,
         photo.id,
-        JSON.stringify(remotePhoto(photo)),
+        queued.payload,
       );
       if (changed.changes === 1) await this.scan('photo', photo.revision);
     });
   }
   async completePhoto(photo: RemotePhoto, uri: string, current: Current): Promise<boolean> {
     const value = remotePhoto(photo);
-    if (!/^visit-photos\/restored-[a-f0-9-]{36}\.(png|jpg)$/.test(uri))
-      throw Error('복원 파일 경로를 확인할 수 없습니다.');
+    if (!restoredPhotoUri(uri)) throw Error('복원 파일 경로를 확인할 수 없습니다.');
     return this.write(current, async () => {
       const queued = await this.db.first<Row>(
         'SELECT * FROM restore_photos WHERE owner_id=? AND id=?',
         this.ownerId,
         value.id,
       );
-      if (
-        !queued ||
-        queued.payload !== JSON.stringify(value) ||
-        !['pending', 'blocked'].includes(queued.state)
-      )
+      if (!queued || !matchesPhoto(queued, value) || !['pending', 'blocked'].includes(queued.state))
         return false;
       const ready = await this.disposition(value);
       if (ready.kind !== 'download') {
@@ -358,13 +480,47 @@ export class RestoreRepository {
         await this.scan('photo', value.revision);
         return false;
       }
+      if (
+        await this.db.first(
+          'SELECT 1 FROM photos WHERE uri=? UNION ALL SELECT 1 FROM restore_files WHERE uri=? LIMIT 1',
+          uri,
+          uri,
+        )
+      )
+        throw Error('기존 사진 경로를 재사용하지 않고 새 사본을 받아야 합니다.');
+      if (ready.replaceUri) {
+        if (ready.replaceUri === uri)
+          throw Error('기존 파일을 덮어쓰지 않고 새 사본을 받아야 합니다.');
+        const changed = await this.db.run(
+          'UPDATE photos SET uri=? WHERE owner_id=? AND id=? AND uri=?',
+          uri,
+          this.ownerId,
+          value.id,
+          ready.replaceUri,
+        );
+        if (changed.changes !== 1)
+          throw Error('사진 연결이 바뀌어 기존 파일과 복구 대기를 보존했습니다.');
+        await this.db.run(
+          "UPDATE restore_files SET state='preserved' WHERE owner_id=? AND photo_id=? AND uri=?",
+          this.ownerId,
+          value.id,
+          ready.replaceUri,
+        );
+      } else
+        await this.db.run(
+          'INSERT INTO photos(id,owner_id,visit_id,uri,created_at) VALUES (?,?,?,?,?)',
+          value.id,
+          this.ownerId,
+          ready.visitId,
+          uri,
+          value.createdAt,
+        );
       await this.db.run(
-        'INSERT INTO photos(id,owner_id,visit_id,uri,created_at) VALUES (?,?,?,?,?)',
-        value.id,
+        "INSERT INTO restore_files(owner_id,photo_id,uri,payload,state) VALUES (?,?,?,?,'valid')",
         this.ownerId,
-        ready.visitId,
+        value.id,
         uri,
-        value.createdAt,
+        JSON.stringify(value),
       );
       await this.status('photos', value.id, 'applied', null);
       await this.scan('photo', value.revision);

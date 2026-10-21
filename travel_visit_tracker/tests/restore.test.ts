@@ -2,7 +2,12 @@ import { randomUUID, createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RestoreCoordinator } from '../src/services/restore';
 import { RestoreClient, RestoreFileError } from '../src/services/restoreSync';
-import type { RemotePhoto, RemoteVisit } from '../src/storage/restore';
+import type {
+  RemotePhoto,
+  RemoteVisit,
+  RestoredPhotoFile,
+  RestoredFileCondition,
+} from '../src/storage/restore';
 import { bytes, epoch, fixture, owner, session, visit, photo } from './restoreFixture';
 let f: Awaited<ReturnType<typeof fixture>>;
 let latest = { ...session },
@@ -12,13 +17,26 @@ let visits: RemoteVisit[], photos: RemotePhoto[];
 let failDownload = false;
 const send = vi.fn<typeof fetch>();
 const disposals = vi.fn();
+const files = new Map<string, Uint8Array>();
+const inspect = vi.fn(async (candidate: RestoredPhotoFile): Promise<RestoredFileCondition> => {
+  const b = files.get(candidate.uri);
+  return !b
+    ? 'missing'
+    : b.length !== candidate.photo.byteLength ||
+        createHash('sha256').update(b).digest('hex') !== candidate.photo.sha256
+      ? 'damaged'
+      : 'valid';
+});
 const stage = vi.fn(async (p: RemotePhoto, b: Uint8Array) => {
   if (createHash('sha256').update(b).digest('hex') !== p.sha256)
     throw new RestoreFileError('invalid');
+  const uri = `visit-photos/restored-${randomUUID()}.png`;
+  files.set(uri, Uint8Array.from(b));
   return {
-    uri: `visit-photos/restored-${randomUUID()}.png`,
+    uri,
     dispose: async (keep: boolean) => {
       disposals(keep);
+      if (!keep) files.delete(uri);
     },
   };
 });
@@ -37,6 +55,7 @@ function serve(list: { revision: number }[], after: number, key: string) {
 }
 beforeEach(async () => {
   vi.clearAllMocks();
+  files.clear();
   f = await fixture();
   latest = { ...session };
   active = true;
@@ -62,6 +81,7 @@ beforeEach(async () => {
     async () => f.repo,
     new RestoreClient(send),
     stage,
+    inspect,
     () => active,
     (stop) => {
       interrupt = stop;
@@ -247,4 +267,98 @@ describe('bounded authenticated downloads', () => {
       status: 302,
     });
   });
+});
+
+describe('rechecking and repairing already restored photos', () => {
+  it.each(['zero', 'same-size-corruption', 'missing'])(
+    'recovers a %s file into a new verified path and preserves the old bytes/path',
+    async (kind) => {
+      await coordinator.run(consent);
+      const original = (await f.repo.snapshot(false)).photos[0].uri;
+      if (kind === 'missing') files.delete(original);
+      else
+        files.set(
+          original,
+          kind === 'zero' ? new Uint8Array() : new Uint8Array(bytes.length).fill(7),
+        );
+      const oldBytes = files.get(original);
+      expect(await coordinator.run(consent)).toMatchObject({
+        checked: 1,
+        downloaded: 1,
+        repaired: 1,
+        pending: 0,
+        paused: false,
+      });
+      const restored = (await f.repo.snapshot(false)).photos[0];
+      expect(restored.uri).not.toBe(original);
+      expect(files.get(restored.uri)).toEqual(bytes);
+      expect(files.get(original)).toEqual(oldBytes);
+      expect(await coordinator.run(consent)).toMatchObject({
+        checked: 1,
+        downloaded: 0,
+        repaired: 0,
+      });
+    },
+  );
+  it('keeps the old bytes and durable repair queue when network or storage fails, then retries', async () => {
+    await coordinator.run(consent);
+    const original = (await f.repo.snapshot(false)).photos[0].uri;
+    files.set(original, new Uint8Array());
+    failDownload = true;
+    expect(await coordinator.run(consent)).toMatchObject({ downloaded: 0, pending: 1 });
+    expect(await f.repo.restoration.state()).toMatchObject({ damagedPhotos: 1 });
+    stage.mockRejectedValueOnce(new RestoreFileError('storage'));
+    expect(await coordinator.run(consent)).toMatchObject({ downloaded: 0, pending: 1 });
+    expect(files.get(original)).toEqual(new Uint8Array());
+    expect(await coordinator.run(consent)).toMatchObject({
+      repaired: 1,
+      downloaded: 1,
+      pending: 0,
+    });
+  });
+  it('does not claim a healthy file is damaged after an unreadable-file or crypto/storage error', async () => {
+    await coordinator.run(consent);
+    inspect.mockRejectedValueOnce(new RestoreFileError('storage'));
+    expect(await coordinator.run(consent)).toMatchObject({ downloaded: 0, repaired: 0 });
+    expect(await f.repo.restoration.state()).toMatchObject({ damagedPhotos: 0, pendingPhotos: 0 });
+    expect(stage).toHaveBeenCalledTimes(1);
+  });
+  it('keeps bounded checks fair across more than 20 existing photos', async () => {
+    photos = Array.from({ length: 25 }, (_, i) => photo(visits[0], { revision: i + 1 }));
+    await coordinator.run(consent);
+    await coordinator.run(consent);
+    const target = (await f.repo.snapshot(false)).photos.find((p) => p.id === photos[24].id)!;
+    files.set(target.uri, new Uint8Array());
+    const result = await coordinator.run(consent);
+    expect(result).toMatchObject({ checked: 20, repaired: 1, pending: 0 });
+    expect(inspect.mock.calls.length).toBe(40);
+  });
+  it('never relinks a repair if the token changes after staging, and a new explicit run resumes', async () => {
+    await coordinator.run(consent);
+    const original = (await f.repo.snapshot(false)).photos[0].uri;
+    files.set(original, new Uint8Array());
+    const prepare = stage.getMockImplementation()!;
+    stage.mockImplementationOnce(async (...args) => {
+      const file = await prepare(...args);
+      latest = { ...session, token: 'different' };
+      return file;
+    });
+    expect(await coordinator.run(consent)).toMatchObject({ paused: true, repaired: 0 });
+    expect((await f.repo.snapshot(false)).photos[0].uri).toBe(original);
+    latest = { ...session };
+    expect(await coordinator.run(consent)).toMatchObject({ repaired: 1, pending: 0 });
+  });
+});
+
+it('persists a bounded integrity scan and reports unchecked migrated files instead of full completion', async () => {
+  photos = Array.from({ length: 40 }, (_, i) => photo(visits[0], { revision: i + 1 }));
+  await coordinator.run(consent);
+  await coordinator.run(consent);
+  f.db.exec("UPDATE restore_files SET state='unchecked';UPDATE restore_state SET verify_scan=0");
+  const first = await coordinator.run(consent);
+  expect(first).toMatchObject({ checked: 20, downloaded: 0 });
+  expect(first.message).toContain('20개는 다음 실행');
+  expect(await f.repo.restoration.state()).toMatchObject({ uncheckedPhotos: 20, verifyScan: 20 });
+  expect(await coordinator.run(consent)).toMatchObject({ checked: 20, downloaded: 0 });
+  expect(await f.repo.restoration.state()).toMatchObject({ uncheckedPhotos: 0 });
 });

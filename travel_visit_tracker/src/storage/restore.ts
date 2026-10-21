@@ -12,23 +12,35 @@ export type RemoteVisit = {
   deletedAt: number | null;
 };
 export type RestorePage<T> = { items: T[]; cursor: number; hasMore: boolean };
+export type RestoredPhotoFile = { photo: RemotePhoto; uri: string };
+export type RestoredFileCondition = 'valid' | 'missing' | 'damaged';
+export const restoredPhotoUri = (uri: string): boolean =>
+  /^visit-photos\/restored-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(png|jpg)$/.test(
+    uri,
+  );
 export type RestoreState = {
   visitCursor: number;
   photoCursor: number;
   visitScan: number;
   photoScan: number;
+  verifyScan: number;
   pendingVisits: number;
   pendingPhotos: number;
   blocked: number;
+  uncheckedPhotos: number;
+  damagedPhotos: number;
 };
 export const emptyRestoreState: RestoreState = {
   visitCursor: 0,
   photoCursor: 0,
   visitScan: 0,
   photoScan: 0,
+  verifyScan: 0,
   pendingVisits: 0,
   pendingPhotos: 0,
   blocked: 0,
+  uncheckedPhotos: 0,
+  damagedPhotos: 0,
 };
 const object = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v);

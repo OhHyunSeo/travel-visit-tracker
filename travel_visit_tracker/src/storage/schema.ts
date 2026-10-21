@@ -1,4 +1,4 @@
-export const schemaVersion = 4;
+export const schemaVersion = 5;
 
 // The migration builds independent parent/child tables before replacing the old set.
 export function accountTablesSql(suffix: '' | '_v3' = ''): string {
@@ -59,6 +59,16 @@ CREATE INDEX IF NOT EXISTS restore_visit_pending ON restore_visits(owner_id,stat
 CREATE INDEX IF NOT EXISTS restore_photo_pending ON restore_photos(owner_id,state,revision);
 `;
 
+export const restoreFileSchemaSql = `
+CREATE TABLE IF NOT EXISTS restore_files (
+  owner_id TEXT NOT NULL, photo_id TEXT NOT NULL, uri TEXT NOT NULL, payload TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('unchecked','valid','missing','damaged','preserved')),
+  PRIMARY KEY(owner_id,photo_id,uri),
+  FOREIGN KEY(owner_id,photo_id) REFERENCES photos(owner_id,id) ON UPDATE CASCADE ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS restore_files_owner ON restore_files(owner_id,state);
+`;
+
 export const schemaSql = `
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS region_packs (id TEXT PRIMARY KEY, version TEXT NOT NULL, count INTEGER NOT NULL);
@@ -67,4 +77,6 @@ CREATE TABLE IF NOT EXISTS candidates (owner_id TEXT PRIMARY KEY, id TEXT NOT NU
 ${accountTablesSql()}
 ${accountIndexesSql}
 ${restoreSchemaSql}
+ALTER TABLE restore_state ADD COLUMN verify_scan INTEGER NOT NULL DEFAULT 0;
+${restoreFileSchemaSql}
 `;

@@ -42,7 +42,12 @@ import {
   RestoreClient,
   RestoreFileError,
 } from "../travel_visit_tracker/src/services/restoreSync.ts";
-import type { RemotePhoto } from "../travel_visit_tracker/src/storage/restore.ts";
+import {
+  restoredPhotoUri,
+  type RestoredPhotoFile,
+  type RestoredFileCondition,
+  type RemotePhoto,
+} from "../travel_visit_tracker/src/storage/restore.ts";
 
 const require = createRequire(new URL("../backend/server.js", import.meta.url));
 const { createBackend } = require("./src/app.js");
@@ -136,7 +141,7 @@ try {
   assert.equal(
     (database.prepare("PRAGMA user_version").get() as { user_version: number })
       .user_version,
-    4,
+    5,
   );
   const epoch = 1700000000000.25;
   let clock = epoch + 1000000;
@@ -630,6 +635,22 @@ try {
       async () => restoredRepository(),
       new RestoreClient(restoreSend, true),
       stageRestored,
+      async (candidate: RestoredPhotoFile): Promise<RestoredFileCondition> => {
+        assert.ok(restoredPhotoUri(candidate.uri));
+        try {
+          const bytes = await readFile(
+            join(restoreFiles, candidate.uri.split("/").at(-1)!),
+          );
+          return bytes.length === candidate.photo.byteLength &&
+            hash(bytes) === candidate.photo.sha256
+            ? "valid"
+            : "damaged";
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT")
+            return "missing";
+          throw error;
+        }
+      },
     );
   const interruptedRestore = await restore().run(consent(accountA));
   assert.equal(interruptedRestore.downloaded, 0);
@@ -645,6 +666,53 @@ try {
     await readFile(join(restoreFiles, restoredPhotoA.uri.split("/").at(-1)!)),
     png,
   );
+  // A previously completed download can become empty or disappear. Recheck it,
+  // keep the damaged file, and atomically link a fresh verified path on retry.
+  const damagedPath = join(restoreFiles, restoredPhotoA.uri.split("/").at(-1)!);
+  await writeFile(damagedPath, new Uint8Array());
+  const repaired = await restore().run(consent(accountA));
+  assert.equal(repaired.repaired, 1);
+  assert.equal(repaired.downloaded, 1);
+  const repairedA = (await restoredRepository().snapshot(false)).photos.find(
+    (p) => p.id === first.photo.id,
+  )!;
+  assert.notEqual(repairedA.uri, restoredPhotoA.uri);
+  assert.equal((await readFile(damagedPath)).length, 0);
+  assert.deepEqual(
+    await readFile(join(restoreFiles, repairedA.uri.split("/").at(-1)!)),
+    png,
+  );
+  const missingPath = join(restoreFiles, repairedA.uri.split("/").at(-1)!);
+  await rm(missingPath);
+  assert.equal((await restore().run(consent(accountA))).repaired, 1);
+  const beforeSqlFailure = (
+    await restoredRepository().snapshot(false)
+  ).photos.find((p) => p.id === first.photo.id)!;
+  await writeFile(
+    join(restoreFiles, beforeSqlFailure.uri.split("/").at(-1)!),
+    new Uint8Array(),
+  );
+  restoreDatabase.exec(
+    `CREATE TRIGGER fail_restore_repair BEFORE UPDATE OF uri ON photos BEGIN SELECT RAISE(ABORT,'synthetic repair commit failure'); END;`,
+  );
+  const fileNamesBefore = (await readdir(restoreFiles)).sort();
+  assert.equal((await restore().run(consent(accountA))).repaired, 0);
+  assert.equal(
+    (await restoredRepository().restoration.state()).pendingPhotos,
+    1,
+  );
+  assert.deepEqual((await readdir(restoreFiles)).sort(), fileNamesBefore);
+  assert.equal(
+    (await restoredRepository().snapshot(false)).photos.find(
+      (p) => p.id === first.photo.id,
+    )!.uri,
+    beforeSqlFailure.uri,
+  );
+  restoreDatabase.exec("DROP TRIGGER fail_restore_repair");
+  assert.equal((await restore().run(consent(accountA))).repaired, 1);
+  assert.equal((await restoredRepository().snapshot(false)).photos.length, 4);
+  assert.deepEqual(await readFile(first.filename), png);
+  assert.deepEqual(await serverFileHashes(), bothOwnersFiles);
   restoreSession = accountB;
   await restoredRepository().activateOwner();
   assert.equal((await restore().run(consent(accountB))).downloaded, 1);
@@ -707,7 +775,7 @@ try {
     "ok",
   );
   console.log(
-    "PASS: synthetic photo HTTP sync, visit-first ordering, lost-response/DB-reopen replay, atomic local ACK, file/fingerprint preservation, unsupported/missing files, changed bytes, same-UUID cross-owner upload/reopen/ACK/download-byte isolation and deleted-parent protection, fresh-device restoration, persisted download retry and deleted-parent file preservation",
+    "PASS: synthetic photo HTTP sync, visit-first ordering, lost-response/DB-reopen replay, atomic local ACK, file/fingerprint preservation, unsupported/missing files, changed bytes, same-UUID cross-owner upload/reopen/ACK/download-byte isolation and deleted-parent protection, fresh-device restoration, persisted download retry, empty/missing completed-file repair, atomic relink rollback and deleted-parent file preservation",
   );
 } finally {
   try {
