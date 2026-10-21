@@ -2,7 +2,7 @@
 
 작성일: 2026-10-11, Asia/Seoul  
 목표 플랫폼: Android, iOS  
-현재 상태: 2026-10-21 수동 기록 복원과 DB v4의 대기·조회 위치 보존 구현, 합성 SQLite/실제 임시 HTTP와 양쪽 JS/Hermes 검증 완료. 새 v4 iPhone native 복원 8개와 사진 1건 확인창·표시 완료. Android 새 native15개·사진 표시·정상 앱 재실행 완료. DB v5의 완료 파일 점검·새 사본 복구와 모바일479개·서버61개·실제 임시 HTTP·양쪽 JS/Hermes 완료, 새 v5 기기 검사와 전체 수용 시험 대기. 앞선 v3 저장 갱신은 iPhone/Android 각각 native 24개 완료
+현재 상태: 2026-10-21 수동 기록 복원과 DB v4의 대기·조회 위치 보존 구현, 합성 SQLite/실제 임시 HTTP와 양쪽 JS/Hermes 검증 완료. 새 v4 iPhone native 복원 8개와 사진 1건 확인창·표시 완료. Android 새 native15개·사진 표시·정상 앱 재실행 완료. DB v5의 완료 파일 점검·새 사본 복구와 모바일479개·서버61개·실제 임시 HTTP·양쪽 JS/Hermes 완료, 새 v5 Android native16개 완료, iPhone v5·전체 수용 시험 대기. 앞선 v3 저장 갱신은 iPhone/Android 각각 native 24개 완료
 추천 개발 방식: React Native + Expo 개발 빌드 + TypeScript
 
 ## 1. 제품 목표와 첫 버전의 범위
