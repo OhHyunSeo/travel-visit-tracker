@@ -49,7 +49,7 @@ export const useAuthStore = create<AuthState>((set) => {
     importGuest: async (expectedOwner) => {
       const result = await manager.importGuest(expectedOwner);
       set({
-        notice: `방문 ${result.visits}개와 사진 ${result.photos}개를 이 계정으로 옮겼습니다. 방문 백업 설정을 확인해 주세요. 사진은 별도 확인 후 수동으로 전송하며 다른 기기 복원은 아직 준비 중입니다.`,
+        notice: `방문 ${result.visits}개와 사진 ${result.photos}개를 이 계정으로 옮겼습니다. 방문 백업 설정을 확인해 주세요. 사진 전송과 서버 기록 복원은 각각 별도 확인 후 수동으로 실행합니다.`,
       });
     },
   };
