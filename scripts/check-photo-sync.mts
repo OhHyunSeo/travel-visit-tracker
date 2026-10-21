@@ -607,7 +607,9 @@ try {
   );
   await restoredRepository().activateOwner();
   let loseDownload = true;
+  let restoreDownloads = 0;
   const restoreSend: typeof fetch = async (url, init) => {
+    if (String(url).endsWith("/original")) restoreDownloads++;
     const response = await fetch(url, init);
     if (loseDownload && String(url).endsWith("/original") && response.ok) {
       loseDownload = false;
@@ -764,6 +766,175 @@ try {
     otherPng,
   );
   assert.deepEqual(accountRows(sessionOwner(accountA)), originalA);
+  // Two independent mobile databases use the same account. A remote deletion
+  // must not discard the second device's unsent attachment or resurrect its parent.
+  const accountC = await auth.signIn(
+    apiUrl,
+    "photo-multiple-devices@example.test",
+    "synthetic-multiple-devices-password",
+    "Synthetic multiple devices",
+  );
+  session = accountC;
+  repository = await repositoryForOwner(sessionOwner(accountC));
+  await repository.activateOwner();
+  clock = epoch + 10000000;
+  const multiVisit = await seedVisit(epoch + 6000000);
+  const multiPhoto = await addPhoto(multiVisit, "png", png);
+  const consentC = consent(accountC);
+  assert.equal((await coordinator().run(consentC)).acknowledged, 1);
+  const sourceC = accountRows(sessionOwner(accountC));
+  const serverBeforeSecondDevice = await serverFileHashes();
+  const receiptsBeforeSecondDevice = await countServer("photo_sync_operations");
+  restoreSession = accountC;
+  await restoredRepository().activateOwner();
+  assert.equal((await restore().run(consentC)).downloaded, 1);
+  const secondDevicePhoto = (await restoredRepository().snapshot(false)).photos[0];
+  assert.equal(secondDevicePhoto.id, multiPhoto.photo.id);
+  assert.notEqual(secondDevicePhoto.uri, multiPhoto.photo.uri);
+  assert.deepEqual(
+    await readFile(join(restoreFiles, secondDevicePhoto.uri.split("/").at(-1)!)),
+    png,
+  );
+  assert.deepEqual(accountRows(sessionOwner(accountC)), sourceC);
+  assert.equal((await restoredRepository().pendingPhotoOperations()).length, 0);
+  assert.equal((await restore().run(consentC)).downloaded, 0);
+  assert.equal(await countServer("photo_sync_operations"), receiptsBeforeSecondDevice);
+  assert.deepEqual(await serverFileHashes(), serverBeforeSecondDevice);
+
+  const localPhoto: Photo = {
+    id: randomUUID(),
+    visitId: multiVisit,
+    uri: pathToFileURL(join(restoreFiles, `local-${randomUUID()}.png`)).href,
+    createdAt: epoch + 7000000,
+  };
+  await writeFile(fileURLToPath(localPhoto.uri), otherPng, { flag: "wx" });
+  await restoredRepository().addPhoto(localPhoto);
+  const secondDeviceRows = () =>
+    ["visits", "photos", "outbox", "photo_backup_metadata"].map((table) =>
+      restoreDatabase!
+        .prepare(`SELECT * FROM ${table} WHERE owner_id=? ORDER BY rowid`)
+        .all(sessionOwner(accountC)),
+    );
+  const secondDeviceBeforeDeletion = secondDeviceRows();
+  const unsent = (await restoredRepository().pendingPhotoOperations())[0];
+  assert.equal(unsent.entityId, localPhoto.id);
+  await repository.deleteVisit(multiVisit, randomUUID(), epoch + 8000000);
+  await visitBackup.run(true);
+  assert.equal((await repository.visitBackupState()).pendingVisits, 0);
+  const downloadsBeforeConflict = restoreDownloads;
+  const blockedDeletion = await restore().run(consentC);
+  assert.equal(blockedDeletion.downloaded, 0);
+  assert.equal(restoreDownloads, downloadsBeforeConflict);
+  assert.equal((await restoredRepository().restoration.state()).pendingVisits, 1);
+  assert.deepEqual(secondDeviceRows(), secondDeviceBeforeDeletion);
+  assert.deepEqual(await readFile(fileURLToPath(localPhoto.uri)), otherPng);
+  assert.deepEqual(
+    await readFile(join(restoreFiles, secondDevicePhoto.uri.split("/").at(-1)!)),
+    png,
+  );
+
+  const secondVisitBackup = new VisitBackupCoordinator(
+    () => accountC,
+    async () => restoredRepository(),
+    new VisitSyncClient(fetch, true),
+    () => clock,
+  );
+  let secondPhotoStatus = 0;
+  const secondPhotoBackup = new PhotoBackupCoordinator(
+    () => accountC,
+    async () => restoredRepository(),
+    new PhotoSyncClient(async (url, init) => {
+      const response = await fetch(url, init);
+      secondPhotoStatus = response.status;
+      return response;
+    }, true),
+    async (uri) => {
+      const filename = fileURLToPath(uri);
+      assert.equal(filename.startsWith(restoreFiles + "/"), true);
+      const bytes = await readFile(filename);
+      assert.equal((await sharp(bytes).metadata()).format, "png");
+      return {
+        fingerprint: { sha256: hash(bytes), byteLength: bytes.length, mimeType: "image/png" },
+        body: new Blob([new Uint8Array(bytes)], { type: "image/png" }),
+        dispose: async () => {},
+      };
+    },
+    async () => {
+      await secondVisitBackup.run(true);
+      assert.equal((await restoredRepository().visitBackupState()).pendingVisits, 0);
+    },
+    () => true,
+    () => clock,
+  );
+  assert.equal((await secondPhotoBackup.run(consentC)).acknowledged, 0);
+  assert.equal(secondPhotoStatus, 409);
+  const stillUnsent = (await restoredRepository().pendingPhotoOperations())[0];
+  assert.equal(stillUnsent.id, unsent.id);
+  assert.equal(stillUnsent.serializedPayload, unsent.serializedPayload);
+  assert.equal(stillUnsent.attempts, unsent.attempts + 1);
+  assert.equal(
+    (restoreDatabase.prepare("SELECT uploaded_at FROM photo_backup_metadata WHERE owner_id=? AND photo_id=?")
+      .get(sessionOwner(accountC), localPhoto.id) as { uploaded_at: number | null }).uploaded_at,
+    null,
+  );
+  assert.equal(await countServer("photo_sync_operations"), receiptsBeforeSecondDevice);
+  assert.deepEqual(await serverFileHashes(), serverBeforeSecondDevice);
+  const deletedOriginal = await fetch(`${apiUrl}/api/visit-photos/${multiPhoto.photo.id}/original`, {
+    headers: { Authorization: `Bearer ${accountC.token}` },
+  });
+  assert.equal(deletedOriginal.status, 404);
+  await deletedOriginal.body?.cancel();
+  assert.deepEqual(await readFile(multiPhoto.filename), png);
+  assert.deepEqual(await readFile(fileURLToPath(localPhoto.uri)), otherPng);
+
+  // A third empty device sees the tombstone without creating a fake visit or
+  // downloading an attachment whose parent has already been deleted remotely.
+  const thirdDevice = new DatabaseSync(join(directory, "third-mobile.sqlite"));
+  try {
+    const thirdRepository = new Repository(adapter(thirdDevice), sessionOwner(accountC));
+    await thirdRepository.initialize(
+      { id: "synthetic-photo-pack", version: "test", count: 1 },
+      [{ id: regionId, name: "합성 사진 지역" }],
+    );
+    await thirdRepository.activateOwner();
+    let thirdDownloads = 0;
+    const thirdRestore = new RestoreCoordinator(
+      () => accountC,
+      async () => thirdRepository,
+      new RestoreClient(async (url, init) => {
+        if (String(url).endsWith("/original")) thirdDownloads++;
+        return fetch(url, init);
+      }, true),
+      async () => { throw Error("Deleted parent must not stage a third-device photo"); },
+      async () => { throw Error("Empty third device has no prior file to inspect"); },
+    );
+    const thirdResult = await thirdRestore.run(consentC);
+    assert.equal(thirdResult.downloaded, 0);
+    assert.equal(thirdResult.pending, 0);
+    assert.equal(thirdDownloads, 0);
+    assert.equal((await thirdRepository.snapshot(false)).visits.length, 0);
+    assert.equal((await thirdRepository.snapshot(false)).photos.length, 0);
+    assert.equal(thirdDevice.prepare("SELECT * FROM visits").all().length, 0);
+    assert.equal(
+      (thirdDevice.prepare("SELECT state FROM restore_visits WHERE owner_id=? AND id=?")
+        .get(sessionOwner(accountC), multiVisit) as { state: string }).state,
+      "applied",
+    );
+    assert.equal(thirdDevice.prepare("PRAGMA integrity_check").get()!.integrity_check, "ok");
+    assert.deepEqual(thirdDevice.prepare("PRAGMA foreign_key_check").all(), []);
+  } finally {
+    thirdDevice.close();
+  }
+  restoreDatabase.close();
+  restoreDatabase = new DatabaseSync(restorePath);
+  assert.equal((await restoredRepository().restoration.state()).pendingVisits, 1);
+  assert.equal((await restoredRepository().pendingPhotoOperations())[0].id, unsent.id);
+  assert.equal((await restore().run(consentC)).downloaded, 0);
+  assert.equal((await restoredRepository().snapshot(false)).visits.length, 1);
+  assert.equal((await restoredRepository().snapshot(false)).photos.length, 2);
+  assert.deepEqual(await readFile(fileURLToPath(localPhoto.uri)), otherPng);
+  assert.deepEqual(accountRows(sessionOwner(accountA)), originalA);
+  assert.deepEqual(restoreDatabase.prepare("PRAGMA foreign_key_check").all(), []);
   assert.equal(loads, disposals);
   assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
   assert.equal(
@@ -775,7 +946,7 @@ try {
     "ok",
   );
   console.log(
-    "PASS: synthetic photo HTTP sync, visit-first ordering, lost-response/DB-reopen replay, atomic local ACK, file/fingerprint preservation, unsupported/missing files, changed bytes, same-UUID cross-owner upload/reopen/ACK/download-byte isolation and deleted-parent protection, fresh-device restoration, persisted download retry, empty/missing completed-file repair, atomic relink rollback and deleted-parent file preservation",
+    "PASS: synthetic photo HTTP sync, visit-first ordering, lost-response/DB-reopen replay, atomic local ACK, file/fingerprint preservation, unsupported/missing files, changed bytes, same-UUID cross-owner upload/reopen/ACK/download-byte isolation and deleted-parent protection, fresh-device restoration, persisted download retry, empty/missing completed-file repair, atomic relink rollback, same-account independent-device restore without reupload, remote deletion versus unsent-photo preservation/409/reopen, and empty third-device tombstone without fake visit/download",
   );
 } finally {
   try {
