@@ -160,7 +160,7 @@ export class PhotoBackupCoordinator {
       if (visits.pendingVisits > 0)
         return result('방문 전송을 먼저 마쳐야 사진을 백업할 수 있습니다. 사진은 대기 중입니다.');
       if (!remaining)
-        return result('전송할 사진이 없습니다. 사진 복원 기능은 아직 지원하지 않습니다.');
+        return result('전송할 사진이 없습니다. 서버 사진을 받으려면 기록 복원을 눌러 주세요.');
       let scanned = 0,
         confirmed = 0;
       let after: { createdAt: number; id: string } | undefined;
@@ -236,7 +236,7 @@ export class PhotoBackupCoordinator {
       return result(
         remaining > 0
           ? `사진 ${acknowledged}건을 전송했습니다. 남은 ${remaining}건은 원본을 보관하며 다음 수동 확인을 기다립니다.`
-          : `사진 ${acknowledged}건을 전송했습니다. 기기 원본은 유지하며 다른 기기 복원은 아직 지원하지 않습니다.`,
+          : `사진 ${acknowledged}건을 전송했습니다. 기기 원본은 유지하며 서버 사진은 기록 복원에서 받을 수 있습니다.`,
       );
     } catch (error) {
       if (!guard() || error instanceof PhotoBackupPaused) return paused();

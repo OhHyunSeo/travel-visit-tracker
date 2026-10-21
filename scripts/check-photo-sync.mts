@@ -37,6 +37,13 @@ import {
   type SqlConnection,
 } from "../travel_visit_tracker/src/storage/repository.ts";
 
+import { RestoreCoordinator } from "../travel_visit_tracker/src/services/restore.ts";
+import {
+  RestoreClient,
+  RestoreFileError,
+} from "../travel_visit_tracker/src/services/restoreSync.ts";
+import type { RemotePhoto } from "../travel_visit_tracker/src/storage/restore.ts";
+
 const require = createRequire(new URL("../backend/server.js", import.meta.url));
 const { createBackend } = require("./src/app.js");
 const sharp = require("sharp");
@@ -51,6 +58,7 @@ const hash = (bytes: Uint8Array) =>
 let backend: Awaited<ReturnType<typeof createBackend>> | undefined;
 let server: Server | undefined;
 let database: DatabaseSync | undefined;
+let restoreDatabase: DatabaseSync | undefined;
 
 function adapter(db: DatabaseSync): SqlConnection {
   return {
@@ -128,7 +136,7 @@ try {
   assert.equal(
     (database.prepare("PRAGMA user_version").get() as { user_version: number })
       .user_version,
-    3,
+    4,
   );
   const epoch = 1700000000000.25;
   let clock = epoch + 1000000;
@@ -303,7 +311,9 @@ try {
     (await backend!.db.get(`SELECT COUNT(*) AS count FROM ${table}`)).count;
   const photoMetadata = (id: string, ownerId = sessionOwner(accountA)) =>
     database!
-      .prepare("SELECT * FROM photo_backup_metadata WHERE owner_id=? AND photo_id=?")
+      .prepare(
+        "SELECT * FROM photo_backup_metadata WHERE owner_id=? AND photo_id=?",
+      )
       .get(ownerId, id) as {
       operation_id: string;
       serialized_payload: string;
@@ -509,31 +519,49 @@ try {
     pendingPhotos: 3,
     backedUpPhotos: 4,
   });
-  assert.deepEqual(await readFile(unsupported.filename), Buffer.from("synthetic unsupported HEIC attachment"));
+  assert.deepEqual(
+    await readFile(unsupported.filename),
+    Buffer.from("synthetic unsupported HEIC attachment"),
+  );
   await assert.rejects(readFile(missing.filename), { code: "ENOENT" });
   assert.equal(
-    (await repository.snapshot(false)).photos.find((photo) => photo.id === first.photo.id)!.uri,
+    (await repository.snapshot(false)).photos.find(
+      (photo) => photo.id === first.photo.id,
+    )!.uri,
     first.photo.uri,
   );
 
   // A second owner can use the same visit, photo and operation IDs with different bytes.
   const accountRows = (ownerId: string) =>
     ["visits", "photos", "outbox", "photo_backup_metadata"].map((table) =>
-      database!.prepare(`SELECT * FROM ${table} WHERE owner_id=? ORDER BY rowid`).all(ownerId),
+      database!
+        .prepare(`SELECT * FROM ${table} WHERE owner_id=? ORDER BY rowid`)
+        .all(ownerId),
     );
   const originalA = accountRows(sessionOwner(accountA));
-  const sharedSessionId = (await repository.snapshot(false)).visits.find((visit) => visit.id === visitId)!.sessionId;
+  const sharedSessionId = (await repository.snapshot(false)).visits.find(
+    (visit) => visit.id === visitId,
+  )!.sessionId;
   session = accountB;
   repository = await repositoryForOwner(sessionOwner(accountB));
   await repository.activateOwner();
   await seedVisit(epoch + 4000000, visitId, sharedSessionId);
   const bFilename = join(attachmentDirectory, `owner-b-${first.photo.id}.png`);
   await writeFile(bFilename, otherPng);
-  await repository.addPhoto({ ...first.photo, uri: pathToFileURL(bFilename).href });
+  await repository.addPhoto({
+    ...first.photo,
+    uri: pathToFileURL(bFilename).href,
+  });
   loseResponseFor = first.photo.id;
   assert.equal((await coordinator().run(consent(accountB))).acknowledged, 0);
-  assert.equal(photoMetadata(first.photo.id, sessionOwner(accountB)).sha256, hash(otherPng));
-  assert.equal(photoMetadata(first.photo.id, sessionOwner(accountB)).uploaded_at, null);
+  assert.equal(
+    photoMetadata(first.photo.id, sessionOwner(accountB)).sha256,
+    hash(otherPng),
+  );
+  assert.equal(
+    photoMetadata(first.photo.id, sessionOwner(accountB)).uploaded_at,
+    null,
+  );
   assert.deepEqual(accountRows(sessionOwner(accountA)), originalA);
   const bothOwnersFiles = await serverFileHashes();
   database.close();
@@ -544,30 +572,130 @@ try {
   assert.equal((await coordinator().run(consent(accountB))).acknowledged, 1);
   assert.deepEqual(await serverFileHashes(), bothOwnersFiles);
   assert.deepEqual(accountRows(sessionOwner(accountA)), originalA);
-  for (const [account, expected] of [[accountA, png], [accountB, otherPng]] as const) {
-    const response = await fetch(`${apiUrl}/api/visit-photos/${first.photo.id}/original`, {
-      headers: { Authorization: `Bearer ${account.token}` },
-    });
+  for (const [account, expected] of [
+    [accountA, png],
+    [accountB, otherPng],
+  ] as const) {
+    const response = await fetch(
+      `${apiUrl}/api/visit-photos/${first.photo.id}/original`,
+      {
+        headers: { Authorization: `Bearer ${account.token}` },
+      },
+    );
     assert.equal(response.status, 200);
     assert.deepEqual(Buffer.from(await response.arrayBuffer()), expected);
   }
   assert.equal(await countServer("visit_photos"), 5);
   assert.equal(await countServer("photo_sync_operations"), 5);
-  assert.deepEqual(await repository.deleteVisit(visitId, randomUUID(), epoch + 5000000), [pathToFileURL(bFilename).href]);
+  // A fresh isolated device discovers pages, persists a lost-download retry, and
+  // restores the same UUID for two owners without touching the source device.
+  const restorePath = join(directory, "restored-mobile.sqlite");
+  const restoreFiles = join(directory, "restored-files");
+  await mkdir(restoreFiles);
+  restoreDatabase = new DatabaseSync(restorePath);
+  let restoreSession = accountA;
+  const restoredRepository = () =>
+    new Repository(adapter(restoreDatabase!), sessionOwner(restoreSession));
+  await restoredRepository().initialize(
+    { id: "synthetic-photo-pack", version: "test", count: 1 },
+    [{ id: regionId, name: "합성 사진 지역" }],
+  );
+  await restoredRepository().activateOwner();
+  let loseDownload = true;
+  const restoreSend: typeof fetch = async (url, init) => {
+    const response = await fetch(url, init);
+    if (loseDownload && String(url).endsWith("/original") && response.ok) {
+      loseDownload = false;
+      await response.body?.cancel();
+      throw new Error("synthetic download response loss");
+    }
+    return response;
+  };
+  const stageRestored = async (photo: RemotePhoto, bytes: Uint8Array) => {
+    if (bytes.length !== photo.byteLength || hash(bytes) !== photo.sha256)
+      throw new RestoreFileError("invalid");
+    const filename = `restored-${randomUUID()}.${photo.mimeType === "image/png" ? "png" : "jpg"}`;
+    const absolute = join(restoreFiles, filename);
+    await writeFile(absolute, bytes, { flag: "wx" });
+    return {
+      uri: `visit-photos/${filename}`,
+      dispose: async (keep: boolean) => {
+        if (!keep) await rm(absolute);
+      },
+    };
+  };
+  const restore = () =>
+    new RestoreCoordinator(
+      () => restoreSession,
+      async () => restoredRepository(),
+      new RestoreClient(restoreSend, true),
+      stageRestored,
+    );
+  const interruptedRestore = await restore().run(consent(accountA));
+  assert.equal(interruptedRestore.downloaded, 0);
+  assert.ok((await restoredRepository().restoration.state()).pendingPhotos > 0);
+  restoreDatabase.close();
+  restoreDatabase = new DatabaseSync(restorePath);
+  assert.equal((await restore().run(consent(accountA))).downloaded, 4);
+  assert.equal((await restore().run(consent(accountA))).downloaded, 0);
+  const restoredPhotoA = (
+    await restoredRepository().snapshot(false)
+  ).photos.find((p) => p.id === first.photo.id)!;
+  assert.deepEqual(
+    await readFile(join(restoreFiles, restoredPhotoA.uri.split("/").at(-1)!)),
+    png,
+  );
+  restoreSession = accountB;
+  await restoredRepository().activateOwner();
+  assert.equal((await restore().run(consent(accountB))).downloaded, 1);
+  const restoredPhotoB = (
+    await restoredRepository().snapshot(false)
+  ).photos.find((p) => p.id === first.photo.id)!;
+  assert.notEqual(restoredPhotoB.uri, restoredPhotoA.uri);
+  assert.deepEqual(
+    await readFile(join(restoreFiles, restoredPhotoB.uri.split("/").at(-1)!)),
+    otherPng,
+  );
+  assert.deepEqual(restoreDatabase.prepare("SELECT * FROM outbox").all(), []);
+  assert.deepEqual(
+    restoreDatabase.prepare("PRAGMA foreign_key_check").all(),
+    [],
+  );
+  assert.deepEqual(
+    await repository.deleteVisit(visitId, randomUUID(), epoch + 5000000),
+    [pathToFileURL(bFilename).href],
+  );
   await visitBackup.run(true);
   assert.deepEqual(accountRows(sessionOwner(accountA)), originalA);
-  const hiddenB = await fetch(`${apiUrl}/api/visit-photos/${first.photo.id}/original`, {
-    headers: { Authorization: `Bearer ${accountB.token}` },
-  });
+  const hiddenB = await fetch(
+    `${apiUrl}/api/visit-photos/${first.photo.id}/original`,
+    {
+      headers: { Authorization: `Bearer ${accountB.token}` },
+    },
+  );
   assert.equal(hiddenB.status, 404);
   await hiddenB.body?.cancel();
-  const preservedA = await fetch(`${apiUrl}/api/visit-photos/${first.photo.id}/original`, {
-    headers: { Authorization: `Bearer ${accountA.token}` },
-  });
+  const preservedA = await fetch(
+    `${apiUrl}/api/visit-photos/${first.photo.id}/original`,
+    {
+      headers: { Authorization: `Bearer ${accountA.token}` },
+    },
+  );
   assert.equal(preservedA.status, 200);
   assert.deepEqual(Buffer.from(await preservedA.arrayBuffer()), png);
   assert.deepEqual(await readFile(first.filename), png);
   assert.deepEqual(await readFile(bFilename), otherPng);
+  assert.equal((await restore().run(consent(accountB))).downloaded, 0);
+  assert.equal((await restoredRepository().snapshot(false)).visits.length, 0);
+  assert.equal(
+    (await restoredRepository().restoration.state()).pendingPhotos,
+    0,
+  );
+  assert.deepEqual(
+    await readFile(join(restoreFiles, restoredPhotoB.uri.split("/").at(-1)!)),
+    otherPng,
+  );
+  assert.deepEqual(accountRows(sessionOwner(accountA)), originalA);
   assert.equal(loads, disposals);
   assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
   assert.equal(
@@ -579,7 +707,7 @@ try {
     "ok",
   );
   console.log(
-    "PASS: synthetic photo HTTP sync, visit-first ordering, lost-response/DB-reopen replay, atomic local ACK, file/fingerprint preservation, unsupported/missing files, changed bytes, same-UUID cross-owner upload/reopen/ACK/download-byte isolation and deleted-parent protection",
+    "PASS: synthetic photo HTTP sync, visit-first ordering, lost-response/DB-reopen replay, atomic local ACK, file/fingerprint preservation, unsupported/missing files, changed bytes, same-UUID cross-owner upload/reopen/ACK/download-byte isolation and deleted-parent protection, fresh-device restoration, persisted download retry and deleted-parent file preservation",
   );
 } finally {
   try {
@@ -589,6 +717,7 @@ try {
       );
   } finally {
     try {
+      restoreDatabase?.close();
       database?.close();
     } finally {
       try {

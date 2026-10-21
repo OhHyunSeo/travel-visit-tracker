@@ -203,7 +203,7 @@ describe('atomic owner and UUID migration', () => {
       const before = stored();
       const files = [0, 1, 2].map((i) => readFileSync(join(directory, `${i}.png`)));
       await initialize();
-      expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 3 });
+      expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 4 });
       for (const [table, records] of Object.entries(before)) expect(rows(table)).toEqual(records);
       expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
       reopen();
@@ -220,7 +220,7 @@ describe('atomic owner and UUID migration', () => {
     'INSERT INTO photo_backup_metadata_v3',
     'DROP TABLE photos;',
     'ALTER TABLE visits_v3',
-    'PRAGMA user_version = 3',
+    'PRAGMA user_version = 4',
     'COMMIT',
   ])('rolls back all rows and schema when failure follows %s', async (stage) => {
     seedLegacy(2);

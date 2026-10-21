@@ -99,7 +99,7 @@ describe('account-scoped photo preparation and acknowledgements', () => {
       ),
     );
     await account.initialize(pack, regions);
-    expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 3 });
+    expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 4 });
     for (const [table, records] of Object.entries(previous)) expect(rows(table)).toEqual(records);
     expect(await account.photoBackupState()).toEqual({ pendingPhotos: 1, backedUpPhotos: 0 });
     db.close();

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Session } from '../src/services/authClient';
 import type { VisitBackupResult } from '../src/services/visitBackup';
 import type { VisitBackupState } from '../src/storage/outbox';
+import { emptyRestoreState } from '../src/storage/restore';
 import type { AppSnapshot } from '../src/domain/types';
 
 const mocks = vi.hoisted(() => ({
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   repositoryForOwner: vi.fn(),
   run: vi.fn(),
   photoRun: vi.fn(),
+  restoreRun: vi.fn(),
   fetch: vi.fn(),
 }));
 
@@ -50,6 +52,13 @@ vi.mock('../src/services/photoBackup', () => ({
     run = mocks.photoRun;
   },
 }));
+vi.mock('../src/services/restore', () => ({
+  RestoreCoordinator: class {
+    run = mocks.restoreRun;
+  },
+}));
+vi.mock('../src/services/restoreFile', () => ({ stageRestoredFile: vi.fn() }));
+vi.mock('../src/services/restoreTransport', () => ({ restoreFetch: mocks.fetch }));
 vi.mock('../src/services/photoFile', () => ({ preparePhotoFile: vi.fn() }));
 vi.mock('../src/services/photoTransport', () => ({ photoFetch: mocks.fetch }));
 
@@ -110,6 +119,7 @@ function repository(ownerId: string, state = backupState()) {
   return {
     ownerId,
     state,
+    restoration: { state: vi.fn(async () => ({ ...emptyRestoreState })) },
     snapshot: vi.fn(async () => snapshot(ownerId, state.pendingVisits + state.pendingPhotos)),
     visitBackupState: vi.fn(async () => ({ ...state })),
     photoBackupState: vi.fn(async () => ({
@@ -438,4 +448,47 @@ describe('explicit manual photo backup app integration', () => {
     );
     expect(app.getState().photoBackupBusy).toBe(false);
   });
+});
+
+describe('manual record restoration in the app', () => {
+  it('requires the confirmed account and foreground, and never runs from automatic visit checks', async () => {
+    await show(accountA);
+    await app.getState().restoreRecords(expectation(accountB));
+    mocks.appState.currentState = 'background';
+    await app.getState().restoreRecords(expectation(accountA));
+    mocks.appState.currentState = 'active';
+    await app.getState().backupVisits(false);
+    expect(mocks.restoreRun).not.toHaveBeenCalled();
+  });
+  it('serializes restore with uploads and shows a result only for its current account', async () => {
+    await show(accountA);
+    const pending = deferred<{ ownerId: string; message: string }>();
+    mocks.restoreRun.mockReturnValueOnce(pending.promise);
+    const restoring = app.getState().restoreRecords(expectation(accountA));
+    expect(app.getState().restoreBusy).toBe(true);
+    await app.getState().restoreRecords(expectation(accountA));
+    await app.getState().backupPhotos(expectation(accountA));
+    await app.getState().backupVisits(true);
+    expect(mocks.restoreRun).toHaveBeenCalledTimes(1);
+    expect(mocks.photoRun).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    pending.resolve({ ownerId: owner(accountA), message: '합성 사진 복원 완료' });
+    await restoring;
+    expect(app.getState().restoreMessage).toBe('합성 사진 복원 완료');
+    expect(app.getState().restoreBusy).toBe(false);
+  });
+  it.each(['owner', 'token'])(
+    'suppresses a delayed restoration message after %s changes',
+    async (change) => {
+      await show(accountA);
+      const pending = deferred<{ ownerId: string; message: string }>();
+      mocks.restoreRun.mockReturnValueOnce(pending.promise);
+      const restoring = app.getState().restoreRecords(expectation(accountA));
+      await show(change === 'owner' ? accountB : { ...accountA, token: 'changed' });
+      pending.resolve({ ownerId: owner(accountA), message: 'old account result' });
+      await restoring;
+      expect(app.getState().restoreMessage).toBeNull();
+      expect(app.getState().restoreBusy).toBe(false);
+    },
+  );
 });

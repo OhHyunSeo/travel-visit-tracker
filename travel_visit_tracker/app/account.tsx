@@ -47,7 +47,7 @@ export default function AccountScreen() {
     }
     Alert.alert(
       '자동 방문 백업을 켤까요?',
-      `${auth.session.user.email}\n${auth.session.apiUrl}\n\n이 계정의 방문 기록과 방문 삭제 요청을 앱 화면이 열려 있는 동안 서버로 보냅니다. 사진은 포함하지 않습니다. 사진은 별도 확인 후 수동으로 보내며 다른 기기 복원은 아직 준비 중입니다.`,
+      `${auth.session.user.email}\n${auth.session.apiUrl}\n\n이 계정의 방문 기록과 방문 삭제 요청을 앱 화면이 열려 있는 동안 서버로 보냅니다. 사진은 포함하지 않습니다. 사진 전송과 기록 복원은 각각 별도 확인 후 수동으로 실행합니다.`,
       [
         { text: '취소', style: 'cancel' },
         { text: '자동 방문 백업 켜기', onPress: () => void app.setBackupEnabled(true, expected) },
@@ -62,10 +62,22 @@ export default function AccountScreen() {
     };
     Alert.alert(
       '사진을 이 계정으로 보낼까요?',
-      `${auth.session.user.email}\n${auth.session.apiUrl}\n\n이 계정의 방문 기록과 삭제 요청을 먼저 보낸 뒤, 앱에 보관된 JPEG·PNG 첨부본을 보냅니다. 한 번에 사진 최대 20개의 서버 저장을 확인하며, 파일당 최대 10MiB입니다. HEIC·WebP와 없거나 지원 범위를 넘는 파일은 대기에 남습니다.\n\n전송 중에는 앱 화면을 열어 두세요. 자동 사진 전송과 다른 기기 복원은 아직 준비 중입니다. 전송이 끝나도 기기의 사진은 보관합니다.`,
+      `${auth.session.user.email}\n${auth.session.apiUrl}\n\n이 계정의 방문 기록과 삭제 요청을 먼저 보낸 뒤, 앱에 보관된 JPEG·PNG 첨부본을 보냅니다. 한 번에 사진 최대 20개의 서버 저장을 확인하며, 파일당 최대 10MiB입니다. HEIC·WebP와 없거나 지원 범위를 넘는 파일은 대기에 남습니다.\n\n전송 중에는 앱 화면을 열어 두세요. 사진을 자동으로 전송하지는 않습니다. 서버에서 기록을 받으려면 기록 복원을 사용해 주세요. 전송이 끝나도 기기의 사진은 보관합니다.`,
       [
         { text: '취소', style: 'cancel' },
         { text: '확인하고 전송', onPress: () => void app.backupPhotos(expected) },
+      ],
+    );
+  };
+  const restoreRecords = () => {
+    if (!auth.session?.token || !backupVisible) return;
+    const expected = { ownerId: sessionOwner(auth.session), token: auth.session.token };
+    Alert.alert(
+      '이 계정의 기록을 받을까요?',
+      `${auth.session.user.email}\n${auth.session.apiUrl}\n\n서버의 방문과 JPEG, PNG 사진을 기기에 받습니다. 서버에서 삭제한 방문은 숨기며 기기의 기존 사진 파일은 보관합니다. 보내지 않은 변경이나 겹치는 기록은 복원 대기에 남습니다.\n\n한 번에 새 사진을 최대 20개 받습니다. 앱 화면을 열어 두세요. 연결이 끊기면 다시 눌러 이어받을 수 있습니다.`,
+      [
+        { text: '취소', style: 'cancel' },
+        { text: '확인하고 받기', onPress: () => void app.restoreRecords(expected) },
       ],
     );
   };
@@ -74,7 +86,7 @@ export default function AccountScreen() {
     const owner = sessionOwner(auth.session);
     Alert.alert(
       '게스트 기록을 이 계정으로 옮길까요?',
-      `${auth.session.user.email}\n방문 ${guest.visits}개와 사진 ${guest.photos}개를 옮깁니다. 이후 로그아웃해도 계정 기록으로 보관됩니다. 옮긴 방문은 이 계정의 백업 설정에 따라 서버로 전송됩니다. 사진은 별도 확인 후 수동으로 보내며 다른 기기 복원은 아직 준비 중입니다.`,
+      `${auth.session.user.email}\n방문 ${guest.visits}개와 사진 ${guest.photos}개를 옮깁니다. 이후 로그아웃해도 계정 기록으로 보관됩니다. 옮긴 방문은 이 계정의 백업 설정에 따라 서버로 전송됩니다. 사진 전송과 기록 복원은 각각 별도 확인 후 수동으로 실행합니다.`,
       [
         { text: '취소', style: 'cancel' },
         {
@@ -97,8 +109,8 @@ export default function AccountScreen() {
         </Text>
         <Text style={styles.body}>
           계정의 방문 기록과 지원하는 사진을 서버로 보낼 수 있습니다. 사진은 별도 확인 후 수동으로
-          전송합니다. 다른 기기로 기록을 복원하는 기능은 아직 준비 중이므로 앱을 삭제하기 전에는 이
-          점을 확인해 주세요.
+          전송합니다. 서버에 보낸 방문과 JPEG, PNG 사진은 아래 기록 복원에서 받을 수 있습니다.
+          보내지 않은 기록과 지원하지 않는 사진은 기기에만 남습니다.
         </Text>
         {auth.notice && <Text style={styles.body}>{auth.notice}</Text>}
         {auth.session && (
@@ -187,6 +199,7 @@ export default function AccountScreen() {
                     app.busy ||
                     app.backupBusy ||
                     app.photoBackupBusy ||
+                    app.restoreBusy ||
                     !auth.session.token ||
                     Platform.OS === 'web'
                   }
@@ -224,7 +237,7 @@ export default function AccountScreen() {
             <Text style={styles.body}>{auth.session.apiUrl}</Text>
             <Text style={styles.body}>
               앱에 보관된 JPEG·PNG 첨부본을 확인 후 전송합니다. 자동 방문 백업에는 사진이 포함되지
-              않습니다. 다른 기기 복원은 아직 준비 중입니다.
+              않습니다. 서버에 보낸 기록은 아래 기록 복원에서 받을 수 있습니다.
             </Text>
             {backupVisible ? (
               <>
@@ -250,6 +263,7 @@ export default function AccountScreen() {
                     app.busy ||
                     app.backupBusy ||
                     app.photoBackupBusy ||
+                    app.restoreBusy ||
                     !auth.session.token ||
                     Platform.OS === 'web'
                   }
@@ -258,6 +272,48 @@ export default function AccountScreen() {
               </>
             ) : (
               <Text style={styles.body}>이 계정의 사진 전송 상태를 읽고 있습니다.</Text>
+            )}
+          </View>
+        )}
+        {auth.session && (
+          <View style={styles.card}>
+            <Text style={styles.heading}>기록 복원</Text>
+            <Text style={styles.body}>
+              이 계정의 서버 기록을 기기에 받습니다. 기존 사진을 바꾸거나 보내지 않은 변경을
+              덮어쓰지 않습니다. 기기에만 보관된 기록은 다른 기기에서 받을 수 없습니다.
+            </Text>
+            {backupVisible ? (
+              <>
+                <Text style={styles.body}>
+                  복원 대기 방문 {app.restore.pendingVisits}건, 사진 {app.restore.pendingPhotos}건
+                </Text>
+                {app.restore.blocked > 0 && (
+                  <Text style={styles.body}>
+                    대기 중 {app.restore.blocked}건은 기기의 변경사항이나 파일을 확인해야 합니다.
+                    기존 기록은 보관 중입니다.
+                  </Text>
+                )}
+                {app.restoreBusy && (
+                  <Text style={styles.body}>
+                    서버 기록과 사진을 받고 있습니다. 화면을 열어 두세요.
+                  </Text>
+                )}
+                {app.restoreMessage && <Text style={styles.body}>{app.restoreMessage}</Text>}
+                <Button
+                  title={app.restoreBusy ? '기록 받는 중' : '기록 복원하기'}
+                  disabled={
+                    app.busy ||
+                    app.backupBusy ||
+                    app.photoBackupBusy ||
+                    app.restoreBusy ||
+                    !auth.session.token ||
+                    Platform.OS === 'web'
+                  }
+                  onPress={restoreRecords}
+                />
+              </>
+            ) : (
+              <Text style={styles.body}>이 계정의 복원 대기를 읽고 있습니다.</Text>
             )}
           </View>
         )}

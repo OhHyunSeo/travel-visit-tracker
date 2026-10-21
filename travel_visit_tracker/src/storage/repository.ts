@@ -1,4 +1,5 @@
 import { migrateSchema } from './migrations';
+import { RestoreRepository } from './restoreRepository';
 import { dwellPolicy } from '../domain/dwell';
 import type {
   QueuedVisitOperation,
@@ -42,10 +43,25 @@ type StoredPhotoFingerprint = {
   mime_type: string;
 };
 export class Repository {
+  readonly restoration: RestoreRepository;
   constructor(
     private readonly db: SqlConnection,
     readonly ownerId = 'guest',
-  ) {}
+  ) {
+    this.restoration = new RestoreRepository(
+      db,
+      ownerId,
+      (operation) => this.serialize(operation),
+      (current, operation) =>
+        this.transaction(async () => {
+          await this.requireActiveAccount();
+          if (!current()) throw new Error('계정이나 화면 상태가 바뀌어 복원을 멈췄습니다.');
+          const result = await operation();
+          if (!current()) throw new Error('계정이나 화면 상태가 바뀌어 복원 대기를 보존했습니다.');
+          return result;
+        }),
+    );
+  }
   private serialize<T>(operation: () => Promise<T>): Promise<T> {
     const next = (connectionTails.get(this.db) ?? Promise.resolve()).then(operation);
     connectionTails.set(
@@ -407,7 +423,7 @@ UNION ALL SELECT 1 FROM outbox g JOIN outbox a ON a.owner_id=? AND a.id=g.id WHE
         this.ownerId,
       );
       const uploaded = await this.db.first<{ count: number }>(
-        "SELECT count(*) AS count FROM photo_backup_metadata m JOIN photos p ON p.id=m.photo_id AND p.owner_id=m.owner_id JOIN visits v ON v.id=p.visit_id AND v.owner_id=p.owner_id WHERE m.owner_id=? AND m.uploaded_at IS NOT NULL AND v.source='gps' AND v.deleted_at IS NULL",
+        "SELECT count(*) AS count FROM photos p JOIN visits v ON v.id=p.visit_id AND v.owner_id=p.owner_id WHERE p.owner_id=? AND v.source='gps' AND v.deleted_at IS NULL AND (EXISTS (SELECT 1 FROM photo_backup_metadata m WHERE m.owner_id=p.owner_id AND m.photo_id=p.id AND m.uploaded_at IS NOT NULL) OR EXISTS (SELECT 1 FROM restore_photos r WHERE r.owner_id=p.owner_id AND r.id=p.id AND r.state='applied'))",
         this.ownerId,
       );
       return { pendingPhotos: pending?.count ?? 0, backedUpPhotos: uploaded?.count ?? 0 };

@@ -1,5 +1,11 @@
 import type { SqlConnection } from './repository';
-import { accountIndexesSql, accountTablesSql, schemaSql, schemaVersion } from './schema';
+import {
+  accountIndexesSql,
+  accountTablesSql,
+  schemaSql,
+  schemaVersion,
+  restoreSchemaSql,
+} from './schema';
 
 const tables = {
   visits: 'id,owner_id,session_id,region_id,started_at,confirmed_at,source,deleted_at',
@@ -14,8 +20,7 @@ export async function migrateSchema(db: SqlConnection): Promise<void> {
   const version = (await db.first<{ user_version: number }>('PRAGMA user_version'))?.user_version;
   if (version === undefined || version > schemaVersion)
     throw new Error('이 앱보다 새로운 데이터입니다. 앱을 업데이트해 주세요.');
-  if (version < 0)
-    throw new Error('저장 구조의 버전을 확인할 수 없어 기존 기록을 보존했습니다.');
+  if (version < 0) throw new Error('저장 구조의 버전을 확인할 수 없어 기존 기록을 보존했습니다.');
   if (version === 0) {
     const existing = await db.first<{ name: string }>(
       "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' LIMIT 1",
@@ -44,6 +49,7 @@ ${accountIndexesSql}
 `);
   }
   if (version < schemaVersion) {
+    await db.exec(restoreSchemaSql);
     if (await db.first('PRAGMA foreign_key_check'))
       throw new Error('방문과 사진 연결을 확인할 수 없어 기존 기록을 보존했습니다.');
     await db.exec(`PRAGMA user_version = ${schemaVersion};`);

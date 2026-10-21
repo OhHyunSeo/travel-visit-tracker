@@ -4,6 +4,11 @@ import { AppState } from 'react-native';
 import type { AppSnapshot } from '../domain/types';
 import { getRepository, repositoryForOwner } from '../storage/database';
 import type { PhotoBackupState, VisitBackupState } from '../storage/outbox';
+import { emptyRestoreState, type RestoreState } from '../storage/restore';
+import { RestoreCoordinator } from '../services/restore';
+import { RestoreClient } from '../services/restoreSync';
+import { stageRestoredFile } from '../services/restoreFile';
+import { restoreFetch } from '../services/restoreTransport';
 import { sessionOwner } from '../services/authClient';
 import { VisitBackupCoordinator } from '../services/visitBackup';
 import { VisitSyncClient } from '../services/visitSync';
@@ -73,6 +78,31 @@ const photoBackup = new PhotoBackupCoordinator(
   },
   () => AppState.currentState === 'active',
 );
+const restore = new RestoreCoordinator(
+  () => useAuthStore.getState().session,
+  repositoryForOwner,
+  new RestoreClient(restoreFetch, __DEV__),
+  stageRestoredFile,
+  () => AppState.currentState === 'active',
+  (stop) => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') stop();
+    });
+    const captured = useAuthStore.getState().session;
+    const unsubscribe = useAuthStore.subscribe((state) => {
+      if (
+        state.session?.token !== captured?.token ||
+        (state.session ? sessionOwner(state.session) : null) !==
+          (captured ? sessionOwner(captured) : null)
+      )
+        stop();
+    });
+    return () => {
+      subscription.remove();
+      unsubscribe();
+    };
+  },
+);
 type State = AppSnapshot & {
   ready: boolean;
   busy: boolean;
@@ -84,6 +114,10 @@ type State = AppSnapshot & {
   photoBackup: PhotoBackupState;
   photoBackupBusy: boolean;
   photoBackupMessage: string | null;
+  restore: RestoreState;
+  restoreBusy: boolean;
+  restoreMessage: string | null;
+  restoreRecords(expected: BackupExpectation): Promise<void>;
   initialize(): Promise<void>;
   refresh(): Promise<void>;
   clearError(): void;
@@ -126,12 +160,16 @@ export const useAppStore = create<State>((set, get) => {
     photoBackup: { pendingPhotos: 0, backedUpPhotos: 0 },
     photoBackupBusy: false,
     photoBackupMessage: null,
+    restore: emptyRestoreState,
+    restoreBusy: false,
+    restoreMessage: null,
     clearError: () => set({ error: null }),
     refresh: async () => {
       const repository = await getRepository();
       const snapshot = await repository.snapshot(__DEV__);
       const backup = await repository.visitBackupState();
       const photoState = await repository.photoBackupState();
+      const restoreState = await repository.restoration.state();
       if ((await getRepository()).ownerId !== repository.ownerId) return get().refresh();
       snapshot.photos = snapshot.photos.map((photo) => ({
         ...photo,
@@ -147,9 +185,10 @@ export const useAppStore = create<State>((set, get) => {
         ...snapshot,
         backup,
         photoBackup: photoState,
+        restore: restoreState,
         backupOwnerId: repository.ownerId,
         ...(previous.backupOwnerId !== repository.ownerId
-          ? { backupMessage: null, photoBackupMessage: null }
+          ? { backupMessage: null, photoBackupMessage: null, restoreMessage: null }
           : {}),
       });
     },
@@ -193,7 +232,14 @@ export const useAppStore = create<State>((set, get) => {
       if (enabled && changed && matchesBackupAccount(expected)) void get().backupVisits(false);
     },
     backupVisits: async (manual = true, renderedAccount) => {
-      if (!get().ready || get().busy || get().backupBusy || get().photoBackupBusy) return;
+      if (
+        !get().ready ||
+        get().busy ||
+        get().backupBusy ||
+        get().photoBackupBusy ||
+        get().restoreBusy
+      )
+        return;
       const session = useAuthStore.getState().session;
       if (!session?.token) return;
       const expected = { ownerId: sessionOwner(session), token: session.token };
@@ -240,7 +286,14 @@ export const useAppStore = create<State>((set, get) => {
       }
     },
     backupPhotos: async (renderedAccount) => {
-      if (!get().ready || get().busy || get().backupBusy || get().photoBackupBusy) return;
+      if (
+        !get().ready ||
+        get().busy ||
+        get().backupBusy ||
+        get().photoBackupBusy ||
+        get().restoreBusy
+      )
+        return;
       const session = useAuthStore.getState().session;
       if (
         !session?.token ||
@@ -272,6 +325,45 @@ export const useAppStore = create<State>((set, get) => {
             });
         }
         set({ photoBackupBusy: false });
+      }
+    },
+    restoreRecords: async (renderedAccount) => {
+      if (
+        !get().ready ||
+        get().busy ||
+        get().backupBusy ||
+        get().photoBackupBusy ||
+        get().restoreBusy
+      )
+        return;
+      if (
+        !renderedAccount?.token ||
+        !matchesBackupAccount(renderedAccount) ||
+        AppState.currentState !== 'active' ||
+        get().backupOwnerId !== renderedAccount.ownerId
+      )
+        return;
+      const expected = { ownerId: renderedAccount.ownerId, token: renderedAccount.token };
+      set({ restoreBusy: true, restoreMessage: null });
+      let message: string | null = null;
+      try {
+        const result = await restore.run(expected);
+        if (matchesBackupAccount(expected) && result.ownerId === expected.ownerId)
+          message = result.message;
+      } catch {
+        if (matchesBackupAccount(expected))
+          message = '복원 상태를 확인하지 못했습니다. 기기의 기록은 보관 중입니다.';
+      } finally {
+        try {
+          await get().refresh();
+          if (matchesBackupAccount(expected) && message) set({ restoreMessage: message });
+        } catch {
+          if (matchesBackupAccount(expected))
+            set({
+              restoreMessage: '복원 상태를 다시 읽지 못했습니다. 기기의 기록을 확인해 주세요.',
+            });
+        }
+        set({ restoreBusy: false });
       }
     },
     developmentVisit: (regionId) =>
