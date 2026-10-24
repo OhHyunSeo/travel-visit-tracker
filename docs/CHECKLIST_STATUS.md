@@ -10,7 +10,7 @@
 | 실제 iPhone의 업로드, ACK, 다운로드, 복구 중단과 DB 재개방 재시도 6개 | 통과 |
 | 사용자의 실패 후 재전송 확인, 서버 사진, 영수증 각 1건과 바이트 일치 | 통과 |
 | iPhone 원래 모든 테이블, 사진, 인증 보존과 시험 자료, 소스 정리 | 통과 |
-| Android의 같은 수정 소스 중단, 응답 지연 검사와 최종 정리 | 진행 중 |
+| Android API 37의 실제 무선 업로드, 다운로드 중단과 응답 중단 4개, 원본 보존, 최종 정리 | 통과 |
 
 아이폰은 시험 TCP 중단 결과입니다. 자동 OS 연결 복귀, 전원/OS 종료, 물리 다중 기기, 실제 Android 휴대폰, Release와 이동, 배터리를 대신하지 않습니다. 완료 **23/54**, P3-10 전체와 G1~G4는 미완료입니다. 자세한 내용은 [진행 기록](../PROGRESS.md)에 있습니다.
 
@@ -108,7 +108,7 @@ Node 24.21.0에서 타입·린트·모바일 453개, 서버 61개와 `bash scrip
 | P3-07 | 완료 | 로그인·로그아웃·만료 토큰·SecureStore·명시적 게스트 가져오기 구현. 양쪽 native 인증과 별도 합성 DB의 계정 격리·GPS 가져오기·사진 URI·큐 보존 검증. 시스템 백업·전체 접근성·새 기기 복원은 별도 수용 시험에 남김 |
 | P3-08 | 완료 | 영속 outbox·배치·30초~5분 retry·앱 수동/foreground 자동 전송·중단 복원 구현. iPhone/Android 별도 native 파일 DB+실HTTP 응답 유실·재개방·동일 UUID retry 검증. 앱 전송 중 OS process kill은 P3-12/AT-16에 남김 |
 | P3-09 | 완료 | 계정·작업 UUID 멱등 서버, ACK 뒤 계정·payload 일치 큐 처리. 실HTTP·양쪽 별도 native DB와 202a ACK 트랜잭션 세션 guard/rollback 검증. 사진 큐·사용자 기록 보존 |
-| P3-10 | 부분 완료 | 수동 전송·매 실행 확인·고정 해시·UUID·원자적 ACK 구현. v2 소스의 양쪽 각각 native 파일1/통합9개와 합성 사진1건 화면 전송 PASS. v3 계정+UUID 보존 갱신 합성 검사 완료, iPhone/Android 각각 v3 native 24개 PASS, v4 수동 복원·대기/커서 보존과 임시 HTTP PASS, iPhone 새 native8개·사진1건 확인창/표시 PASS. Android 새 native15개·정상 앱 재실행·화면 확인 완료. v5 완료 파일 점검·새 사본 복구와 자동 검사 완료, Android native16개·복구 화면·정상 앱 재실행 PASS. iPhone v5 native11개·실제 복구 확인/사진 표시 PASS. 같은 계정 세 독립 host 저장소·실HTTP의 원격삭제/미전송 사진/409/재개방 PASS. 비정상 종료 내구성·물리 다중 기기·자동 사진 전송·전체 수용 대기 |
+| P3-10 | 부분 완료 | 수동 전송·매 실행 확인·고정 해시·UUID·원자적 ACK 구현. v2 소스의 양쪽 각각 native 파일1/통합9개와 합성 사진1건 화면 전송 PASS. v3 계정+UUID 보존 갱신 합성 검사 완료, iPhone/Android 각각 v3 native 24개 PASS, v4 수동 복원·대기/커서 보존과 임시 HTTP PASS, iPhone 새 native8개·사진1건 확인창/표시 PASS. Android 새 native15개·정상 앱 재실행·화면 확인 완료. v5 완료 파일 점검·새 사본 복구와 자동 검사 완료, Android native16개·복구 화면·정상 앱 재실행 PASS. iPhone v5 native11개·실제 복구 확인/사진 표시 PASS. 같은 계정 세 독립 host 저장소·실HTTP의 원격삭제/미전송 사진/409/재개방 PASS. 55b7bda의 iPhone TCP 중단/재시도 6개·실제 전송 확인과 Android OS 무선 업로드/다운로드 중단·응답 중단 4개 PASS. 비정상 종료 내구성·물리 다중 기기·자동 사진 전송·전체 수용 대기 |
 | P3-11 | 부분 완료 | 계정별 방문·사진 서버 격리, 부모 tombstone 뒤 사진 업로드/조회 차단, ACK 보호. 여러 기기 병합·사진 자체 삭제 feed·물리 삭제·복원은 대기 |
 | P3-12 | 부분 완료 | 모바일 402개·서버 61개·실제 임시 HTTP에서 v3 보존 갱신·동일 UUID 계정 격리 추가 확인. 앞선 v2 양쪽 별도 native DB의 사진 전송·재시도·ACK SQL rollback·파일 보존과 합성1건 화면 전송 PASS. iPhone/Android 각각 v3 native 24개 PASS, 전송 중 강제 종료·전체 병합/복원 대기 |
 | P3-13 | 부분 완료 / 검증 대기 | 변경사항·완료시각·재시도 표시와 foreground 실행. transport 실패 뒤 영속 check시각·약30초 주기/3초 health로 긴 retry 전 복구 구현. HTTP500/401/409 우회 금지, 세션·동의·시각 guard 회귀·실HTTP·Android 별도 native DB 13개 PASS. API37 실제 무선 차단/복귀1회·방문/사진 대기 보존·명시적 재시도 전송 PASS(HTTP reverse 미사용). OS 자동 복귀 이벤트·물리 휴대폰·실제 앱 nonempty 전체 E2E는 미검증 |
