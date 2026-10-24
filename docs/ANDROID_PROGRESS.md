@@ -1,6 +1,46 @@
 # Android 개발·검증 기록
 
-마지막 갱신: 2026-10-21, Asia/Seoul.
+마지막 갱신: 2026-10-24, Asia/Seoul.
+
+## 10월 24일 후속: 사진 ACK의 부분 응답과 기한 검증
+
+공통 **`55b7bdae804d74ef0776ef37c7aeb91d50b40493`**를 새로 고정했습니다. 제품 변경은 `PhotoSyncClient`의 응답 stream 읽기, 64KiB 제한과 독립적인 전체 요청 30초 기한입니다. 패키지, SDK, 기존 APK는 그대로이며 Android 시작 기준은 `287ae1c`입니다. 아래 4개는 새 소스의 시나리오이며, 앞선 `8b48ec8`의 두 시나리오와 v5 native16개에 합산하지 않습니다.
+
+| 새 소스 시나리오 | 실제 결과 |
+| --- | --- |
+| multipart 전송 중 OS 연결 차단 | 프록시가 사진 21,243 bytes, backend가 multipart 21,900 bytes를 받은 뒤 비행기 모드와 Wi-Fi/데이터 OFF. Native HTTP도 실제 실패. 서버 사진, 영수증, 부분 파일 없음. 원래 사진 SHA와 작업, 대기 보존. DB 재개방 후 같은 작업 재시도로 한 번만 저장 |
+| 사진 응답 중 OS 연결 차단 | 실제 native reader가 PNG 16,384 bytes를 읽은 뒤 차단. 새 파일 생성/등록 없이 복구 대기와 기존 URI, 0바이트 파일 보존. DB 재개방 뒤 전체 본문을 새 사본으로 검증해 연결, 기존 손상 파일 보관. 반복 실행 중복 없음 |
+| 저장된 사진의 ACK 일부 뒤 TCP 중단 | 서버가 사진과 영수증을 저장한 뒤 전체 ACK 486 bytes 중 32 bytes를 보낸 다음 TCP를 닫음. Native reader에서도 32 bytes가 관측되고 약 1.002초에 실패 반환. 로컬 ACK 미적용, 파일과 고정 작업/fingerprint 보존. DB 재개방과 같은 작업 재시도로 확인되며 서버 중복 없음 |
+| 끝나지 않는 ACK의 전체 기한 | 서버가 ACK 32/486 bytes만 보낸 채 유지. Android transport가 기한 전 응답 객체를 반환하지 않은 경로에서 약 30.041초에 실패 반환. 대기와 미확인 fingerprint 유지, native 요청 종료. 기한 뒤 tail 전송 시도 시 연결은 이미 닫힘. DB 재개방, 동일 작업 재시도와 중복 방지 통과 |
+
+ACK 두 시나리오는 서버가 이미 저장을 마친 경우이므로 사진과 영수증이 각각 하나 있는 것이 정상입니다. 부분 업로드가 서버 사진/영수증을 만들지 않은 경우와 구분합니다. 복귀와 재시도는 native Coordinator를 명시적으로 실행했으며 이번 단계에서 새 UI 확인창이나 물리 Android를 검사하지 않았습니다.
+
+첫 도구는 TCP를 끊기 **전에** native reader의 32 bytes 관측을 기다렸지만 Android에서는 그 시점에 응답 객체가 노출되지 않아 관측 조건이 끝났습니다. 해당 대기에서 실제 30초 기한 반환을 별도로 보존했고, TCP 시나리오는 서버가 32 bytes를 보낸 뒤 끊어 native reader의 32 bytes를 확인했습니다. 제품은 바꾸지 않았습니다. 기한 시나리오는 응답 객체 반환 전 transport 경로이며, 부분 32 bytes를 reader가 소비한 것으로 표시하지 않습니다. 기한 뒤에는 소켓이 닫혀 실제 늦은 ACK를 수신하지 않았으므로, 이를 늦은 ACK 소비/거절의 모든 native 경우로 확대하지 않습니다. iOS 내부 JSON/text 경로의 원인은 이 Android 기록에서 단정하지 않습니다.
+
+새 QA 소스의 Node24.21.0 `bash scripts/verify-cloud.sh`가 PASS입니다. 타입, ESLint, 18개 파일의 **모바일489개**, 기존 backend syntax/native dependency load와 Android/iOS production JS/Hermes export를 포함합니다. 공통 서버61개는 여기서 반복하지 않았으며 실제 합성 서버와 native HTTP 결과와 구분합니다.
+
+두 고정 소스 모두 원래 개인 DB의 모든 저장 행, 설정, 스키마, 사진 바이트와 인증 보존 대조를 통과했습니다. 기본 개인 DB를 새 소스로 열지 않았습니다. 새 소스의 합성 DB 두 개와 파일 다섯 개를 최종 근거로 보관한 뒤 시험 DB/파일, QA 앱 DB/WAL/SHM 세 개를 정리했습니다. 원래 무선 설정과 임시 소스54개의 원문, 존재 여부, 해시를 복구했고 package/lock과 APK도 같습니다. 자체 8082, 프록시3002, backend3003과 reverse, 에뮬레이터를 종료했습니다. HTTP reverse, macOS나 사용자 라우터 설정 변경, 새 native 빌드/설치/의존성 변경은 없습니다. 사용 종료된 JS/Hermes 출력만 정리했으며 즉시 여유 공간 증가는 관측되지 않았습니다.
+
+새 소스 근거는 Git 제외 `docs/test-results/android-ack-stream-55b7bda-20261024/`의 `inflight-cycle-summary.json`, `ack-response-cycle-summary.json`, `private-ack*-*.json`, `private-state-after-*.json`, `private-synthetic-final.tar`, `verification.log`, `shutdown-status.json`에 있습니다. 기존 소스 근거는 아래 별도 폴더로 유지합니다. 개인 원본 수량, 값, 해시, 인증 상태와 fixture 비밀값은 공개하지 않습니다. 실제 Android 휴대폰, Wi-Fi↔모바일망의 이동 전환, Release, 배터리, 전원 장애와 전체 수용 기준은 별도입니다. 추가 제품 수정 제안은 없습니다.
+
+## 10월 24일 재개: 전송 본문 중 실제 연결 중단
+
+공통 `8b48ec8`을 고정해 기존 APK/API 37에서 새 두 범위를 검사했습니다. HTTP용 reverse 없이 에뮬레이터의 `10.0.2.2:3002` 경로와 loopback 프록시/백엔드를 사용했습니다. macOS나 사용자 라우터의 네트워크는 변경하지 않았습니다. 기존 정상/요청 전 오프라인 결과를 반복한 수에 넣지 않습니다.
+
+7,090,841 bytes의 유효 합성 PNG를 사용했습니다. 프록시 게이트는 본문의 일부가 실제로 흐른 것을 기록하는 용도이며, Android 비행기 모드와 Wi-Fi/모바일 데이터 OFF 뒤 게이트를 해제해 단순 서버 대기를 실패 원인으로 삼지 않았습니다. 두 경우 모두 별도 native HTTP도 차단됐고 요청은 기본 30초 제한 전에 실패로 반환됐습니다.
+
+| 범위 | 실제 관찰과 결과 |
+| --- | --- |
+| multipart 본문 중 업로드 단절 | 사진 부분 32,923 bytes와 backend multipart 본문 33,580 bytes 실수신 후 OS 연결 차단. Native 요청 실패, 서버 사진/영수증 0개와 부분 파일 없음. 작업 ID, payload, 사진 SHA와 미확인 fingerprint 보존. DB 재개방 뒤 같은 작업을 명시적으로 보내 사진/영수증 각각 1개만 저장, 반복 실행도 중복 없음 |
+| 사진 응답 본문 중 복구 단절 | 앱의 실제 native reader가 PNG 16,384 bytes를 읽은 뒤 OS 연결 차단. 전체 본문 미수신 상태로 실패했고 새 파일 생성/사진 등록은 없었음. 기존 0바이트 파일, 사진 URI, 복구 대기와 조회 위치가 DB 재개방 뒤 유지. 복귀 후 새 검증 사본으로만 연결하고 이전 손상 파일 보존. 반복 실행에서 재다운로드나 중복 등록 없음 |
+
+두 번째는 이미 받은 QA 사진을 0바이트로 만든 복구 다운로드의 중단입니다. 실제 사용자 사진이나 원본 DB를 손상시키지 않았습니다. 전송 경로와 타이밍은 합성 프록시로 제어했으며 물리 Android, 실제 이동 중 무선망 전환, 전원 장애나 화면 확인창의 결과가 아닙니다. 업로드와 다운로드 실패 반환은 각각 약 1.1초, 1.4초였고, 임의 fetch 예외나 body 오류를 만들어 반환하지 않았습니다.
+
+초기 검사 서버의 본문 계측 listener가 인증 미들웨어보다 먼저 스트림을 소비해 준비 요청이 400으로 끝났습니다. 계측을 스트림 흐름을 바꾸지 않는 방식으로 고친 뒤 동일한 제품 소스에서 위 결과를 확인했습니다. 이는 하네스 수정이며 제품 코드를 바꾸지 않았습니다.
+
+개인 원본 행, 설정, 스키마, 사진 바이트와 인증의 전후 보존 대조를 통과했습니다. 합성 DB 두 개와 첨부본 세 개의 최종 사본을 로컬에 보관하고 시험 자료, QA 앱 DB/WAL/SHM, 자체 Metro/프록시/백엔드와 에뮬레이터를 정리했습니다. 무선 설정과 임시 소스54개의 원문/부재/해시, package/lock과 APK를 복구·대조했습니다. SDK, AVD, 원래 checkout과 기존 백업은 보존했습니다.
+
+근거는 Git 제외 `docs/test-results/android-inflight-network-20261024/`의 `inflight-cycle-summary.json`, `request-timing-summary.json`, `private-*-at-gate.json`, `private-state-after-*.json`, `private-synthetic-final.tar`, `shutdown-status.json`에 있습니다. 개인 원본 수량, 값, 해시와 인증 상태는 공개하지 않습니다. 사진 저장 후 일부 ACK 응답의 중단은 이 두 검사에 포함하지 않으며, 공통 응답 처리 후속 소스에서 별도로 확인합니다.
 
 ## 10월 21일 종료 전: 실제 OS 네트워크 차단과 복귀 1회
 
