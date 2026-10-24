@@ -14,7 +14,7 @@ export type PreparedPhotoFile = {
 export type PhotoTransport = (
   url: string,
   init: RequestInit,
-) => Promise<Pick<Response, 'ok' | 'status' | 'json'>>;
+) => Promise<Pick<Response, 'ok' | 'status' | 'body'>>;
 const fileMessages = {
   unsupported: '아직 지원하지 않는 사진 형식입니다. 원본은 기기에 보관합니다.',
   missing: '기기에 저장된 사진 파일을 찾지 못했습니다. 전송 대기는 유지합니다.',
@@ -152,8 +152,34 @@ export class PhotoSyncClient {
       `${photo.id}.${file.fingerprint.mimeType === 'image/png' ? 'png' : 'jpg'}`,
     );
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
-    try {
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const checkActive = () => {
+      if (controller.signal.aborted) throw new Error('photo response timed out');
+    };
+    const json = async (response: Pick<Response, 'body'>): Promise<unknown> => {
+      checkActive();
+      reader = response.body?.getReader();
+      if (!reader) throw new Error('missing photo response body');
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      while (true) {
+        const part = await reader.read();
+        checkActive();
+        if (part.done) break;
+        size += part.value.byteLength;
+        if (size > 64 * 1024) throw new Error('oversized photo response');
+        chunks.push(part.value);
+      }
+      const bytes = new Uint8Array(size);
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return JSON.parse(new TextDecoder().decode(bytes));
+    };
+    const readResponse = async (): Promise<PhotoAcknowledgement> => {
       const response = await this.send(`${apiUrl}/api/visit-photos`, {
         method: 'POST',
         redirect: 'error',
@@ -163,16 +189,22 @@ export class PhotoSyncClient {
         headers: { Authorization: `Bearer ${session.token}` },
         body: form,
       });
+      if (controller.signal.aborted) {
+        // A transport can settle after the deadline. Its response must never become an ACK.
+        void response.body?.cancel().catch(() => {});
+        checkActive();
+      }
       if (!response.ok) {
         let code: unknown;
         if (response.status === 400 || response.status === 413) {
           try {
-            const failure: unknown = await response.json();
+            const failure = await json(response);
             if (record(failure)) code = failure.code;
           } catch {
-            // Unrecognized error bodies retain the normal manual-retry failure path.
+            // An incomplete rejection cannot classify a file as permanently unsupported.
           }
         }
+        checkActive();
         if (response.status === 400 && code === 'INVALID_IMAGE')
           throw new PhotoFileError('invalid');
         if (response.status === 400 && code === 'INVALID_FILE_TYPE')
@@ -188,12 +220,35 @@ export class PhotoSyncClient {
           response.status,
         );
       }
-      return validatePhotoAcknowledgement(await response.json(), operation, file.fingerprint);
+      const value = await json(response);
+      checkActive();
+      return validatePhotoAcknowledgement(value, operation, file.fingerprint);
+    };
+    // Native text()/json() can remain pending after a response-body error. Read
+    // the stream directly and bound the entire request even if abort is ignored.
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        reject(new Error('photo request timed out'));
+        controller.abort();
+      }, 30000);
+    });
+    try {
+      return await Promise.race([readResponse(), deadline]);
     } catch (error) {
       if (error instanceof AuthError || error instanceof PhotoFileError) throw error;
       throw new AuthError('사진 저장 응답을 받지 못했습니다. 원본과 대기 기록을 보존했습니다.');
     } finally {
       clearTimeout(timeout);
+      controller.abort();
+      if (reader) {
+        // Never await native cancellation: a stuck cleanup must not pin the queue.
+        void reader.cancel().catch(() => {});
+        try {
+          reader.releaseLock();
+        } catch {
+          /* A native reader may still be finishing its pending read. */
+        }
+      }
     }
   }
 }

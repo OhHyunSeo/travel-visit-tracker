@@ -254,4 +254,117 @@ describe('strict photo upload transport', () => {
       vi.useRealTimers();
     }
   });
+  it('reads ACK bytes without the native json/text path that can hang on a disconnected body', async () => {
+    const response = Response.json(ack());
+    const json = vi.spyOn(response, 'json').mockImplementation(() => new Promise(() => {}));
+    const send = vi.fn(async () => response);
+    expect(await new PhotoSyncClient(send).sendPhoto(session, operation, prepared())).toEqual(
+      ack(),
+    );
+    expect(json).not.toHaveBeenCalled();
+  });
+  it('rejects a response stream cut after partial ACK bytes without exposing the body', async () => {
+    let reads = 0;
+    const response = new Response(
+      new ReadableStream({
+        pull(controller) {
+          if (!reads++) controller.enqueue(new TextEncoder().encode('{"private-path":'));
+          else controller.error(new Error('private response stream error'));
+        },
+      }),
+    );
+    await expect(
+      new PhotoSyncClient(async () => response).sendPhoto(session, operation, prepared()),
+    ).rejects.toThrow('응답을 받지 못했습니다');
+  });
+  it('bounds ACK bytes and cancels the response when the body exceeds 64KiB', async () => {
+    const cancel = vi.fn();
+    const response = new Response(
+      new ReadableStream({
+        pull(controller) {
+          controller.enqueue(new Uint8Array(65537));
+        },
+        cancel,
+      }),
+    );
+    await expect(
+      new PhotoSyncClient(async () => response).sendPhoto(session, operation, prepared()),
+    ).rejects.toThrow('응답을 받지 못했습니다');
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+  it.each([400, 413])(
+    'does not classify a truncated HTTP %s body as a permanent file rejection',
+    async (status) => {
+      const response = new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new Error('private truncated error body'));
+          },
+        }),
+        { status },
+      );
+      await expect(
+        new PhotoSyncClient(async () => response).sendPhoto(session, operation, prepared()),
+      ).rejects.toMatchObject({ status });
+    },
+  );
+  it('enforces the complete deadline even when a transport ignores abort', async () => {
+    vi.useFakeTimers();
+    try {
+      const file = prepared();
+      const send = vi.fn<typeof fetch>(() => new Promise(() => {}));
+      const result = expect(
+        new PhotoSyncClient(send).sendPhoto(session, operation, file),
+      ).rejects.toThrow('응답을 받지 못했습니다');
+      await vi.advanceTimersByTimeAsync(30000);
+      await result;
+      expect(send.mock.calls[0][1]?.signal?.aborted).toBe(true);
+      expect(file.dispose).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('does not let pending body reads or cancellation extend the thirty-second deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      const file = prepared();
+      const cancel = vi.fn(() => new Promise<void>(() => {}));
+      const response = new Response(new ReadableStream({ cancel }));
+      const send = vi.fn<typeof fetch>(async () => response);
+      const result = expect(
+        new PhotoSyncClient(send).sendPhoto(session, operation, file),
+      ).rejects.toThrow('응답을 받지 못했습니다');
+      await vi.advanceTimersByTimeAsync(30000);
+      await result;
+      expect(send.mock.calls[0][1]?.signal?.aborted).toBe(true);
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(file.dispose).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('discards a transport response that arrives after the deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolve!: (response: Response) => void;
+      const send = vi.fn<typeof fetch>(
+        () =>
+          new Promise<Response>((done) => {
+            resolve = done;
+          }),
+      );
+      const result = expect(
+        new PhotoSyncClient(send).sendPhoto(session, operation, prepared()),
+      ).rejects.toThrow('응답을 받지 못했습니다');
+      await vi.advanceTimersByTimeAsync(30000);
+      await result;
+      const late = Response.json(ack());
+      const cancel = vi.spyOn(late.body!, 'cancel');
+      resolve(late);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(cancel).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

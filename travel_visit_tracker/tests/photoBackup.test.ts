@@ -179,6 +179,55 @@ describe('manual account-confirmed photo backup', () => {
       expect.any(Function),
     );
   });
+  it('retains the frozen operation after a partial ACK and retries it without a false local receipt', async () => {
+    const h = harness();
+    const original = { ...h.rows[0] };
+    let reads = 0;
+    h.send.mockImplementationOnce(
+      async () =>
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              if (!reads++) controller.enqueue(new TextEncoder().encode('{"acknowledgedId":'));
+              else controller.error(new Error('synthetic interrupted ACK'));
+            },
+          }),
+        ),
+    );
+    expect(await h.backup.run(consent)).toMatchObject({ acknowledged: 0, remaining: 1 });
+    expect(h.rows[0]).toMatchObject({
+      id: original.id,
+      serializedPayload: original.serializedPayload,
+      attempts: 1,
+    });
+    expect(h.frozen.get(original.entityId)).toEqual(prepared().fingerprint);
+    expect(h.repository.acknowledgePhotoOperation).not.toHaveBeenCalled();
+    expect(h.uploaded.size).toBe(0);
+    expect(h.files[0].dispose).toHaveBeenCalledOnce();
+    expect(await h.backup.run(consent)).toMatchObject({ acknowledged: 1, remaining: 0 });
+    expect(h.uploaded.size).toBe(1);
+    expect(h.repository.acknowledgePhotoOperation).toHaveBeenCalledOnce();
+    expect((h.send.mock.calls[0][1]?.body as FormData).get('operationId')).toBe(original.id);
+    expect((h.send.mock.calls[1][1]?.body as FormData).get('operationId')).toBe(original.id);
+  });
+  it('releases a deadline-expired run so the same queued photo can be retried', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      const original = { ...h.rows[0] };
+      h.send.mockImplementationOnce(() => new Promise(() => {}));
+      const pending = h.backup.run(consent);
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(await pending).toMatchObject({ acknowledged: 0, remaining: 1 });
+      expect(h.rows[0].id).toBe(original.id);
+      expect(h.repository.acknowledgePhotoOperation).not.toHaveBeenCalled();
+      expect(h.files[0].dispose).toHaveBeenCalledOnce();
+      expect(await h.backup.run(consent)).toMatchObject({ acknowledged: 1, remaining: 0 });
+      expect(h.repository.acknowledgePhotoOperation).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it.each([
     { ...consent, ownerId: 'account:other:2' },
     { ...consent, token: 'different-token' },
