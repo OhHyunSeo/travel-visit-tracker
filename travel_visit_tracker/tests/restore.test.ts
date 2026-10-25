@@ -117,6 +117,75 @@ describe('manual restoration coordinator', () => {
     });
     expect(await coordinator.run(consent)).toMatchObject({ downloaded: 1, pending: 0 });
   });
+  it('releases a stalled list request without advancing cursors and permits manual retry', async () => {
+    vi.useFakeTimers();
+    try {
+      const original = send.getMockImplementation()!;
+      send.mockImplementationOnce(() => new Promise(() => {}));
+      const first = coordinator.run(consent);
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(await first).toMatchObject({
+        downloaded: 0,
+        message: expect.stringContaining('복원 대기'),
+      });
+      expect(await f.repo.restoration.state()).toMatchObject({ visitCursor: 0, photoCursor: 0 });
+      expect((await f.repo.snapshot(false)).visits).toHaveLength(0);
+      expect(stage).not.toHaveBeenCalled();
+      send.mockImplementation(original);
+      expect(await coordinator.run(consent)).toMatchObject({ downloaded: 1, pending: 0 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('keeps a stalled download queued, retries once and ignores bytes from the expired run', async () => {
+    vi.useFakeTimers();
+    try {
+      const original = send.getMockImplementation()!;
+      let finish!: (part: ReadableStreamReadResult<Uint8Array>) => void;
+      const reader = {
+        read: vi
+          .fn<ReadableStreamDefaultReader<Uint8Array>['read']>()
+          .mockResolvedValueOnce({ done: false, value: bytes.slice(0, 3) })
+          .mockImplementationOnce(
+            () =>
+              new Promise((resolve) => {
+                finish = resolve;
+              }),
+          ),
+        cancel: vi.fn(() => new Promise<void>(() => {})),
+        releaseLock: vi.fn(),
+      };
+      send.mockImplementation(async (...args) =>
+        String(args[0]).endsWith('/original')
+          ? ({
+              ok: true,
+              status: 200,
+              headers: new Headers({ 'content-type': 'image/png' }),
+              body: { getReader: () => reader },
+            } as unknown as Response)
+          : original(...args),
+      );
+      const first = coordinator.run(consent);
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(await first).toMatchObject({ downloaded: 0, pending: 1 });
+      expect(await f.repo.restoration.state()).toMatchObject({
+        visitCursor: 1,
+        photoCursor: 1,
+        photoScan: 0,
+      });
+      expect((await f.repo.snapshot(false)).photos).toHaveLength(0);
+      expect(stage).not.toHaveBeenCalled();
+      send.mockImplementation(original);
+      expect(await coordinator.run(consent)).toMatchObject({ downloaded: 1, pending: 0 });
+      finish({ done: false, value: bytes.slice(3) });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stage).toHaveBeenCalledTimes(1);
+      expect((await f.repo.snapshot(false)).photos).toHaveLength(1);
+      expect(await f.repo.restoration.state()).toMatchObject({ pendingPhotos: 0 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it('limits new files to 20 and resumes the remainder on the next explicit run', async () => {
     photos = Array.from({ length: 21 }, (_, i) => photo(visits[0], { revision: i + 1 }));
     expect(await coordinator.run(consent)).toMatchObject({ downloaded: 20, pending: 1 });

@@ -11,6 +11,7 @@ export class RestoreFileError extends Error {
   }
 }
 export type RestoreTransport = typeof fetch;
+type ReadRestoreBody = (maxBytes: number, invalid?: Error) => Promise<Uint8Array>;
 export class RestoreClient {
   constructor(
     private send: RestoreTransport = fetch,
@@ -19,15 +20,20 @@ export class RestoreClient {
   private async request<T>(
     session: Session,
     path: string,
-    read: (response: Response) => Promise<T>,
+    read: (response: Response, readBody: ReadRestoreBody) => Promise<T>,
     timeout = 10000,
   ): Promise<T> {
     const origin = normalizeApiUrl(session.apiUrl, this.development);
     if (!session.token) throw new AuthError('다시 로그인한 뒤 복원을 눌러 주세요.', 401);
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout);
-    try {
-      const response = await this.send(`${origin}${path}`, {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let response: Response | undefined;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    const checkActive = () => {
+      if (controller.signal.aborted) throw new Error('restore request timed out');
+    };
+    const fetchAndRead = async () => {
+      response = await this.send(`${origin}${path}`, {
         method: 'GET',
         signal: controller.signal,
         redirect: 'error',
@@ -35,6 +41,11 @@ export class RestoreClient {
         cache: 'no-store',
         headers: { Authorization: `Bearer ${session.token}` },
       });
+      if (controller.signal.aborted) {
+        // Some native transports settle after abort. Never return their late data.
+        void response.body?.cancel().catch(() => {});
+        checkActive();
+      }
       if (!response.ok)
         throw new AuthError(
           response.status === 401
@@ -42,50 +53,78 @@ export class RestoreClient {
             : '서버 자료를 받지 못했습니다. 복원 대기는 보관 중이며 다시 눌러 이어받을 수 있습니다.',
           response.status,
         );
-      return await read(response);
+      const readBody: ReadRestoreBody = async (
+        maxBytes,
+        invalid = new Error('invalid restore response'),
+      ) => {
+        checkActive();
+        reader = response!.body?.getReader();
+        if (!reader) throw invalid;
+        const chunks: Uint8Array[] = [];
+        let count = 0;
+        while (true) {
+          const next = await reader.read();
+          checkActive();
+          if (next.done) break;
+          count += next.value.byteLength;
+          if (count > maxBytes) throw invalid;
+          chunks.push(next.value);
+        }
+        const bytes = new Uint8Array(count);
+        let offset = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        return bytes;
+      };
+      const value = await read(response, readBody);
+      checkActive();
+      return value;
+    };
+    // Abort alone does not bound native fetch/read/cancel promises.
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error('restore request timed out'));
+        controller.abort();
+      }, timeout);
+    });
+    try {
+      return await Promise.race([fetchAndRead(), deadline]);
     } catch (error) {
       if (error instanceof AuthError || error instanceof RestoreFileError) throw error;
       throw new AuthError('서버 연결이나 응답을 확인하지 못했습니다. 복원 대기는 보관 중입니다.');
     } finally {
       clearTimeout(timer);
       controller.abort();
+      // Cleanup cannot keep the manual restore button busy indefinitely.
+      if (reader) {
+        void reader.cancel().catch(() => {});
+        try {
+          reader.releaseLock();
+        } catch {
+          /* Native reading may still be pending. */
+        }
+      } else {
+        void response?.body?.cancel().catch(() => {});
+      }
     }
   }
-  private async json(response: Response): Promise<unknown> {
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error('missing response');
-    const chunks: Uint8Array[] = [];
-    let count = 0;
-    try {
-      while (true) {
-        const next = await reader.read();
-        if (next.done) break;
-        count += next.value.byteLength;
-        if (count > 256 * 1024) throw new Error('oversized list');
-        chunks.push(next.value);
-      }
-    } finally {
-      await reader.cancel().catch(() => {});
-      reader.releaseLock();
-    }
-    const bytes = new Uint8Array(count);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    return JSON.parse(new TextDecoder().decode(bytes));
+  private async json(readBody: ReadRestoreBody): Promise<unknown> {
+    return JSON.parse(new TextDecoder().decode(await readBody(256 * 1024)));
   }
   visits(session: Session, after: number) {
     if (!Number.isSafeInteger(after) || after < 0) throw new Error('잘못된 복원 위치');
-    return this.request(session, `/api/visits?after=${after}&limit=100`, async (response) =>
-      visitPage(await this.json(response), after),
+    return this.request(session, `/api/visits?after=${after}&limit=100`, async (_, readBody) =>
+      visitPage(await this.json(readBody), after),
     );
   }
   photos(session: Session, after: number) {
     if (!Number.isSafeInteger(after) || after < 0) throw new Error('잘못된 복원 위치');
-    return this.request(session, `/api/visit-photos?after=${after}&limit=100`, async (response) =>
-      photoPage(await this.json(response), after),
+    return this.request(
+      session,
+      `/api/visit-photos?after=${after}&limit=100`,
+      async (_, readBody) => photoPage(await this.json(readBody), after),
     );
   }
   download(session: Session, metadata: RemotePhoto): Promise<Uint8Array> {
@@ -93,7 +132,7 @@ export class RestoreClient {
     return this.request(
       session,
       photo.originalPath,
-      async (response) => {
+      async (response, readBody) => {
         if (
           response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !==
           photo.mimeType
@@ -103,29 +142,8 @@ export class RestoreClient {
         if (length !== null && (!/^\d+$/.test(length) || Number(length) !== photo.byteLength))
           throw new RestoreFileError('invalid');
         // Bounded streaming also protects against an incorrect/missing Content-Length.
-        const reader = response.body?.getReader();
-        if (!reader) throw new RestoreFileError('invalid');
-        const chunks: Uint8Array[] = [];
-        let count = 0;
-        try {
-          while (true) {
-            const next = await reader.read();
-            if (next.done) break;
-            count += next.value.byteLength;
-            if (count > photo.byteLength) throw new RestoreFileError('invalid');
-            chunks.push(next.value);
-          }
-        } finally {
-          await reader.cancel().catch(() => {});
-          reader.releaseLock();
-        }
-        if (count !== photo.byteLength) throw new RestoreFileError('invalid');
-        const bytes = new Uint8Array(count);
-        let offset = 0;
-        for (const chunk of chunks) {
-          bytes.set(chunk, offset);
-          offset += chunk.byteLength;
-        }
+        const bytes = await readBody(photo.byteLength, new RestoreFileError('invalid'));
+        if (bytes.byteLength !== photo.byteLength) throw new RestoreFileError('invalid');
         return bytes;
       },
       30000,

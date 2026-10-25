@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { Server } from "node:http";
+import { createServer, type Server } from "node:http";
 import { advanceDwell } from "../travel_visit_tracker/src/domain/dwell.ts";
 import type { Photo } from "../travel_visit_tracker/src/domain/types.ts";
 import {
@@ -62,6 +62,7 @@ const hash = (bytes: Uint8Array) =>
   createHash("sha256").update(bytes).digest("hex");
 let backend: Awaited<ReturnType<typeof createBackend>> | undefined;
 let server: Server | undefined;
+let deadlineServer: Server | undefined;
 let database: DatabaseSync | undefined;
 let restoreDatabase: DatabaseSync | undefined;
 
@@ -608,8 +609,37 @@ try {
   await restoredRepository().activateOwner();
   let loseDownload = true;
   let restoreDownloads = 0;
+  let stalledResponse: false | "list" | "download" = false;
+  let deadlineOrigin = "";
+  let partialBytesRead = 0;
   const restoreSend: typeof fetch = async (url, init) => {
     if (String(url).endsWith("/original")) restoreDownloads++;
+    const pathname = new URL(String(url)).pathname;
+    if (
+      (stalledResponse === "list" && pathname === "/api/visits") ||
+      (stalledResponse === "download" && pathname.endsWith("/original"))
+    ) {
+      stalledResponse = false;
+      // Deliberately ignore abort to exercise the independent request deadline
+      // with a real HTTP body, not a synthetic resolved/rejected fetch promise.
+      const address = new URL(String(url));
+      const response = await fetch(
+        deadlineOrigin + address.pathname + address.search,
+        { ...init, signal: undefined },
+      );
+      assert.ok(response.body);
+      return new Response(
+        response.body.pipeThrough(
+          new TransformStream({
+            transform(chunk, stream) {
+              partialBytesRead += chunk.byteLength;
+              stream.enqueue(chunk);
+            },
+          }),
+        ),
+        { status: response.status, headers: response.headers },
+      );
+    }
     const response = await fetch(url, init);
     if (loseDownload && String(url).endsWith("/original") && response.ok) {
       loseDownload = false;
@@ -668,10 +698,74 @@ try {
     await readFile(join(restoreFiles, restoredPhotoA.uri.split("/").at(-1)!)),
     png,
   );
+  // Hold an actual partial list/file response open. A cancellation-insensitive
+  // transport must neither pin the coordinator nor advance storage after expiry.
+  deadlineServer = await new Promise<Server>((resolve, reject) => {
+    const listener = createServer((request, response) => {
+      void (async () => {
+        const original = await fetch(apiUrl + request.url, {
+          headers: { Authorization: request.headers.authorization ?? "" },
+        });
+        assert.equal(original.status, 200);
+        const body = new Uint8Array(await original.arrayBuffer());
+        assert.ok(body.byteLength > 16);
+        response.writeHead(200, {
+          "Content-Type": original.headers.get("content-type")!,
+          "Content-Length": String(body.byteLength),
+        });
+        response.write(body.slice(0, 16));
+        // No end(): only the restore client's deadline can finish this request.
+      })().catch(() => response.destroy());
+    });
+    listener.listen(0, "127.0.0.1", () => resolve(listener));
+    listener.once("error", reject);
+  });
+  deadlineOrigin = `http://127.0.0.1:${(deadlineServer.address() as { port: number }).port}`;
+  const stateBeforeDeadline = await restoredRepository().restoration.state();
+  const rowsBeforeDeadline = (await restoredRepository().snapshot(false))
+    .photos;
+  stalledResponse = "list";
+  const listStart = performance.now();
+  const stalledList = await restore().run(consent(accountA));
+  const listElapsed = performance.now() - listStart;
+  assert.ok(listElapsed >= 9900 && listElapsed < 20000);
+  assert.equal(partialBytesRead, 16);
+  assert.equal(stalledList.downloaded, 0);
+  assert.match(stalledList.message, /복원 대기/);
+  assert.deepEqual(
+    await restoredRepository().restoration.state(),
+    stateBeforeDeadline,
+  );
+  assert.deepEqual(
+    (await restoredRepository().snapshot(false)).photos,
+    rowsBeforeDeadline,
+  );
   // A previously completed download can become empty or disappear. Recheck it,
   // keep the damaged file, and atomically link a fresh verified path on retry.
   const damagedPath = join(restoreFiles, restoredPhotoA.uri.split("/").at(-1)!);
   await writeFile(damagedPath, new Uint8Array());
+  const filesBeforeDeadline = (await readdir(restoreFiles)).sort();
+  partialBytesRead = 0;
+  stalledResponse = "download";
+  const downloadStart = performance.now();
+  const stalledDownload = await restore().run(consent(accountA));
+  const downloadElapsed = performance.now() - downloadStart;
+  assert.ok(downloadElapsed >= 29900 && downloadElapsed < 45000);
+  assert.equal(partialBytesRead, 16);
+  assert.equal(stalledDownload.downloaded, 0);
+  assert.equal(stalledDownload.pending, 1);
+  assert.equal((await readFile(damagedPath)).byteLength, 0);
+  assert.deepEqual((await readdir(restoreFiles)).sort(), filesBeforeDeadline);
+  assert.deepEqual(
+    (await restoredRepository().snapshot(false)).photos,
+    rowsBeforeDeadline,
+  );
+  restoreDatabase.close();
+  restoreDatabase = new DatabaseSync(restorePath);
+  assert.equal(
+    (await restoredRepository().restoration.state()).pendingPhotos,
+    1,
+  );
   const repaired = await restore().run(consent(accountA));
   assert.equal(repaired.repaired, 1);
   assert.equal(repaired.downloaded, 1);
@@ -683,6 +777,9 @@ try {
   assert.deepEqual(
     await readFile(join(restoreFiles, repairedA.uri.split("/").at(-1)!)),
     png,
+  );
+  console.log(
+    `PASS: actual partial HTTP list/file deadlines (${Math.round(listElapsed)}ms/${Math.round(downloadElapsed)}ms), unchanged cursors/originals, no partial registration, SQLite reopen and explicit verified-copy retry`,
   );
   const missingPath = join(restoreFiles, repairedA.uri.split("/").at(-1)!);
   await rm(missingPath);
@@ -950,10 +1047,12 @@ try {
   );
 } finally {
   try {
-    if (server)
-      await new Promise<void>((resolve, reject) =>
-        server!.close((error) => (error ? reject(error) : resolve())),
-      );
+    deadlineServer?.closeAllConnections();
+    for (const listener of [deadlineServer, server])
+      if (listener)
+        await new Promise<void>((resolve, reject) =>
+          listener.close((error) => (error ? reject(error) : resolve())),
+        );
   } finally {
     try {
       restoreDatabase?.close();
