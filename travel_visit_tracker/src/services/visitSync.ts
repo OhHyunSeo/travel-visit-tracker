@@ -22,25 +22,109 @@ export class VisitSyncClient {
     private readonly send: typeof fetch = fetch,
     private readonly development = false,
   ) {}
-  async connectionAvailable(session: Session): Promise<boolean> {
+  private async request(
+    url: string,
+    options: RequestInit,
+    timeoutMs: number,
+    maxBytes: number,
+  ): Promise<unknown> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let response: Response | undefined;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    const checkActive = () => {
+      if (controller.signal.aborted) throw new VisitConnectionError();
+    };
+    const cancelBody = () => {
+      try {
+        void response?.body?.cancel().catch(() => {});
+      } catch {
+        /* A native cancellation error cannot delay completion. */
+      }
+    };
+    const fetchAndRead = async () => {
+      try {
+        response = await this.send(url, { ...options, signal: controller.signal });
+      } catch {
+        throw new VisitConnectionError();
+      }
+      if (controller.signal.aborted) {
+        cancelBody();
+        checkActive();
+      }
+      if (!response.ok)
+        throw new AuthError(
+          response.status === 401
+            ? '방문을 전송하려면 다시 로그인해 주세요.'
+            : response.status === 409
+              ? '서버 기록과 충돌했습니다. 대기 기록을 보존했습니다.'
+              : '방문을 전송하지 못했습니다. 대기 기록을 보존했습니다.',
+          response.status,
+        );
+      reader = response.body?.getReader();
+      if (!reader) throw new Error('missing visit response');
+      const chunks: Uint8Array[] = [];
+      let count = 0;
+      while (true) {
+        const next = await reader.read();
+        checkActive();
+        if (next.done) break;
+        count += next.value.byteLength;
+        if (count > maxBytes) throw new Error('visit response too large');
+        chunks.push(next.value);
+      }
+      const bytes = new Uint8Array(count);
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return JSON.parse(new TextDecoder().decode(bytes));
+    };
+    // Native fetch/read/cancel can ignore abort, so bound the whole wait independently.
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        reject(new VisitConnectionError());
+        controller.abort();
+      }, timeoutMs);
+    });
+    try {
+      return await Promise.race([fetchAndRead(), deadline]);
+    } catch (error) {
+      if (error instanceof AuthError || error instanceof VisitConnectionError) throw error;
+      if (controller.signal.aborted || error instanceof TypeError) throw new VisitConnectionError();
+      throw new Error('서버의 저장 확인 응답을 읽을 수 없습니다. 대기 기록을 보존했습니다.');
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+      if (reader) {
+        try {
+          void reader.cancel().catch(() => {});
+        } catch {
+          /* A native cancellation error cannot delay completion. */
+        }
+        try {
+          reader.releaseLock();
+        } catch {
+          /* Native reading may still be pending. */
+        }
+      } else {
+        cancelBody();
+      }
+    }
+  }
+  async connectionAvailable(session: Session): Promise<boolean> {
     try {
       const apiUrl = normalizeApiUrl(session.apiUrl, this.development);
-      const response = await this.send(`${apiUrl}/health`, {
-        method: 'GET',
-        redirect: 'error',
-        credentials: 'omit',
-        cache: 'no-store',
-        signal: controller.signal,
-      });
-      if (!response.ok) return false;
-      const body = (await response.json()) as { status?: unknown; service?: unknown } | null;
+      const body = (await this.request(
+        `${apiUrl}/health`,
+        { method: 'GET', redirect: 'error', credentials: 'omit', cache: 'no-store' },
+        3000,
+        4 * 1024,
+      )) as { status?: unknown; service?: unknown } | null;
       return body?.status === 'ok' && body.service === 'travel-visit-tracker-backend';
     } catch {
       return false;
-    } finally {
-      clearTimeout(timeout);
     }
   }
   async sendBatch(
@@ -58,51 +142,27 @@ export class VisitSyncClient {
         payload: JSON.parse(operation.serializedPayload),
       })),
     });
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    try {
-      let response: Response;
-      try {
-        response = await this.send(`${apiUrl}/api/visits/sync`, {
-          method: 'POST',
-          redirect: 'error',
-          signal: controller.signal,
-          headers: { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' },
-          body,
-        });
-      } catch {
-        throw new VisitConnectionError();
-      }
-      if (!response.ok)
-        throw new AuthError(
-          response.status === 401
-            ? '방문을 전송하려면 다시 로그인해 주세요.'
-            : response.status === 409
-              ? '서버 기록과 충돌했습니다. 대기 기록을 보존했습니다.'
-              : '방문을 전송하지 못했습니다. 대기 기록을 보존했습니다.',
-          response.status,
-        );
-      let result: { acknowledgedIds?: unknown } | null;
-      try {
-        result = (await response.json()) as typeof result;
-      } catch (error) {
-        if (controller.signal.aborted || error instanceof TypeError)
-          throw new VisitConnectionError();
-        throw new Error('서버의 저장 확인 응답을 읽을 수 없습니다. 대기 기록을 보존했습니다.');
-      }
-      const ids = result?.acknowledgedIds;
-      if (
-        !Array.isArray(ids) ||
-        ids.some(
-          (id) => typeof id !== 'string' || !operations.some((operation) => operation.id === id),
-        ) ||
-        new Set(ids).size !== ids.length
-      )
-        throw new Error('서버의 저장 확인 응답을 읽을 수 없습니다. 대기 기록을 보존했습니다.');
-      return ids;
-    } finally {
-      clearTimeout(timeout);
-    }
+    const result = (await this.request(
+      `${apiUrl}/api/visits/sync`,
+      {
+        method: 'POST',
+        redirect: 'error',
+        headers: { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' },
+        body,
+      },
+      10000,
+      64 * 1024,
+    )) as { acknowledgedIds?: unknown } | null;
+    const ids = result?.acknowledgedIds;
+    if (
+      !Array.isArray(ids) ||
+      ids.some(
+        (id) => typeof id !== 'string' || !operations.some((operation) => operation.id === id),
+      ) ||
+      new Set(ids).size !== ids.length
+    )
+      throw new Error('서버의 저장 확인 응답을 읽을 수 없습니다. 대기 기록을 보존했습니다.');
+    return ids;
   }
 }
 // Each batch captures its account; the foreground coordinator owns scheduling.

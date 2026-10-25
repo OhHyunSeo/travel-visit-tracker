@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { Server } from "node:http";
+import { createServer, type Server } from "node:http";
 import { advanceDwell } from "../travel_visit_tracker/src/domain/dwell.ts";
 import {
   AuthClient,
@@ -28,6 +28,7 @@ const { createBackend } = require("./src/app.js");
 const directory = await mkdtemp(join(tmpdir(), "trip-painting-sync-check-"));
 let backend: Awaited<ReturnType<typeof createBackend>>,
   server: Server | undefined,
+  deadlineServer: Server | undefined,
   db: DatabaseSync | undefined;
 function adapter(database: DatabaseSync): SqlConnection {
   return {
@@ -430,7 +431,100 @@ try {
   assert.equal((await backend.db.get("SELECT COUNT(*) AS count FROM visit_sync_operations WHERE user_id=?", c.user.id)).count, 3);
   console.log("PASS: foreground connection recovery over real temporary HTTP and SQLite, persisted health-check timing after reopen, credential-free health probe and same-UUID retry before the longer delay, photo work preserved");
 
+  await confirmSyntheticVisit(epoch + 4000000);
+  const deadlineWork = await repository.pendingVisitOperations();
+  const deadlineSnapshot = await repository.snapshot(false);
+  const heldBodies = new Map<string, Uint8Array>();
+  const releaseResponses: (() => void)[] = [];
+  const prefixes: { path: string; sent: number }[] = [];
+  deadlineServer = await new Promise<Server>((resolve, reject) => {
+    const listener = createServer((request, response) => {
+      const bytes = heldBodies.get(request.url!);
+      if (!bytes) { response.writeHead(404).end(); return; }
+      response.writeHead(200, { "Content-Type": "application/json", "Content-Length": bytes.length });
+      response.write(bytes.slice(0, 16));
+      prefixes.push({ path: request.url!, sent: 16 });
+      releaseResponses.push(() => response.end(bytes.slice(16)));
+    });
+    listener.once("error", reject);
+    listener.listen(0, "127.0.0.1", () => resolve(listener));
+  });
+  const deadlineOrigin = `http://127.0.0.1:${(deadlineServer.address() as { port: number }).port}`;
+  let holdVisit = true, holdHealth = true, failBeforeCommit = true;
+  const visitBodies: string[] = [];
+  const deadlineTransport: typeof fetch = async (input, options) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/api/visits/sync" && failBeforeCommit) {
+      failBeforeCommit = false;
+      throw new TypeError("synthetic initial network failure");
+    }
+    if (path === "/api/visits/sync") visitBodies.push(options!.body as string);
+    const committed = await fetch(input, options);
+    const hold = (path === "/health" && holdHealth) || (path === "/api/visits/sync" && holdVisit);
+    if (!hold) return committed;
+    assert.equal(committed.status, 200);
+    heldBodies.set(path, new Uint8Array(await committed.arrayBuffer()));
+    if (path === "/health") holdHealth = false;
+    else holdVisit = false;
+    // Forward an actual committed backend response through a partial HTTP body.
+    // Omit abort only here to isolate the independent whole-request deadline.
+    return fetch(deadlineOrigin + path);
+  };
+  clock += 1000;
+  const deadlineBackup = coordinator(deadlineTransport);
+  const previousSuccessAt = (await repository.visitBackupState()).lastSuccessAt;
+  assert.equal((await deadlineBackup.run(true)).acknowledged, 0);
+  clock += 1000;
+  const visitStarted = performance.now();
+  const timedOut = await deadlineBackup.run(true);
+  const visitElapsed = performance.now() - visitStarted;
+  assert.equal(timedOut.acknowledged, 0);
+  assert.ok(timedOut.message?.includes("보관"));
+  assert.ok(visitElapsed >= 9900 && visitElapsed < 15000);
+  const workAfterDeadline = await repository.pendingVisitOperations();
+  assert.deepEqual(workAfterDeadline.map((item) => ({ ...item })), deadlineWork.map((item) => ({ ...item, attempts: item.attempts + 2 })));
+  assert.deepEqual(await repository.snapshot(false), deadlineSnapshot);
+  assert.deepEqual(await readPhotoWork(), originalPhotoWork);
+  const stateAfterDeadline = await repository.visitBackupState();
+  assert.equal(stateAfterDeadline.lastSuccessAt, previousSuccessAt);
+  assert.equal(stateAfterDeadline.nextAttemptAt, clock + 60000);
+
+  clock = stateAfterDeadline.connectionCheckAt!;
+  const healthStarted = performance.now();
+  assert.equal((await deadlineBackup.run()).skipped, true);
+  const healthElapsed = performance.now() - healthStarted;
+  assert.ok(healthElapsed >= 2900 && healthElapsed < 8000);
+  assert.deepEqual(await repository.pendingVisitOperations(), workAfterDeadline);
+  const stateAfterHealth = await repository.visitBackupState();
+  assert.equal(stateAfterHealth.nextAttemptAt, stateAfterDeadline.nextAttemptAt);
+  assert.equal(stateAfterHealth.lastSuccessAt, stateAfterDeadline.lastSuccessAt);
+  assert.deepEqual(prefixes, [
+    { path: "/api/visits/sync", sent: 16 }, { path: "/health", sent: 16 },
+  ]);
+  releaseResponses.forEach((release) => release());
+  await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(await repository.pendingVisitOperations(), workAfterDeadline);
+  assert.deepEqual(await repository.visitBackupState(), stateAfterHealth);
+  db.close();
+  db = new DatabaseSync(mobilePath);
+  connection = adapter(db);
+  repository = new Repository(connection, sessionOwner(c));
+  assert.deepEqual(await repository.pendingVisitOperations(), workAfterDeadline);
+  assert.deepEqual(await repository.visitBackupState(), stateAfterHealth);
+  assert.deepEqual(await repository.snapshot(false), deadlineSnapshot);
+  assert.equal((await coordinator(deadlineTransport).run(true)).acknowledged, 1);
+  assert.equal(visitBodies.length, 2);
+  assert.equal(visitBodies[0], visitBodies[1]);
+  assert.deepEqual(await readPhotoWork(), originalPhotoWork);
+  assert.deepEqual((await repository.snapshot(false)).photos, deadlineSnapshot.photos);
+  assert.equal((await backend.db.get("SELECT COUNT(*) AS count FROM visits WHERE user_id=?", c.user.id)).count, 4);
+  assert.equal((await backend.db.get("SELECT COUNT(*) AS count FROM visit_sync_operations WHERE user_id=?", c.user.id)).count, 4);
+  console.log(`PASS: actual partial HTTP visit ACK/health deadlines (${Math.round(visitElapsed)}ms/${Math.round(healthElapsed)}ms), server commit before lost ACK, unchanged visits/photos/outbox, late-tail rejection, SQLite reopen and identical-operation retry without duplicate visits or receipts`);
+
 } finally {
+  deadlineServer?.closeAllConnections();
+  if (deadlineServer)
+    await new Promise<void>((resolve, reject) => deadlineServer!.close((error) => error ? reject(error) : resolve()));
   if (server)
     await new Promise<void>((resolve, reject) =>
       server!.close((error) => (error ? reject(error) : resolve())),
