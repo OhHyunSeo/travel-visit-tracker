@@ -13,6 +13,7 @@ import type {
   QueuedPhotoOperation,
   VisitBackupState,
 } from '../storage/outbox';
+import type { PhotoSnapshotContext } from './photoSnapshot';
 
 export type PhotoBackupConsent = { ownerId: string; token: string };
 export type PhotoBackupResult = {
@@ -53,7 +54,10 @@ export class PhotoBackupCoordinator {
     private readonly currentSession: () => Session | null,
     private readonly repositoryForOwner: (owner: string) => Promise<PhotoBackupRepository>,
     private readonly client: PhotoSyncClient,
-    private readonly fileLoader: (uri: string) => Promise<PreparedPhotoFile>,
+    private readonly fileLoader: (
+      uri: string,
+      context: PhotoSnapshotContext,
+    ) => Promise<PreparedPhotoFile>,
     private readonly beforePhotos: (consent: PhotoBackupConsent) => Promise<void>,
     private readonly isActive: () => boolean = () => true,
     private readonly now: () => number = Date.now,
@@ -177,7 +181,11 @@ export class PhotoBackupCoordinator {
           let file: PreparedPhotoFile | undefined;
           try {
             const photo = parsePhotoOperation(operation);
-            file = await this.fileLoader(photo.uri);
+            file = await this.fileLoader(photo.uri, {
+              ownerId: consent.ownerId,
+              operationId: operation.id,
+              photoId: photo.id,
+            });
             if (!guard()) throw new PhotoBackupPaused();
             if (
               !validPhotoFingerprint(file.fingerprint) ||

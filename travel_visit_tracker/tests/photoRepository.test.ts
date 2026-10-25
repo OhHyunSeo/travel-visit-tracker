@@ -3,7 +3,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PhotoSnapshotManifest } from '../src/services/photoSnapshot';
 import { Repository, type SqlConnection } from '../src/storage/repository';
 import type {
   PhotoAcknowledgement,
@@ -88,6 +89,97 @@ beforeEach(async () => {
 afterEach(() => {
   db.close();
   rmSync(directory, { recursive: true, force: true });
+});
+
+async function snapshotProof(acknowledged = true): Promise<PhotoSnapshotManifest> {
+  const id = randomUUID(),
+    visitId = addVisit();
+  await account.addPhoto({ id, visitId, uri: `visit-photos/${id}.png`, createdAt: epoch + 400000 });
+  const operation = (await account.pendingPhotoOperations())[0];
+  await account.preparePhotoOperation(operation, fingerprint);
+  if (acknowledged)
+    await account.acknowledgePhotoOperation(
+      operation,
+      fingerprint,
+      acknowledgement(operation),
+      epoch + 500000,
+    );
+  return {
+    format: 'trip-painting-upload-snapshot-v1',
+    attemptId: randomUUID(),
+    nativeSessionId: randomUUID(),
+    ownerId: owner,
+    operationId: operation.id,
+    photoId: id,
+    sourceUri: `visit-photos/${id}.png`,
+    fileName: 'attachment.png',
+    ...fingerprint,
+  };
+}
+describe('local ACK proof for redundant upload snapshots', () => {
+  it('permits synchronous removal only after the same operation was acknowledged, without changing rows', async () => {
+    const snapshot = await snapshotProof(false),
+      remove = vi.fn(() => true);
+    expect(await account.removeAcknowledgedPhotoSnapshot(snapshot, remove)).toBe(false);
+    const operation = (await account.pendingPhotoOperations())[0];
+    await account.acknowledgePhotoOperation(
+      operation,
+      fingerprint,
+      acknowledgement(operation),
+      epoch + 500000,
+    );
+    const before = state();
+    expect(await account.removeAcknowledgedPhotoSnapshot(snapshot, remove)).toBe(true);
+    expect(remove).toHaveBeenCalledOnce();
+    expect(state()).toEqual(before);
+  });
+  it.each(['owner', 'operation', 'fingerprint', 'uri', 'deleted-parent', 'new-pending', 'payload'])(
+    'preserves the cache if the ACK proof no longer matches: %s',
+    async (kind) => {
+      const snapshot = await snapshotProof(),
+        remove = vi.fn(() => true);
+      if (kind === 'owner') snapshot.ownerId += 'other';
+      if (kind === 'operation') snapshot.operationId = randomUUID();
+      if (kind === 'fingerprint') snapshot.sha256 = 'f'.repeat(64);
+      if (kind === 'uri') snapshot.sourceUri = 'visit-photos/changed.png';
+      if (kind === 'deleted-parent')
+        db.prepare('UPDATE visits SET deleted_at=?').run(epoch + 600000);
+      if (kind === 'new-pending')
+        db.prepare(
+          "INSERT INTO outbox(id,owner_id,entity_type,entity_id,operation,payload,created_at) VALUES (?,?,'photo',?,'upsert',?,?)",
+        ).run(randomUUID(), owner, snapshot.photoId, '{}', epoch + 600000);
+      if (kind === 'payload')
+        db.prepare('UPDATE photo_backup_metadata SET serialized_payload=?').run('{}');
+      const before = state();
+      expect(await account.removeAcknowledgedPhotoSnapshot(snapshot, remove)).toBe(false);
+      expect(remove).not.toHaveBeenCalled();
+      expect(state()).toEqual(before);
+    },
+  );
+  it('does not remove a snapshot when the current session is revoked during proof lookup', async () => {
+    const snapshot = await snapshotProof(),
+      remove = vi.fn(() => true);
+    let active = true;
+    const original = connection.first;
+    connection.first = async <T>(sql: string, ...params: (string | number | null)[]) => {
+      const value = await original<T>(sql, ...params);
+      if (sql.includes('m.serialized_payload AS serialized')) active = false;
+      return value;
+    };
+    expect(await account.removeAcknowledgedPhotoSnapshot(snapshot, remove, () => active)).toBe(
+      false,
+    );
+    expect(remove).not.toHaveBeenCalled();
+  });
+  it('requires the active account and never treats another account as completion proof', async () => {
+    const snapshot = await snapshotProof(),
+      remove = vi.fn(() => true);
+    await new Repository(connection, 'account:synthetic-photo:2').activateOwner();
+    await expect(account.removeAcknowledgedPhotoSnapshot(snapshot, remove)).rejects.toThrow(
+      '현재 로그인',
+    );
+    expect(remove).not.toHaveBeenCalled();
+  });
 });
 
 describe('account-scoped photo preparation and acknowledgements', () => {

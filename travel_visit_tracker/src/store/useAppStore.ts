@@ -14,7 +14,7 @@ import { VisitBackupCoordinator } from '../services/visitBackup';
 import { VisitSyncClient } from '../services/visitSync';
 import { PhotoBackupCoordinator } from '../services/photoBackup';
 import { PhotoSyncClient } from '../services/photoSync';
-import { preparePhotoFile } from '../services/photoFile';
+import { preparePhotoFile, cleanupPreparedPhotoFiles } from '../services/photoFile';
 import { photoFetch } from '../services/photoTransport';
 import { attachPhoto, removePhotoFiles, resolvePhotoUri } from '../services/photos';
 import { startTracking, stopTracking, reconcileTracking } from '../services/tracking';
@@ -57,6 +57,18 @@ const matchesBackupAccount = (expected: BackupExpectation) => {
     session.token === expected.token
   );
 };
+async function maintainPhotoSnapshots(expected: BackupExpectation) {
+  const current = () => matchesBackupAccount(expected) && AppState.currentState === 'active';
+  if (!current()) return;
+  const repository = await repositoryForOwner(expected.ownerId);
+  if (!current()) return;
+  await cleanupPreparedPhotoFiles({
+    ownerId: expected.ownerId,
+    isCurrent: current,
+    removeAcknowledged: (snapshot, remove) =>
+      repository.removeAcknowledgedPhotoSnapshot(snapshot, remove, current),
+  });
+}
 const visitBackup = new VisitBackupCoordinator(
   () => useAuthStore.getState().session,
   repositoryForOwner,
@@ -200,6 +212,12 @@ export const useAppStore = create<State>((set, get) => {
         await reconcileTracking();
         await get().refresh();
         set({ ready: true, error: null });
+        const restoredSession = useAuthStore.getState().session;
+        if (restoredSession?.token)
+          void maintainPhotoSnapshots({
+            ownerId: sessionOwner(restoredSession),
+            token: restoredSession.token,
+          }).catch(() => undefined);
         void useAuthStore
           .getState()
           .check()
@@ -311,6 +329,7 @@ export const useAppStore = create<State>((set, get) => {
         const result = await photoBackup.run(expected);
         if (matchesBackupAccount(expected) && result.ownerId === expected.ownerId)
           message = result.message;
+        await maintainPhotoSnapshots(expected).catch(() => undefined);
       } catch {
         if (matchesBackupAccount(expected))
           message = '사진 전송을 확인하지 못했습니다. 사진과 대기 작업은 기기에 보관 중입니다.';

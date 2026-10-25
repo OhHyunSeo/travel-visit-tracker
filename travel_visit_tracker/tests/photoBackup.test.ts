@@ -169,6 +169,11 @@ describe('manual account-confirmed photo backup', () => {
     });
     expect(h.before).toHaveBeenCalledWith(consent);
     expect(h.repository.preparePhotoOperation).toHaveBeenCalledTimes(2);
+    expect(h.loader).toHaveBeenCalledWith('visit-photos/synthetic-0.png', {
+      ownerId,
+      operationId: id(1),
+      photoId: id(1),
+    });
     expect(h.uploaded.size).toBe(2);
     for (const file of h.files) expect(file.dispose).toHaveBeenCalledTimes(1);
     expect(h.repository.acknowledgePhotoOperation).toHaveBeenCalledWith(

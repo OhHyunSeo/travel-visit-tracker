@@ -1,6 +1,7 @@
 import { migrateSchema } from './migrations';
 import { RestoreRepository } from './restoreRepository';
 import { dwellPolicy } from '../domain/dwell';
+import { readSnapshotManifest, type PhotoSnapshotManifest } from '../services/photoSnapshot';
 import type {
   QueuedVisitOperation,
   VisitBackupState,
@@ -427,6 +428,57 @@ UNION ALL SELECT 1 FROM outbox g JOIN outbox a ON a.owner_id=? AND a.id=g.id WHE
         this.ownerId,
       );
       return { pendingPhotos: pending?.count ?? 0, backedUpPhotos: uploaded?.count ?? 0 };
+    });
+  }
+  async removeAcknowledgedPhotoSnapshot(
+    snapshot: PhotoSnapshotManifest,
+    remove: () => boolean,
+    stillCurrent: () => boolean = () => true,
+  ): Promise<boolean> {
+    if (!readSnapshotManifest(snapshot, snapshot.attemptId) || snapshot.ownerId !== this.ownerId)
+      return false;
+    return this.transaction(async () => {
+      await this.requireActiveAccount();
+      if (!stillCurrent()) return false;
+      const row = await this.db.first<{ serialized: string; visitId: string; createdAt: number }>(
+        `SELECT m.serialized_payload AS serialized,p.visit_id AS visitId,p.created_at AS createdAt
+         FROM photo_backup_metadata m JOIN photos p ON p.owner_id=m.owner_id AND p.id=m.photo_id
+         JOIN visits v ON v.owner_id=p.owner_id AND v.id=p.visit_id
+         WHERE m.owner_id=? AND m.photo_id=? AND m.operation_id=? AND m.sha256=?
+           AND m.byte_length=? AND m.mime_type=? AND p.uri=? AND m.uploaded_at IS NOT NULL
+           AND m.revision>0 AND m.original_path=? AND m.thumbnail_path=?
+           AND v.source='gps' AND v.deleted_at IS NULL
+           AND NOT EXISTS (SELECT 1 FROM outbox o WHERE o.owner_id=p.owner_id AND
+             ((o.entity_type='photo' AND o.entity_id=p.id) OR (o.entity_type='visit' AND o.entity_id=v.id)))`,
+        this.ownerId,
+        snapshot.photoId,
+        snapshot.operationId,
+        snapshot.sha256,
+        snapshot.byteLength,
+        snapshot.mimeType,
+        snapshot.sourceUri,
+        `/api/visit-photos/${snapshot.photoId.toLowerCase()}/original`,
+        `/api/visit-photos/${snapshot.photoId.toLowerCase()}/thumbnail`,
+      );
+      if (!row) return false;
+      let photo: Photo;
+      try {
+        photo = JSON.parse(row.serialized);
+        if (
+          !photo ||
+          Object.keys(photo).length !== 4 ||
+          photo.id !== snapshot.photoId ||
+          photo.uri !== snapshot.sourceUri ||
+          photo.visitId !== row.visitId ||
+          photo.createdAt !== row.createdAt
+        )
+          return false;
+      } catch {
+        return false;
+      }
+      // Keep the ACK, current-account check and synchronous cache removal inside
+      // the same DB transaction. No user rows or outbox entries are modified.
+      return stillCurrent() ? remove() : false;
     });
   }
   private validatePhotoFingerprint(fingerprint: PhotoFingerprint): void {
