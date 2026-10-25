@@ -4,7 +4,7 @@
 
 진행 항목은 **P3-12의 응답 유실과 중복 재시도 통합 검사**입니다. 고정 소스 `8d01be8`에 방문 저장 확인의 독립10초, 연결 확인의 독립3초 제한과 늦은 응답 거부를 추가했습니다.
 
-모바일537개, 서버61개와 타입, 린트, 최종 verify-cloud, 양쪽 JS/Hermes와 소스 CI가 통과했습니다. 실제 임시 HTTP/SQLite의 부분 ACK, 대기 보존과 재개방, 같은 작업 재시도도 통과했습니다. 실제 iPhone native4개와 원본 기록, 사진, 인증 보존 및 QA 정리를 마쳤고 Android 별도 검사는 진행 중입니다. iPhone 추가 독립 검사에만 abort/cancel/release 전달을 생략했으며 실제 foreground 자동 health 경로와 새 손가락 UI 결과로 대신하지 않습니다.
+모바일537개, 서버61개와 타입, 린트, 최종 verify-cloud, 양쪽 JS/Hermes와 소스 CI가 통과했습니다. 실제 임시 HTTP/SQLite의 부분 ACK, 대기 보존과 재개방, 같은 작업 재시도도 통과했습니다. 실제 iPhone native4개와 Android 에뮬레이터 native3개, 양쪽 원본 기록과 사진, 인증 보존 및 QA 정리를 마쳤습니다. iPhone 추가 독립 검사에만 abort/cancel/release 전달을 생략했으며 실제 foreground 자동 health 경로와 새 손가락 UI 결과로 대신하지 않습니다.
 
 이전 준비 사본의 iPhone14개, Android19개와 새 방문 보완을 구분합니다. 전체 완료23/54, P3-12 부분 완료와 P3-10, G1~G4를 유지합니다.
 
@@ -136,8 +136,8 @@ Node 24.21.0에서 타입·린트·모바일 453개, 서버 61개와 `bash scrip
 | P3-09 | 완료 | 계정·작업 UUID 멱등 서버, ACK 뒤 계정·payload 일치 큐 처리. 실HTTP·양쪽 별도 native DB와 202a ACK 트랜잭션 세션 guard/rollback 검증. 사진 큐·사용자 기록 보존 |
 | P3-10 | 부분 완료 | 수동 전송·매 실행 확인·고정 해시·UUID·원자적 ACK 구현. v2 소스의 양쪽 각각 native 파일1/통합9개와 합성 사진1건 화면 전송 PASS. v3 계정+UUID 보존 갱신 합성 검사 완료, iPhone/Android 각각 v3 native 24개 PASS, v4 수동 복원·대기/커서 보존과 임시 HTTP PASS, iPhone 새 native8개·사진1건 확인창/표시 PASS. Android 새 native15개·정상 앱 재실행·화면 확인 완료. v5 완료 파일 점검·새 사본 복구와 자동 검사 완료, Android native16개·복구 화면·정상 앱 재실행 PASS. iPhone v5 native11개·실제 복구 확인/사진 표시 PASS. 같은 계정 세 독립 host 저장소·실HTTP의 원격삭제/미전송 사진/409/재개방 PASS. 55b7bda의 iPhone TCP 중단/재시도 6개·실제 전송 확인과 Android OS 무선 업로드/다운로드 중단·응답 중단 4개 PASS. 비정상 종료 내구성·물리 다중 기기·자동 사진 전송·전체 수용 대기 |
 | P3-11 | 부분 완료 | 계정별 방문·사진 서버 격리, 부모 tombstone 뒤 사진 업로드/조회 차단, ACK 보호. 여러 기기 병합·사진 자체 삭제 feed·물리 삭제·복원은 대기 |
-| P3-12 | 부분 완료 | 응답 유실과 중복 재시도 검사를 계속한다. `8d01be8`의 방문10초/연결확인3초 보완, 모바일537개와 서버61개, 임시 HTTP/SQLite와 iPhone native4개 PASS. Android 새 검사는 진행 중이며 이전 사진/복원/앱 종료의 소스별 근거는 진행 기록을 따른다. 전원/OS 종료, 물리 다중 기기와 전체 수용은 대기 |
-| P3-13 | 부분 완료 / 검증 대기 | 변경사항·완료시각·재시도 표시와 foreground 실행. transport 실패 뒤 영속 check시각·약30초 주기/3초 health로 긴 retry 전 복구 구현. HTTP500/401/409 우회 금지, 세션·동의·시각 guard 회귀·실HTTP·Android 별도 native DB 13개 PASS. API37 실제 무선 차단/복귀1회·방문/사진 대기 보존·명시적 재시도 전송 PASS(HTTP reverse 미사용). OS 자동 복귀 이벤트·물리 휴대폰·실제 앱 nonempty 전체 E2E는 미검증 |
+| P3-12 | 부분 완료 | 응답 유실과 중복 재시도 검사를 계속한다. `8d01be8`의 방문10초/연결확인3초 보완, 모바일537개와 서버61개, 임시 HTTP/SQLite와 iPhone native4개 PASS. 같은 소스 Android native3개와 foreground 자동 health도 PASS이며 이전 사진/복원/앱 종료의 소스별 근거는 진행 기록을 따른다. 전원/OS 종료, 물리 다중 기기와 전체 수용은 대기 |
+| P3-13 | 부분 완료 / 검증 대기 | 변경사항·완료시각·재시도 표시와 foreground 실행. transport 실패 뒤 영속 check시각·약30초 주기/3초 health로 긴 retry 전 복구 구현. HTTP500/401/409 우회 금지, 세션·동의·시각 guard 회귀·실HTTP·Android 별도 native DB 13개 PASS. API37 실제 무선 차단/복귀1회·방문/사진 대기 보존·명시적 재시도 전송 PASS(HTTP reverse 미사용). OS 자동 복귀 이벤트·물리 휴대폰·실제 앱 nonempty 전체 E2E는 미검증 `8d01be8`의 Android 실제 AppStore 자동 health 부분 응답3초, 대기와 nextAttemptAt 보존/connectionCheckAt 연기, 다음 수동 재시도 PASS. 실제 OS 복귀 이벤트와 물리 휴대폰/Release는 별도 |
 | P3-14 | 미착수 | 영속 DB·사진 저장소, HTTPS, 백업·복원 방법을 갖춘 테스트 서버에서 G3를 검증한다. |
 | P4-01 | 부분 완료 / 검증 대기 | Stitch 화면 조회와 지역 수집 방향만 있음. 최종 시안 확정 전 |
 | P4-02 | 부분 완료 / 검증 대기 | 색상·기본 styles·Button 기반 있음. 최종 디자인 체계 미완료 |

@@ -2,7 +2,7 @@
 
 작성일: 2026-10-11, Asia/Seoul  
 목표 플랫폼: Android, iOS  
-현재 상태: 2026-10-25, 수동 방문과 사진 백업, 기록 복원과 손상 사진의 새 사본 복구를 구현했습니다. 복원 응답 지연 보완(`c2c871f`)은 모바일 498개, 서버 61개와 전체 verify-cloud, 실제 임시 HTTP와 SQLite 재시도를 통과했습니다. 같은 소스의 iPhone native 4개와 Android 에뮬레이터 native 2개도 완료했습니다. 앞선 `55b7bda`의 iPhone TCP 중단과 재시도 6개, Android OS 무선과 응답 중단 4개는 완료했고 Android 실제 앱 종료와 재실행 3개도 완료했습니다. 준비 사본 정리(`4bd7ea3`)도 구현해 모바일525개, 서버61개와 전체 verify-cloud, iPhone14개와 Android 에뮬레이터19개를 통과했습니다. 방문 응답 지연 보완(`8d01be8`)은 모바일537개, 서버61개와 최종 verify-cloud, iPhone native4개까지 통과했고 Android 검사는 진행 중입니다. 전체 23/54와 G1~G4는 그대로입니다.
+현재 상태: 2026-10-25, 수동 방문과 사진 백업, 기록 복원과 손상 사진의 새 사본 복구를 구현했습니다. 복원 응답 지연 보완(`c2c871f`)은 모바일 498개, 서버 61개와 전체 verify-cloud, 실제 임시 HTTP와 SQLite 재시도를 통과했습니다. 같은 소스의 iPhone native 4개와 Android 에뮬레이터 native 2개도 완료했습니다. 앞선 `55b7bda`의 iPhone TCP 중단과 재시도 6개, Android OS 무선과 응답 중단 4개는 완료했고 Android 실제 앱 종료와 재실행 3개도 완료했습니다. 준비 사본 정리(`4bd7ea3`)도 구현해 모바일525개, 서버61개와 전체 verify-cloud, iPhone14개와 Android 에뮬레이터19개를 통과했습니다. 방문 응답 지연 보완(`8d01be8`)은 모바일537개, 서버61개와 최종 verify-cloud, iPhone native4개와 Android 에뮬레이터 native3개까지 통과했습니다. 전체 23/54와 G1~G4는 그대로입니다.
 추천 개발 방식: React Native + Expo 개발 빌드 + TypeScript
 
 ## 1. 제품 목표와 첫 버전의 범위

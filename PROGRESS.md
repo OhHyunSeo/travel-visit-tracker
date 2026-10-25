@@ -12,7 +12,9 @@
 
 재시작 비교 도구는 객체의 키 순서 대신 실제 값으로 비교하도록 바로잡았습니다. 추가 시험에서 직접 Coordinator와 실제 앱의 자동 백업이 겹친 시도는 통과에 포함하지 않았습니다. 서버의 별도 요청과 실제 앱 시각의 성공 기록으로 구분한 뒤, 기존 자료를 재생성하지 않고 별도 합성 방문의 단일 Runner와 Client에서 확인했습니다. 새 손가락 UI나 iPhone의 실제 foreground 자동 health 경로를 검사했다고 확대하지 않습니다.
 
-iPhone 원래 모든 테이블, 설정, 스키마와 사진 바이트, 인증을 대조해 보존했습니다. QA DB와 인증, 사진 한 장과 빈 QA 캐시만 정리했고 세 namespace 파일, package/lock을 원래 해시로 복구했습니다. 자체 앱과8081, 시험 서버도 종료했습니다. Android는 같은 고정 소스의 별도 검사를 진행 중입니다. 이전 사본 정리의 iPhone14개, Android19개는 별도 이력입니다.
+iPhone 원래 모든 테이블, 설정, 스키마와 사진 바이트, 인증을 대조해 보존했습니다. QA DB와 인증, 사진 한 장과 빈 QA 캐시만 정리했고 세 namespace 파일, package/lock을 원래 해시로 복구했습니다. 자체 앱과8081, 시험 서버도 종료했습니다. Android 에뮬레이터도 같은 `8d01be8`의 새 native3개를 통과했습니다. 실제 AppStore 수동 ACK10,015ms와 DB 재개방/같은 작업 재시도, 현재 시각의 실제 foreground 자동 health3,016ms와 대기/다음 재시도 보존, 해당 ACK에만 abort 전달을 생략한 독립10,010ms와 늦은 응답 거부입니다. 기본 두 경우에는 기한 전 native 응답 객체나 reader 바이트가 노출되지 않았습니다. 추가 독립 ACK는 서버가 늦은 나머지를 보내자 native 응답 객체가 나타났지만, reader를 만들지 않고 취소했고 로컬 ACK도 적용하지 않았습니다. iPhone의 늦은 두 번째 read 관측과 이 차이를 구분합니다.
+
+Android 원래 모든 테이블, 설정, 사진과 인증, APK, package/lock과 네트워크도 보존했습니다. 임시 소스59개와 새 transport 두 파일의 원문/부재를 복구했고 QA DB, 인증과 자체8082, 서버, reverse, 에뮬레이터를 정리했습니다. 결과는 [Android PR #1](https://github.com/OhHyunSeo/travel-visit-tracker/pull/1)의 `419c062`에 있고 [Android 브랜치 CI](https://github.com/OhHyunSeo/travel-visit-tracker/actions/runs/40190819737)도 통과했습니다. 이전 준비 사본의 iPhone14개, Android19개는 별도 소스의 이력으로 유지합니다.
 
 이번에 생성한 export40개를 목록과 해시, 미사용 확인 후 정리했습니다. 할당량8,957,952바이트였으며 즉시 측정한 여유 공간 변화는0바이트입니다. 다른 빌드, SDK, 캐시와 백업은 삭제하지 않았습니다. 완료23/54, P3-12 부분 완료와 P3-10, G1~G4의 남은 범위는 유지합니다.
 
