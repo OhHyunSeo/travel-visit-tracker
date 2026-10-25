@@ -2,6 +2,33 @@
 
 마지막 갱신: 2026-10-25, Asia/Seoul.
 
+## 10월 25일 후속: P3-13 OS 연결 복귀 뒤 자동 방문 백업
+
+제품은 **`8d01be8b8e3bf4896fbc76264b442b9dfe415d55`** 그대로 고정했고 Android 시작 기준은 `419c062`입니다. 기존 API37 Debug 앱에서 새 QA DB, 인증과 cache root를 사용했습니다. 이번에는 응답 지연이나 fetch 예외, abort 생략, 과거 시계나 재시도 시각 편집을 사용하지 않았습니다. 실제 에뮬레이터 OS의 비행기 모드 ON, Wi-Fi/모바일 데이터 OFF와 native HTTP 실패를 확인한 뒤 합성 방문1개와 PNG1개의 큐를 준비했습니다. 고유 QA 계정의 실제 AppStore 자동 방문 백업 opt-in을 켰습니다.
+
+**새 실제 OS 자동 복귀2개가 PASS**입니다. 연결 복구 뒤 시험 도구는 AppStore.backupVisits나 Coordinator.run을 직접 호출하지 않았습니다. 계측은 실제 앱 호출을 그대로 전달해 기록했고, helper에는 별도 백업 실행 단계가 없습니다. opt-in ON 액션은 처음 오프라인 준비 때 한 번뿐입니다.
+
+| 흐름 | 실제 결과 |
+| --- | --- |
+| 같은 foreground에서 OS 연결 복구 | 자연스러운 자동 실패2회를 기다려 약30초,60초 재시도를 관찰. 두 번째 실패의 health 시각은 긴 nextAttemptAt보다 약30초 이르게 저장됨. QA SQLite/WAL 사본을 읽기 전용으로 열어 nextAttemptAt, connectionCheckAt와 마지막 성공 시각이 native 상태와 같음을 확인. 원래 OS 연결 설정으로 복구한 뒤 앱의4초 foreground 주기만으로 health→방문 ACK 완료. health는 원래 긴 재시도 시각보다27.884초, ACK 성공은26.791초 먼저 발생. AppState는 내내 active, 서버 방문/영수증 각각1개, 같은 operation/payload 유지 |
+| Background에서 OS 복구 후 foreground 복귀 | 별도 합성 방문을 오프라인 대기에 남기고 실제 HOME으로 background 진입. 그 상태에서 원래 OS 연결을 복원하고 자연 재시도 시각이 지난 뒤까지 기다림. 관측한 background 약32.316초 동안, 연결 복구부터 foreground 복귀 사이 서버 요청0회. 같은 PID와 JS instance로 앱에 돌아오자 버튼/도구의 백업 호출 없이 방문 자동 ACK 완료. 서버 방문/영수증 최종 각각2개, 사진 전송0회 |
+
+첫 흐름은 **OS 네트워크 이벤트 listener를 새로 구현한 결과가 아닙니다.** 연결만 복구됐고 AppState 전환은 없었으며, 기존 foreground 주기 health가 상태를 확인해 재시도를 앞당겼습니다. 두 번째는 실제 background→active 전환 이후 기존 앱의 foreground 진입/주기 요청 경로에서 완료된 범위입니다. OS의 background 전송 서비스나 위치/GPS 수집, 배터리, 앱/OS 강제 종료 내구성으로 확대하지 않습니다.
+
+실패 중 방문의 operation ID와 payload, 방문 행은 그대로이고 attempts만2회로 증가했습니다. 두 실패 간격은 실제 현재 wall clock과 제품의 failure count가 만들었으며 timestamp를 바꾸지 않았습니다. 서버에 도착한 sync POST는 방문마다1회, 전체2회였고 operation ID도 각각 유일했습니다. 전체 서버 방문 내용을 기기 합성 방문과 직접 대조했습니다.
+
+사진은 두 흐름 내내 대기1건, 같은 payload/URI와7,090,841 bytes PNG의 크기/SHA가 유지됐습니다. photo metadata 생성, 사진 POST, 서버 사진과 사진 영수증은 모두0개입니다. 방문의 마지막 성공 시각과 대기 수는 실제 AppStore/DB 상태에서 확인했으며 새 손가락 UI 표시는 검사하지 않았습니다. 최종 대기 사진과 DB는 근거에 보존한 뒤 시험 소유 자료만 정리했습니다.
+
+### 원본 보존과 체크포인트
+
+새 시작/종료 기준으로 원래 개인 DB의 모든 저장 행, 설정, 스키마, 사진 bytes와 QA 외 인증 보존 대조를 통과했습니다. QA 로그인과 로그아웃, 시험 인증 삭제도 확인했습니다. source59개(기존14개, 새45개)의 원문/부재/해시, cache root와 visitTransport 두 개를 복구했습니다. package/lock, 설치와 보존 APK, 원래 비행기/Wi-Fi/데이터 설정과 emulator boot ID도 같습니다. 새 빌드, 설치와 의존성 변경은 없습니다.
+
+최종 QA DB와 대기 PNG 사본을 보관한 뒤 QA DB/WAL/SHM3개, 시험 소유 PNG1개와 cache root의 부재를 확인했습니다. 자체8082/3002/3003, Metro reverse와 에뮬레이터를 종료했고 HTTP reverse는 없었습니다. iOS8081, iPhone, 원래 checkout, legacy/기본 캐시나 백업은 조작하지 않았습니다.
+
+같은8d01be8의 타입/린트, 모바일537개와 양쪽 JS/Hermes의 앞선 통과를 재사용했으며, 제품 변경이 없어 이 단계에서 반복하지 않았습니다. 이번 결과는 새 native2개와 원본/환경 보존이며 브랜치 CI와도 구분합니다. P3-13의 이 Android 자동 복귀 범위가 확인됐지만 전체 P3-13, 실제 Android 휴대폰/Release와 G1~G4, 완료 수는 변경하지 않습니다. 추가 공통 수정 제안은 없습니다.
+
+근거는 Git 제외 `docs/test-results/android-auto-reconnect-8d01be8-20261025/`의 `auto-reconnect-summary.json`, `network-events.json`, native AppState/호출/Coordinator/전후 DB 상태, `private-db-foreground-natural-backoff.tar`, `private-db-background-pending.tar`, 서버 전후 상태, `artifact-audit.json`, `private-synthetic-final.tar`, `private-qa-final.tar`, `shutdown-status.json`입니다. raw OS 진단, 개인 원본 수량/값/해시, 인증과 fixture 비밀값은 공개하지 않습니다.
+
 ## 10월 25일 후속: 방문 ACK와 foreground 연결 확인의 독립 기한
 
 공통 **`8d01be8b8e3bf4896fbc76264b442b9dfe415d55`**를 고정했습니다. `cb61e47`의 VisitSyncClient 독립 기한과 bounded stream에 더해 새 `visitTransport.native.ts`/`.web.ts`, AppStore의 Expo 스트림 연결을 포함합니다. Android 시작 기준은 `4a770eb`입니다. source59개를 임시 적용하고 DB, 인증과 photo snapshot root를 새 QA 이름으로 격리했습니다. 기본 개인 DB, 기존 legacy/기본 캐시는 새 소스로 열거나 스캔하지 않았습니다. 기존 Debug APK/API37과 실제 AppStore 액션, 비동기 SQLite와 native HTTP를 사용했으며 새 빌드, 설치와 의존성 변경은 없습니다.

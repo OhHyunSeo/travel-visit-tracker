@@ -1,5 +1,17 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
+## 10월 25일 후속: OS 복귀 뒤 버튼 없는 자동 방문 백업 확인
+
+고정 **`8d01be8b8e3bf4896fbc76264b442b9dfe415d55`**에서 P3-13의 Android 자동 복귀2개를 실제 OS 무선 차단과 복구로 확인했습니다. 제품을 수정하지 않았고 같은 APK/API37, 고유 QA DB/인증/cache root를 사용했습니다. [진행 기록](ANDROID_PROGRESS.md)에 정확한 순서, 호출과 보존 근거를 남겼습니다.
+
+Foreground 흐름은 실제 opt-in 뒤 자연 자동 실패2회와 약30초/60초 backoff를 기다렸습니다. 저장된 health/재시도 시각도 실제 SQLite 사본에서 확인했습니다. OS 연결을 복구한 뒤 도구에서 backupVisits/Coordinator를 호출하지 않았고 기존 주기 health→방문 ACK가 자동 완료됐습니다. health는 긴 재시도 시각보다27.884초, ACK는26.791초 먼저였고 AppState는 계속 active였습니다. 이는 OS 네트워크 이벤트 listener 추가가 아니라 기존 foreground 주기의 회복입니다.
+
+다른 합성 방문은 실제 background에서 네트워크를 복구했습니다. 약32.316초의 background 관찰과 자연 재시도 시각 경과 동안 전송은 없었고, 같은 PID/JS로 foreground에 돌아온 뒤 버튼 없이 자동 ACK됐습니다. 서버 sync POST와 방문/영수증은 방문별1개, 전체2개이며 같은 operation/payload가 유지됐습니다. 사진 큐/원본 바이트는 그대로이고 사진 POST와 서버 사진/영수증은0개입니다.
+
+과거 시계, 재시도 시각 편집이나 별도 경쟁 전송 주체를 쓰지 않았습니다. 새 UI 실물 확인, OS background 전송/GPS/배터리와 강제 종료 내구성, 실제 Android/Release의 결과는 아닙니다. 이전 고정 소스의537개/JS-Hermes는 반복하지 않고 이번 native2개와 구분합니다.
+
+원래 모든 DB/설정/사진/인증과 package/lock/APK/네트워크를 보존했습니다. 임시 source59개와 cache 상수, 새 transport를 존재 여부/해시대로 복구하고 최종 QA DB/대기 사진을 보관한 뒤 시험 소유 자료와 자체 서비스/reverse/에뮬레이터를 정리했습니다. 기존 캐시/백업 삭제나 새 빌드/설치는 없습니다. 추가 제품 수정 제안은 없으며 전체 완료 수, P3-13과 G1~G4는 변경하지 않습니다.
+
 ## 10월 25일 후속: 방문 응답 기한과 native transport 검증 완료
 
 공통 **`8d01be8b8e3bf4896fbc76264b442b9dfe415d55`**의 새 visitTransport와 AppStore 연결을 기존 APK/API37에서 검증했습니다. `cb61e47`의 독립 health3초/ACK10초, bounded stream과 늦은 응답 거부를 포함합니다. 제품 소스는 QA 이름으로만 임시 적용한 뒤 복구했고 Android PR에는 결과 문서만 저장합니다.
