@@ -1,5 +1,17 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
+## 10월 25일 후속: 방문 응답 기한과 native transport 검증 완료
+
+공통 **`8d01be8b8e3bf4896fbc76264b442b9dfe415d55`**의 새 visitTransport와 AppStore 연결을 기존 APK/API37에서 검증했습니다. `cb61e47`의 독립 health3초/ACK10초, bounded stream과 늦은 응답 거부를 포함합니다. 제품 소스는 QA 이름으로만 임시 적용한 뒤 복구했고 Android PR에는 결과 문서만 저장합니다.
+
+새 native3개가 PASS입니다. 실제 AppStore 수동 방문 백업은 서버 commit 후 ACK16/60 bytes 대기에서 약10.015초에 실패와 busy 해제로 돌아왔습니다. 같은 operation/payload와 대기, 성공 시각을 보존했고 DB 재개방 뒤 같은 작업을 정상 수동 재시도해 서버 방문/영수증1개, 요청 본문 완전 동일과 반복 중복 없음을 확인했습니다. Foreground 자동 백업의 health16 bytes 대기는 약3.016초에 false 반환, 큐/lastSuccessAt/nextAttemptAt 보존과 정상 connectionCheckAt 연기, 다음 수동 요청 성공이 통과했습니다. 두 경우 native 응답 객체와 reader 바이트는 기한 전 노출되지 않았습니다.
+
+추가 독립 ACK는 autoEnabled=false 상태에서 해당 held 요청의 abort forwarding만 생략했습니다. 원래 signal이 aborted인 상태에서도 약10.010초에 반환됐습니다. 서버의 열린 연결에 늦은 tail을 실제 전송한 뒤 native Response가 노출됐지만 reader를 만들지 않고 cancel했고 로컬 ACK는 미적용이었습니다. 큐/성공 시각 보존과 DB 재개방 후 동일 작업 재시도가 통과했습니다. 서버 prefix, native 객체 반환과 reader bytes를 구분하며 원래 두 abort 경로와 섞지 않습니다.
+
+자동 health는 현재 wall clock과 실제 AppStore/Coordinator 하나를 사용했습니다. 미래 재시도와 만료된 연결 점검 시각만 제품 repository API로 통제했습니다. 추가 독립 ACK 전에 자동 opt-in을 꺼 다른 interval 전송을 배제했습니다. 새 손가락 UI/OS 종료 내구성, 실제 Android/Release의 결과가 아닙니다. 정확한 조건과 도구 준비 보완은 [진행 기록](ANDROID_PROGRESS.md)에 있습니다.
+
+모바일537개/20파일, 타입과 린트, 이 verifier의 backend syntax/native dependency load와 양쪽 JS/Hermes가 PASS입니다. 공통 서버61개와 초과 본문 host 회귀를 새 native 검사로 합산하지 않습니다. 원래 모든 테이블/설정/스키마/사진과 인증, package/lock/APK/무선 상태를 보존했습니다. 임시59개 소스의 원문/부재/해시, 새 transport2개와 cache root 상수를 복구했고 QA DB/인증, 자체8082/3002/3003과 reverse/에뮬레이터를 정리했습니다. 추가 캐시/백업 삭제와 새 빌드/설치는 없습니다. 추가 공통 수정 제안은 없고 완료 수와 G1~G4는 유지합니다.
+
 ## 10월 25일 후속: 안전한 준비 사본 정리의 Android 검증 완료
 
 아래 잔여 캐시 제안은 공통 **`4bd7ea3670d148a3df8c35bb49066e4dbfc4d10e`**에서 구현됐고, Android의 새 격리 소스에서 native19개와 모바일525개, 타입/린트, 양쪽 JS/Hermes를 확인했습니다. 제품 코드는 Android PR에 중복 포함하지 않고 원래대로 복구했습니다. [진행 기록](ANDROID_PROGRESS.md)에 정확한 근거와 범위를 남겼습니다.

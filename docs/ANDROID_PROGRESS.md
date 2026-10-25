@@ -2,6 +2,36 @@
 
 마지막 갱신: 2026-10-25, Asia/Seoul.
 
+## 10월 25일 후속: 방문 ACK와 foreground 연결 확인의 독립 기한
+
+공통 **`8d01be8b8e3bf4896fbc76264b442b9dfe415d55`**를 고정했습니다. `cb61e47`의 VisitSyncClient 독립 기한과 bounded stream에 더해 새 `visitTransport.native.ts`/`.web.ts`, AppStore의 Expo 스트림 연결을 포함합니다. Android 시작 기준은 `4a770eb`입니다. source59개를 임시 적용하고 DB, 인증과 photo snapshot root를 새 QA 이름으로 격리했습니다. 기본 개인 DB, 기존 legacy/기본 캐시는 새 소스로 열거나 스캔하지 않았습니다. 기존 Debug APK/API37과 실제 AppStore 액션, 비동기 SQLite와 native HTTP를 사용했으며 새 빌드, 설치와 의존성 변경은 없습니다.
+
+**새 native3개가 PASS**입니다. 이전 캐시 정리19개, 다른 SHA의 사진/복원 기한 결과와 합산하지 않습니다. 제품의 실제 VisitSyncClient가 `visitFetch`를 사용하는 것을 호출 시 대조했고, 기본 두 검사에서는 원래 abort를 그대로 전달했습니다.
+
+| 새 검사 | 실제 결과 |
+| --- | --- |
+| 수동 방문 백업의 저장 후 부분 ACK | 실제 AppStore 수동 방문 백업에서 서버 commit 뒤 ACK16/60 bytes만 보내고 유지. VisitSyncClient가 약10.015초에 VisitConnectionError로 반환했고 AppStore backupBusy도 해제. 기한 전 native 응답 객체와 reader 바이트는 노출되지 않음. 같은 operation/payload와 방문, 로컬 대기 보존, 성공 시각 미생성. attempts의 정상 증가만 허용. 기존 QA DB를 재개방해 같은 작업을 정상 수동 재시도, 서버 방문/영수증 각각1개와 요청 본문 완전 동일. 반복 빈 전송에서 추가 POST 없음 |
+| foreground 자동 백업의 부분 health | 실제 AppStore 자동 경로와 현재 wall clock 사용. 제품 repository API로 nextAttemptAt를 현재+120초, connectionCheckAt를 현재-1ms로 준비해 backoff 중 연결 확인을 재현. 서버가 실제 health 본문16 bytes만 보낸 상태에서 connectionAvailable이 약3.016초에 false 반환. 기한 전 native 응답 객체/reader 바이트 미노출. 큐와 마지막 성공 시각, nextAttemptAt 유지, connectionCheckAt만 정책대로 다음 확인 시각으로 연기. health 실패 중 방문 POST 없음. 진행 상태 해제 뒤 정상 수동 요청 성공 |
+| held ACK만 abort 전달 생략한 독립 기한과 늦은 응답 | 자동 백업 opt-in OFF, 해당 수동 ACK 요청 하나의 transport signal 전달만 생략. 원래 AbortSignal은 aborted가 됐지만 native에 전달하지 않은 상태에서 약10.010초에 반환. 기한 전 native 응답 객체/reader0 bytes. 서버 연결이 열린 상태에서 늦은 tail을 실제 전송하자 native 응답 객체가 뒤늦게 노출됐고, 제품은 body reader를 만들지 않은 채 cancel. 늦은 ACK 미적용, 큐와 성공/재시도 상태 유지. DB 재개방 후 같은 작업을 정상 수동 재시도, 서버 중복 없음 |
+
+기본 ACK와 health는 기한 뒤 tail 시도 때 소켓이 이미 닫혀 있었습니다. 추가 독립 ACK는 원래 signal을 **해당 held 요청에만** 전달하지 않은 통제 조건이며, 열린 연결에 실제 늦은 tail을 보낸 뒤 native Response 반환과 reader 미생성/cancel을 구분해 확인했습니다. 서버가 보낸16 bytes를 기본 두 경우의 native reader가 소비한 것으로 표시하지 않습니다. 늦은 native Response가 나타났다는 사실도 JS reader가 본문을 읽거나 파싱했다는 주장으로 확대하지 않습니다.
+
+자동 health에는 과거 합성 시계를 사용하지 않았습니다. 현재 시각에서 제품 API로 저장한 backoff만 통제했고 실제 앱의 foreground Coordinator 하나가 처리했습니다. 자동 interval과 직접 액션은 같은 AppStore/Coordinator를 사용했습니다. 후속 독립 ACK 전에 autoEnabled=false를 저장해 다른 자동 전송이 같은 큐를 처리하지 않도록 했습니다. 연결 실패 뒤 connectionCheckAt가 연기되는 것은 정상 동작이며 nextAttemptAt/lastSuccessAt 보존과 구분합니다.
+
+DB 재개방은 실제 앱을 닫고 기존 QA DB를 다시 여는 방식이며 큐를 reseed하거나 재주입하지 않았습니다. QA 인증도 복구됐습니다. 새 손가락 UI, OS force-stop 내구성, 무선 전환이나 전원 장애의 증거로 사용하지 않습니다. AppStore busy 해제와 실제 다음 액션 실행을 확인한 범위입니다.
+
+초기 계측기의 메서드 연결 오류로 정상 health만 실행되고 방문 POST가 없는 준비 실패가 있었습니다. 메서드별 wrapper를 분리한 뒤 같은 QA DB/작업으로 진행했으며 제품 파일은 바꾸지 않았습니다. 앱 재실행 때 Inspector 주소가 유지되는 환경의 준비 대기도 보완했습니다. 이미 끝난 실제 기한 요청은 도구 재개 때 다시 보내지 않고 저장한 상태에서 재개방/재시도를 이어갔습니다. 이 준비 관찰은 제품 결함이나 native 통과 수로 계산하지 않습니다.
+
+### 자동 검사와 최종 보존
+
+Node24.21.0 `bash scripts/verify-cloud.sh`가 PASS입니다. 타입, ESLint, 20개 파일의 **모바일537개**, 이 Android verifier의 backend syntax/native dependency load, 양쪽 production JS/Hermes export를 포함합니다. 공통 서버61개와 공통 HTTP 검사는 이 Android 단계에서 반복한 것으로 표시하지 않습니다. health4KiB/ACK64KiB의 초과 본문은 새 native 검사로 별도 실행하지 않았으며 host 회귀와 구분합니다. Android 브랜치 CI도 임시 QA 소스의537개/native3개와 별도입니다.
+
+원래 DB의 모든 저장 테이블, 설정, 스키마와 사진 bytes, QA 외 인증의 새 시작/종료 대조가 통과했습니다. QA 로그인/복구와 로그아웃, 시험 인증 삭제도 확인했습니다. 최종 합성 DB를 보관했고 서버 방문/영수증3개를 기기의 동일 방문 내용과 직접 대조했습니다. 각 시나리오의 중간 서버1개/2개/3개와 전체 종료 수량을 구분합니다. 최종 QA DB/WAL/SHM3개만 지웠고 QA cache root의 부재도 확인했습니다.
+
+앱과 자체 서비스를 먼저 멈춘 뒤 **source59개(기존14개, 새45개)**의 원문, 부재와 해시를 복구했습니다. 새 visitTransport 두 개와 cache root 상수도 복구 목록에 포함했습니다. package/lock, 설치와 보존 APK, 원래 무선 상태는 같습니다. 자체8082/3002/3003, reverse와 에뮬레이터를 종료했고 HTTP reverse는 없었습니다. iOS8081, iPhone, 원래 checkout과 기존 캐시/백업은 조작하지 않았습니다. 이번 생성 JS/Hermes40개, 논리8,820,611 bytes만 사용 후 정리했으며 즉시 가용량 증가는 관측되지 않았습니다.
+
+근거는 Git 제외 `docs/test-results/android-visit-deadline-8d01be8-20261025/`의 `validation-files.json`, `visit-deadline-summary.json`, `private-state-after-*.json`, 서버 gate/release/retry 상태, DB 재개방 직전 사본과 `private-qa-final.tar`, `verification.log`, `shutdown-status.json`입니다. 개인 원본 수량, 값, 해시와 인증/fixture 비밀값은 공개하지 않습니다. 추가 제품 수정 제안은 없습니다. 실제 Android 휴대폰, Release와 전체 G1~G4는 별도입니다.
+
 ## 10월 25일 후속: 전송 준비 사본의 안전한 자동 정리 검증
 
 공통 **`4bd7ea3670d148a3df8c35bb49066e4dbfc4d10e`**를 고정했습니다. Android 시작 기준은 `6301c8e`입니다. 새 `photoSnapshot.ts`를 포함한56개 파일을 임시 적용했고 DB 이름, 인증 key/service와 **snapshotRoot 상수**를 고유 QA 값으로 격리했습니다. 기본 개인 DB와 기본 전송 캐시 root를 새 소스로 열거나 스캔하지 않았습니다. 기존 Debug APK/API37, 실제 SQLite, 파일, native HTTP이며 새 빌드, 설치나 의존성 변경은 없습니다.
