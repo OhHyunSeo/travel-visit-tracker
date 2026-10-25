@@ -12,6 +12,7 @@ import { restoreFetch } from '../services/restoreTransport';
 import { sessionOwner } from '../services/authClient';
 import { VisitBackupCoordinator } from '../services/visitBackup';
 import { VisitSyncClient } from '../services/visitSync';
+import { visitFetch } from '../services/visitTransport';
 import { PhotoBackupCoordinator } from '../services/photoBackup';
 import { PhotoSyncClient } from '../services/photoSync';
 import { preparePhotoFile, cleanupPreparedPhotoFiles } from '../services/photoFile';
@@ -72,7 +73,7 @@ async function maintainPhotoSnapshots(expected: BackupExpectation) {
 const visitBackup = new VisitBackupCoordinator(
   () => useAuthStore.getState().session,
   repositoryForOwner,
-  new VisitSyncClient(fetch, __DEV__),
+  new VisitSyncClient(visitFetch, __DEV__),
   Date.now,
   () => AppState.currentState === 'active',
 );
