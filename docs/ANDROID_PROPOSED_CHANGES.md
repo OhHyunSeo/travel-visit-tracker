@@ -1,5 +1,17 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
+## 10월 25일 후속: 안전한 준비 사본 정리의 Android 검증 완료
+
+아래 잔여 캐시 제안은 공통 **`4bd7ea3670d148a3df8c35bb49066e4dbfc4d10e`**에서 구현됐고, Android의 새 격리 소스에서 native19개와 모바일525개, 타입/린트, 양쪽 JS/Hermes를 확인했습니다. 제품 코드는 Android PR에 중복 포함하지 않고 원래대로 복구했습니다. [진행 기록](ANDROID_PROGRESS.md)에 정확한 근거와 범위를 남겼습니다.
+
+- 실제 전송 도중 force-stop/재실행2개: 일부 multipart 수신과 서버 저장 후 ACK32 bytes 대기. 실제 Coordinator가 owner/operation/photo context를 넘겨 marker를 만들었고 새 PID/JS/Constants.sessionId와 QA 인증 복구를 확인했습니다. 같은 DB의 대기, payload, fingerprint와 원본을 보존했습니다. ACK 전에는 유지, 동일 작업 ACK 후 실제 수동 사진 백업 완료 wiring에서 옛 사본만 제거, 서버 중복 없음이 PASS입니다.
+- 실제 시작 wiring1개: 로컬 ACK가 있는 실제 native producer의 사본을 현재 session/active 상태에서는 보존했습니다. 앱 재시작 뒤 수동 cleanup 없이 initialize 정리로 이전 사본만 제거됐고 DB 행, 원본과 다른 미전송 대기는 유지됐습니다. emulator boot ID는 같습니다.
+- 합성 marker 변형16개: active/current-session, 미표시/무marker, ACK 없음, owner/operation/photo/fingerprint 불일치, 원본 누락/변경과 사본 변경, 추가 파일, 깨진/미지원 marker15개 보존. 유효한 이전 session 사본1개만 실제 repository ACK 검사와 native 최종 bytes 비교 뒤 제거, 반복0개였습니다. 합성 marker session 편집과 실제 앱 재시작을 구분합니다.
+
+보존15개를 확인한 뒤 하네스가 정리한 것은 이번 시험 소유 경로만입니다. 기존 legacy 캐시나 기본 snapshot root를 스캔/삭제하지 않았고 root 상수도 고유 QA 값으로 격리했습니다. 원본 변경/누락 조건은 합성 파일에만 만들고 되돌렸습니다. 새 native 파일 읽기 오류,20개/64MiB stress, 장기 누적이나 실제 OS 오류를 이19개에 포함하지 않습니다. 새 UI 조작과 물리 Android/Release, 전원 손실 검증도 아닙니다.
+
+원래 모든 자료와 인증, package/lock과 설치/보존 APK, 무선 설정이 보존됐고 임시 소스56개와 cache 상수 원문/부재/해시를 복구했습니다. QA DB/사진/사본과 자체8082/3002/3003, reverse, 에뮬레이터를 정리했습니다. 추가 전역 캐시나 백업 정리는 없습니다. 공통 서버61개는 여기서 반복하지 않았습니다. 새 공통 제품 수정 제안은 없습니다. 완료 수와 G1~G4는 유지합니다.
+
 ## 10월 25일: 앱 강제 종료, 복원 기한과 준비 캐시 잔여
 
 공통 **55b7bda**의 실제 앱 force-stop 세 경우와 **c2c871f**의 복원 응답 기한 두 경우를 서로 다른 QA 기준에서 확인했습니다. 기존 Debug APK/API37, 실제 native SQLite/파일/HTTP이며 새 빌드나 설치는 없습니다. [진행 기록](ANDROID_PROGRESS.md)에 고정 SHA, 실제 시점, 근거와 한계를 남겼습니다.

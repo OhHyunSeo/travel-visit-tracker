@@ -2,6 +2,43 @@
 
 마지막 갱신: 2026-10-25, Asia/Seoul.
 
+## 10월 25일 후속: 전송 준비 사본의 안전한 자동 정리 검증
+
+공통 **`4bd7ea3670d148a3df8c35bb49066e4dbfc4d10e`**를 고정했습니다. Android 시작 기준은 `6301c8e`입니다. 새 `photoSnapshot.ts`를 포함한56개 파일을 임시 적용했고 DB 이름, 인증 key/service와 **snapshotRoot 상수**를 고유 QA 값으로 격리했습니다. 기본 개인 DB와 기본 전송 캐시 root를 새 소스로 열거나 스캔하지 않았습니다. 기존 Debug APK/API37, 실제 SQLite, 파일, native HTTP이며 새 빌드, 설치나 의존성 변경은 없습니다.
+
+**native19개가 PASS**입니다. 실제 앱 종료/재실행을 포함한 전송2개, 시작 wiring1개, 명시한 합성 marker 변형16개로 구분합니다. 앞선55b7bda/c2c871f 검사와 합산하지 않습니다.
+
+| 실제 실행 흐름 | 관찰과 결과 |
+| --- | --- |
+| 업로드 일부 수신 중 앱 force-stop, 재실행 | 실제 앱의 수동 사진 백업 액션 → PhotoBackupCoordinator → preparePhotoFile의 owner/operation/photo context로 marker 생성. Backend multipart16,384 bytes와 사진 부분15,727 bytes 수신 상태에서 PID 종료. 새 PID/JS와 실제 Constants.sessionId, QA 인증 복구 확인. 기존 DB의 작업, payload, fingerprint와 원본 SHA, marker/사본 보존. ACK 전 cleanup0개, 서버 사진/영수증0개. 동일 작업 재시도에서 로컬 ACK 확정 뒤 실제 수동 백업 완료 wiring이 옛 사본만 제거, 서버 사진/영수증 각각1개 |
+| 서버 저장 후 ACK 일부 대기 중 앱 force-stop, 재실행 | 서버가 두 번째 사진과 영수증을 저장하고 ACK32 bytes를 보낸 상태에서 종료. 새 실제 session과 인증 복구 뒤 로컬 ACK 미확인, 같은 큐와 원본, 옛 marker/사본 유지. ACK 전 cleanup0개. 같은 작업을 재시도해 로컬 ACK 확정 뒤 완료 wiring에서 옛 사본 제거. 서버 사진과 영수증은 각각2개로 유지 |
+| 이미 로컬 ACK가 있는 사본의 실제 시작 wiring | 실제 native preparePhotoFile에 ACK와 맞는 context를 제공해 만든 사본을 현재 session/active 상태에서 보존. 앱만 force-stop, 재실행해 새 Constants.sessionId와 QA 인증 복구 확인. 새 실행에서 **수동 cleanup을 호출하지 않고 initialize의 시작 정리로 사본 제거**. DB 사진/ACK 행, 원본 바이트와 다른 사진의 미전송 대기1건 유지 |
+
+세 번 모두 PID 소멸 뒤 새 PID/JS와 **실제 Constants.sessionId 변화**를 별도 근거로 보존했고 emulator boot ID는 같았습니다. DB 재주입이나 reseed 없이 기존 QA DB와 실제 QA SecureStore 로그인 상태를 재개방했습니다. 첫 두 경우의 사본은 실제 제품 Coordinator가 생성했습니다. 시작 wiring의 사본은 실제 prepare API가 생성했습니다. 앱 액션을 native에서 직접 실행한 검증이며 새 화면 확인창 조작, OS 재부팅, 전원 손실, 에뮬레이터 비정상 종료나 실제 Android 휴대폰 결과로 확대하지 않습니다.
+
+### native 파일과 실제 DB의 marker 변형16개
+
+변형은 실제 preparePhotoFile이 만든 marker와 bytes를 이번 QA 소유 디렉터리에 복사한 합성 자료입니다. 이전 session UUID나 개별 필드를 바꾼 경우를 위 실제 앱 재시작의 session 변화와 구분합니다. 활성 registry 검사는 실제 producer가 등록한 사본을 유지한 채 marker session만 과거 값으로 바꿔 registry 보호를 별도로 확인했습니다. 현재 session 검사는 활성 registry에 없는 별도 사본입니다.
+
+| 기대 결과 | 확인한 조건 |
+| --- | --- |
+| 보존15개 | 실제 active registry, 현재 native session, 이번 시험의 legacy 무표시 사본, 새 root 안 marker 없음, 로컬 ACK 없음, 다른 owner, 다른 operation, 다른 photo, fingerprint 불일치, 합성 원본 누락, 원본 변경, 사본 변경, 추가 파일, 깨진 JSON, 미지원 marker 형식 |
+| 제거1개 | 이전 session으로 표시한 유효 사본, 같은 owner/operation/photo/fingerprint의 실제 로컬 ACK, 현재 원본과 사본 바이트 일치. 제품의 실제 repository 트랜잭션과 native 최종 동기 비교를 거쳐 이 사본만 제거. 재실행 cleanup0개 |
+
+각 cleanup 전후 QA DB의 방문, 사진, metadata와 outbox 행, 원본 바이트/부재 상태가 그대로였습니다. 원본 변경/누락 조건은 이 시험 소유 파일에만 만들었고 관찰 뒤 합성 원래 바이트로 복구했습니다. 제품이 보존한15개는 결과와 파일/marker 해시를 기록한 **뒤 하네스가 정확한 시험 소유 경로만 정리**했습니다. 제품이15개를 자동 삭제한 것으로 표시하지 않습니다. 원래 legacy 캐시와 기본 snapshot root는 읽거나 삭제하지 않았습니다.
+
+준비 계획의 파일 읽기 오류 주입과20개/64MiB 상한 stress를 새 native 항목으로 실행하지 않았습니다. 이 한계는 공통 host 회귀와 구분합니다. 실제 디스크 부족, OS 권한 오류나 장기 캐시 누적을 검증한 결과가 아닙니다. 시작 관찰기의 Directory URI 끝 슬래시 비교는 사본을 다시 만들거나 제품을 바꾸지 않고 정규화한 뒤 이어갔습니다.
+
+### 자동 검사와 최종 보존
+
+Node24.21.0 `bash scripts/verify-cloud.sh`가 PASS입니다. 타입, ESLint, 19개 파일의 **모바일525개**, 이 Android verifier의 backend syntax/native dependency load와 양쪽 production JS/Hermes export를 포함합니다. 공통 서버61개와 공통 HTTP 검사는 이번 Android 단계에서 다시 실행한 것으로 표시하지 않습니다. Android 브랜치 CI는 이 고정 QA 소스와 별도 기준입니다.
+
+모든 개인 원본 저장 행, 설정, 스키마, 사진 바이트와 QA 외 인증을 시작/종료 대조해 보존했습니다. QA 로그아웃과 SecureStore 삭제도 확인했습니다. 최종 QA DB와 합성 원본3개를 로컬에 보관한 뒤, 시험 소유 원본과 managed/legacy 사본, QA root와 QA DB/WAL/SHM3개만 정리했습니다. 합성 미전송 대기는 임의로 ACK 처리하지 않고 최종 DB 근거에 남겼습니다. 서버의 두 확인 사진/영수증과 모든 사진 bytes/SHA도 대조했습니다.
+
+앱과 자체 서버를 먼저 멈춘 뒤 **임시 소스56개(기존14개, 새42개)**의 원문/부재/해시와 cache root 상수를 복구했습니다. package/lock과 설치·보존 APK가 같고 원래 무선 상태도 유지됐습니다. 자체8082/3002/3003, reverse와 에뮬레이터를 종료했습니다. HTTP reverse, iOS8081과 iPhone, 원래 checkout 변경은 없습니다. 이번 생성 JS/Hermes 출력40개, 논리8,814,174 bytes만 사용 후 정리했으며 즉시 가용량 증가는 관측되지 않았습니다. 추가 전역 캐시, Time Machine나 프로젝트 백업 삭제는 하지 않았습니다.
+
+근거는 Git 제외 `docs/test-results/android-photo-snapshot-4bd7ea3-20261025/`의 `validation-files.json`, `snapshot-lifecycle-summary.json`, `snapshot-preservation-summary.json`, `snapshot-startup-wiring-summary.json`, `private-process-proof-*.json`, 실제 종료 직후 DB/전후 상태, `private-synthetic-final.tar`, `private-qa-final.tar`, `verification.log`, `shutdown-status.json`입니다. 개인 원본 수량/값/해시, 인증 상태와 fixture 비밀값은 공개하지 않습니다. 원래 불명확 사본을 회수했다는 주장은 하지 않습니다. 실제 Android, Release, OS 자동 회수와 전체 G1~G4는 별도입니다.
+
 ## 10월 25일: 전송 중 앱 강제 종료와 복원 응답 기한
 
 Android 시작 기준은 `e3f922d`입니다. 공통 소스 두 개를 순서대로 고정해 각각 새 QA DB와 인증 이름, 원본 보존 기준을 만들었습니다. 기존 API 37 에뮬레이터와 Debug APK, 실제 비동기 SQLite, 파일과 HTTP를 사용했고 새 native 빌드, 설치, 의존성 변경은 없습니다. 원래 개인 v1 DB를 새 소스로 열지 않았습니다.
