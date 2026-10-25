@@ -82,9 +82,21 @@ export class AuthClient {
     body?: unknown,
   ): Promise<unknown> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10000);
-    try {
-      const response = await this.send(`${apiUrl}/api/auth/${route}`, {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let response: Response | undefined;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    const checkActive = () => {
+      if (controller.signal.aborted) throw new Error('account request timed out');
+    };
+    const cancelBody = () => {
+      try {
+        void response?.body?.cancel().catch(() => {});
+      } catch {
+        /* A native cleanup error cannot block account actions. */
+      }
+    };
+    const fetchAndRead = async () => {
+      response = await this.send(`${apiUrl}/api/auth/${route}`, {
         method: body === undefined ? 'GET' : 'POST',
         signal: controller.signal,
         redirect: 'error',
@@ -94,6 +106,10 @@ export class AuthClient {
         },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
+      if (controller.signal.aborted) {
+        cancelBody();
+        checkActive();
+      }
       if (!response.ok)
         throw new AuthError(
           response.status === 401
@@ -103,12 +119,55 @@ export class AuthClient {
               : '로그인 요청을 처리하지 못했습니다. 입력과 서버 상태를 확인해 주세요.',
           response.status,
         );
-      return await response.json();
+      reader = response.body?.getReader();
+      if (!reader) throw new Error('missing account response');
+      const chunks: Uint8Array[] = [];
+      let count = 0;
+      while (true) {
+        const next = await reader.read();
+        checkActive();
+        if (next.done) break;
+        count += next.value.byteLength;
+        if (count > 16 * 1024) throw new Error('account response too large');
+        chunks.push(next.value);
+      }
+      const bytes = new Uint8Array(count);
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return JSON.parse(new TextDecoder().decode(bytes));
+    };
+    // Native abort/read/cancel may not settle. Bound the complete account request.
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error('account request timed out'));
+        controller.abort();
+      }, 10000);
+    });
+    try {
+      return await Promise.race([fetchAndRead(), deadline]);
     } catch (error) {
       if (error instanceof AuthError) throw error;
       throw new AuthError('서버에 연결할 수 없습니다. 기기의 기록은 그대로 보관됩니다.');
     } finally {
       clearTimeout(timer);
+      controller.abort();
+      if (reader) {
+        try {
+          void reader.cancel().catch(() => {});
+        } catch {
+          /* A native cleanup error cannot block account actions. */
+        }
+        try {
+          reader.releaseLock();
+        } catch {
+          /* Native reading may still be pending. */
+        }
+      } else {
+        cancelBody();
+      }
     }
   }
   async signIn(

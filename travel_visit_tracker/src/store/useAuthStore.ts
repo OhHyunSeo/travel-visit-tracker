@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { AuthClient } from '../services/authClient';
+import { authFetch } from '../services/authTransport';
 import { SessionManager, type SessionState } from '../services/sessionManager';
 import { credentials } from '../services/credentials';
 import { stopTracking } from '../services/tracking';
@@ -24,6 +26,7 @@ export const useAuthStore = create<AuthState>((set) => {
     stopTracking,
     __DEV__,
     (state) => set({ ...state, notice: null }),
+    new AuthClient(authFetch),
   );
   return {
     session: null,
