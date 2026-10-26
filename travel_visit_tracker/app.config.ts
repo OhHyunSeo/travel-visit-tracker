@@ -53,7 +53,8 @@ const config: ExpoConfig = {
     [
       'expo-build-properties',
       {
-        ios: { enableSceneSupport: true },
+        // Build with the selected Xcode instead of importing another Swift SDK's interfaces.
+        ios: { enableSceneSupport: true, usePrecompiledModules: false },
         android: { compileSdkVersion: 36, targetSdkVersion: 36 },
       },
     ],
