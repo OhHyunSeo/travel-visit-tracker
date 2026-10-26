@@ -1,5 +1,17 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
+## 10월 26일 재개: 신규 가입과16KiB native 경계 완료
+
+사용자가 새로 승인한 범위를 `daed98c`와 고정 제품 **`e52352c8543bab6726fde7ceec00c22483bab48b`**에서 완료했습니다. 고유 QA DB/인증/cache/사진과 새 원본 보존 기준을 사용했고 기존 API37 Debug APK의 실제 AppStore/AuthStore→native authFetch에서 새3개가 PASS입니다.
+
+신규 가입은 서버 계정 저장 후 응답16/349 bytes 대기에서10,016ms에 실패와 busy 해제, 기존 계정/credential/owner/행/사진/큐 보존을 확인했습니다. 기한 전 native Response/reader bytes는0입니다. 다음 같은 이메일 가입409에 서버 중복이 없고 정상 로그인으로 생성된 계정을 사용할 수 있었습니다. Content-Length 없는 B 로그인16,384 bytes는 실제 reader3회와541ms에 성공,16,385 bytes는 reader5회와744ms에 실패했습니다. 초과 응답 뒤 B 인증/owner와 A 행/사진/큐가 같았고 다음 정상 계정 확인도 통과했습니다. 모든 abort/cancel/release 전달을 유지했고 경계 두 reader는 cancel/release 각각1회였습니다.
+
+타입/린트/모바일549개가 `npm --prefix travel_visit_tracker run check`로 PASS입니다. 앞선 전체 verify-cloud, 서버61개와 이번 결과를 구분합니다. 이전 계정3개와 중단 준비의 요청0건도 별도 이력입니다. 새 손가락 UI, 큰 본문 부하, 실제 Android/Release나 전체 수용 통과를 의미하지 않습니다.
+
+원래 모든 DB/설정/사진/인증과 package/lock/APK/network를 보존 대조했고 source62개 원문/부재/해시와 QA 상수를 복구했습니다. QA credential 부재/guest와 같은 QA 행/원본을 확인하고 근거 보관 뒤 시험 DB/사진/cache/reverse와 자체 서비스/에뮬레이터를 정리했습니다. 이번 신규 native 가입 계정1개 외 방문/사진 전송이나 guest import는0회입니다. 공통/iOS live 소스, 기존 cache/SDK/AVD/백업은 수정하지 않았습니다.
+
+추가 제품 결함/수정 제안은 없으며 승인한 묶음을 마치고 대기합니다. 자세한 근거는 [진행 기록](ANDROID_PROGRESS.md)을 따릅니다. 전체23/54와 P3-12/P3-13, G1~G4 상태는 유지합니다.
+
 ## 10월 26일 중단 재확인과 미실행 준비 정리
 
 중단 체크포인트 뒤 시작한 가입/16KiB 검사 준비는 지시 재확인 즉시 중단하고 원상복구했습니다. 새 앱 HTTP 요청0건과 native 완료0개이며 가입/크기 경계는 NOT RUN입니다. 서버 합성 계정2개는 준비 자료입니다. 기존 `e52352c` 계정3개와 `834ba6b`/해당 CI PASS는 유지합니다.

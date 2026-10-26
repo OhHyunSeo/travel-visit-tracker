@@ -2,6 +2,34 @@
 
 마지막 갱신: 2026-10-26, Asia/Seoul.
 
+## 10월 26일 재개: 가입 응답 기한과16KiB 경계3개 완료
+
+새 사용자 재개 승인에 따라 **`daed98caec111d96a9956c5245cd266315453dba`**에서 시작했고 제품은 **`e52352c8543bab6726fde7ceec00c22483bab48b`** 그대로 고정했습니다. 직전 중단 준비와 별개의 새 QA DB, 인증 key/service, cache root와 합성 사진 경로를 만들었습니다. source62개를 고정 Git object에서 준비하고 원문/부재/해시를 저장했으며 기본 개인 DB를 새 소스로 열지 않았습니다. 기존 API37 Debug APK, 실제 AppStore/AuthStore의 AuthClient→native authFetch와 SQLite/SecureStore를 사용했습니다. 제품 수정, 새 빌드/설치/의존성 변경은 없습니다.
+
+이번 범위의 **새 native3개가 PASS**입니다. 앞선 `834ba6b`의 계정 확인/다른 로그인/대기 로그아웃3개와 아래 중단 준비의 요청0건은 별도 이력입니다. 초기 정상 A 로그인과 합성 방문/사진 준비는 시험 설정이며 추가 native 시나리오 수로 합산하지 않습니다.
+
+| 요청과 조건 | 실제 Android 결과 |
+| --- | --- |
+| 실제 AppStore 신규 가입, 서버 저장 뒤 일부 응답 | 서버가 신규 합성 계정을 저장한 뒤 정상 응답16/349 bytes만 보냄. 요청은10,016ms에 AuthError(status0)로 종료, AppStore busy 해제와 오류 안내. 기존 A credential/session/owner와 기록·사진·큐 유지. 실제 abort/cancel/release 전달 유지. 기한 전 native Response와 reader bytes는0이며 서버 prefix16과 구분. 기한 뒤 tail 전송 시 연결은 이미 닫혔고 인증/owner가 바뀌지 않음. 같은 이메일의 다음 가입은409, 서버 계정 수3개 그대로. 이후 정상 로그인으로 이미 생성된 계정을 사용했고 A 행/사진/큐는 보존 |
+| 실제 AppStore B 로그인, 정확히16KiB | Content-Length 없는 chunked 정상 JSON에 공백을 붙여16,384 bytes. 서버 기록과 native Content-Length 부재 대조. 실제 native reader가16,384 bytes를3번의 read로 수신했고541ms에 로그인 성공. B credential/owner로 정상 전환, A 행/사진/큐와 원본 bytes 보존 |
+| 실제 AppStore B 로그인,16KiB+1byte | 같은 방식의 Content-Length 없는16,385 bytes. 실제 native reader5번으로16,385 bytes를 관측한 뒤744ms에 AuthError(status0), busy 해제와 오류 안내. 기존 B credential/session/owner 및 A 행/사진/큐 보존. 다음 정상 계정 확인 성공 |
+
+크기 경계 두 경우의 실제 native reader cancel과 releaseLock은 각각1회였고 abort 전달도 유지했습니다. 취소/정리를 무시하도록 바꾼 요청은 없습니다. 정확한 경계와1바이트 초과의 native 읽기/판정 결과이며 큰 본문 전체 부하나 새 손가락 UI 검증으로 확대하지 않습니다. AppStore 공개 액션을 관측 도구로 호출한 Debug 에뮬레이터 결과입니다.
+
+모든 계정 전환과 최종 guest에서 A의 합성 방문1개, 사진1개와 대기2개, 사진 URI와7,090,841-byte PNG SHA를 보존했습니다. Guest import와 방문/사진 전송, 서버 방문/사진/영수증은0개입니다. 서버 계정3개 중2개는 host 준비,1개만 이번 native 가입으로 생성됐으며 중복 가입은 새 계정을 만들지 않았습니다.
+
+### 검사와 최종 복구
+
+Node24.21.0의 **`npm --prefix travel_visit_tracker run check` PASS**: 타입, ESLint,21파일의 모바일549개입니다. 같은 고정 제품의 앞선 전체 verify-cloud/JS-Hermes와 서버61개를 이번에 새로 실행한 것으로 합산하지 않습니다. Android 브랜치 CI는 복구한 브랜치 기준이며 임시 고정 제품의549개/native3개와 구분합니다.
+
+새 시작/종료 대조에서 원래 모든 DB 테이블/설정/스키마, 모든 owner의 사진 bytes와 QA 외 인증이 같았습니다. 최종 guest/QA credential 부재와 QA SQLite v5의 integrity/FK, A 행/큐 보존도 확인했습니다. QA 최종 DB와 사진 근거는 로컬에 보관한 뒤 QA DB/WAL/SHM3개와 이번 사진만 기기에서 제거했고 빈 QA cache root의 부재를 확인했습니다.
+
+앱과 자체 서비스를 멈춘 뒤 source62개의 원문/부재/해시, 새 auth transport2개와 QA 상수를 복구했습니다. package/lock과 설치/보존 APK, 원래 무선 설정과 같은 emulator boot ID를 대조했습니다. 자체8082/3002/3003과 Metro reverse, 에뮬레이터는 종료했고 HTTP reverse는 없었습니다. iOS8081과 공통 live 소스/namespace, 기존 cache/SDK/AVD/백업은 수정하거나 삭제하지 않았습니다. 이번에는 production export를 생성하지 않았습니다.
+
+근거는 Git 제외 `docs/test-results/android-auth-boundary-e52352c-20261026-resume/`의 `validation-files.json`, `auth-boundary-summary.json`, `private-state-after-*.json`, native transport reader/credential 지문, server gate/release와 크기별 기록, `private-synthetic-final.tar`, `private-qa-final.tar`, `verification.log`, `shutdown-status.json`입니다. 개인 값/수량/해시, 인증/token과 raw diagnostics는 커밋하지 않습니다.
+
+승인한 가입과16KiB 경계 묶음은 완료했고 다음 새 검사는 시작하지 않습니다. 공통 제품 결함이나 수정 제안은 없습니다. 실제 Android 휴대폰/Release, 손가락 UI, 전원/OS 비정상 종료와 전체 수용은 별도이며 전체23/54, P3-12/P3-13 부분 완료와 G1~G4는 유지합니다.
+
 ## 10월 26일 중단 재확인과 준비 환경 복구
 
 기존 중단 체크포인트 `36ddb6d`에서 새 가입/16KiB 검사 준비를 시작한 오류를 바로잡았습니다. 중단 지시를 재확인한 즉시 다음 요청이나 재시도 없이 이번 준비만 정리했습니다. **새 native 완료0개, 앱 HTTP 요청0건, 가입과16KiB 경계 검사는 NOT RUN**입니다. 서버의 합성 계정2개는 host 준비 자료이며 native 가입 결과가 아닙니다. 기존 `e52352c` 계정3개와 결과 커밋 `834ba6b`, 해당 CI PASS는 그대로 유효합니다.
