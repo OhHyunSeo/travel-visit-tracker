@@ -1,5 +1,17 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
+## 10월 26일: 계정 응답 보완의 Android 검증 완료
+
+고정 **`e52352c8543bab6726fde7ceec00c22483bab48b`**의 AuthClient 독립10초/16KiB stream과 새 native authFetch/AuthStore 연결을 기존 API37 Debug APK에서 확인했습니다. 새 Android3개이며 앞선8d01be8 자동 복귀나 iPhone3개의 대체 결과가 아닙니다. 실제 요청마다 AuthStore Client가 native authFetch를 쓰는 것을 대조했습니다.
+
+AppStore 계정 확인은 서버 /me16/153 bytes 대기에서 약10.008초에 끝나 기존 QA A credential, owner와 기록을 유지했고 다음 정상 확인이 성공했습니다. AppStore B 로그인은16/354 bytes 대기에서 약10.012초에 끝나 옛 A 인증/owner와 행/사진/큐를 유지했으며 다음 정상 B 로그인도 성공했습니다. Guest import와 방문/사진 서버 전송은0회였습니다. 기본 두 경우의 실제 abort/cancel/release는 유지했습니다.
+
+추가 held /me 하나에만 signal 전달을 생략했습니다. 실제 AppStore 확인 뒤 같은 AuthStore/SessionManager의 logout을 대기시켰고, 요청은 약10.007초, 확인과 로그아웃은 약10.229초에 완료돼 guest/credential 삭제/owner guest가 됐습니다. 열린 서버 연결의 늦은 tail 뒤 native Response는 노출됐지만 reader 생성과 read bytes는0, body cancel1회였고 계정/인증이 되살아나지 않았습니다. Android에서는 cancel/release 억제가 필요하지 않았으며 iPhone의 늦은 reader 관측과 구분합니다. 모든 경우 기한 전 native Response/reader bytes가 없었으므로 서버 prefix16을 native 소비량으로 표시하지 않습니다.
+
+모바일549개/21파일, 타입/린트, 이 verifier의 backend syntax/native load와 양쪽 JS/Hermes가 PASS입니다. 공통 서버61개와 auth HTTP 통합을 이번 Android 실행으로 합산하지 않습니다. 새 손가락 UI, native signup/16KiB stress, 앱 재시작이나 물리 Android/Release는 별도입니다. 정확한 계정/기록 보존 범위는 [진행 기록](ANDROID_PROGRESS.md)에 있습니다.
+
+모든 원래 DB/설정/스키마/사진/인증과 package/lock/APK/무선 상태를 보존했습니다. 고정 Git object에서 준비한 source62개와 새 auth transport, QA 상수를 원래 존재 여부/해시로 복구했습니다. 최종 QA DB와 대기 사진을 보관한 뒤 시험 소유 자료, 자체 서비스/reverse/에뮬레이터를 정리했습니다. 공통/iOS live namespace, legacy 캐시와 백업은 수정하지 않았습니다. 추가 제품 제안은 없으며 전체 완료 수와 수용 기준은 유지합니다.
+
 ## 10월 25일 후속: OS 복귀 뒤 버튼 없는 자동 방문 백업 확인
 
 고정 **`8d01be8b8e3bf4896fbc76264b442b9dfe415d55`**에서 P3-13의 Android 자동 복귀2개를 실제 OS 무선 차단과 복구로 확인했습니다. 제품을 수정하지 않았고 같은 APK/API37, 고유 QA DB/인증/cache root를 사용했습니다. [진행 기록](ANDROID_PROGRESS.md)에 정확한 순서, 호출과 보존 근거를 남겼습니다.

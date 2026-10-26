@@ -1,6 +1,34 @@
 # Android 개발·검증 기록
 
-마지막 갱신: 2026-10-25, Asia/Seoul.
+마지막 갱신: 2026-10-26, Asia/Seoul.
+
+## 10월 26일: 계정 요청 기한, 계정 보존과 대기 로그아웃
+
+공통 제품 **`e52352c8543bab6726fde7ceec00c22483bab48b`**를 고정했고 Android 시작 기준은 `9d72292`입니다. 독립10초/16KiB AuthClient stream, 새 authTransport.native.ts/.web.ts와 useAuthStore의 authFetch 연결을 포함합니다. 임시62개 파일 모두 고정 Git object에서 준비해 공통/iOS의 live QA namespace를 복사하지 않았습니다. 새 QA DB, 인증 key/service와 cache root, 합성 PNG 경로를 사용했고 기본 개인 DB/캐시를 새 소스로 열거나 스캔하지 않았습니다. 기존 API37 Debug APK, 실제 AppStore/AuthStore, SQLite/SecureStore와 Expo native HTTP이며 새 빌드, 설치나 의존성 변경은 없습니다.
+
+**새 Android native3개가 PASS**입니다. 앞선8d01be8 자동 복귀2개/방문 기한3개나 iPhone 계정3개를 이 결과로 대신하지 않습니다. 실제 AuthStore의 AuthClient.send가 native authFetch와 같은 것을 요청마다 대조했습니다.
+
+| 요청과 조건 | 실제 Android 결과 |
+| --- | --- |
+| 실제 AppStore 계정 확인의 부분 /me | 서버가 정상200 응답16/153 bytes만 보낸 뒤 유지. AuthClient 요청은 약10.008초에 AuthError(status0)로 실패하고 AppStore busy 해제. 기존 QA A 계정/credential 값, active owner, 방문/사진/큐와 원본 bytes 보존. 상태는 offline이며 다음 정상 확인에서 같은 A 계정 signed-in 복귀 |
+| 실제 AppStore의 다른 시험계정 로그인 | B 계정의 정상 로그인 응답16/354 bytes 뒤 유지. 약10.012초에 실패와 busy 해제, AppStore 오류 안내. 옛 A 계정/credential/owner와 모든 기록 유지. 다음 정상 B 로그인은 성공하고 owner가 B로 바뀌었지만 A의 원래 행과 사진/큐는 그대로, guest import0회 |
+| Held /me 하나만 abort forwarding 생략, 같은 Manager의 로그아웃 대기 | B 계정의 AppStore 확인 뒤 실제 AuthStore.logout을 같은 SessionManager에 대기. 전용 요청만 signal 전달 생략, cancel/release는 실제대로 유지. 요청은 약10.007초에 독립 실패, 확인과 대기 로그아웃 모두 약10.229초에 완료. logout이 기한 전에는 대기한 상태였고 같은 Manager 식별자를 확인. Guest, credential 삭제와 owner guest 상태 완료. 열린 서버 연결에 늦은 tail을 보내자 native Response는 나타났지만 reader를 만들지 않고 body cancel1회, 계정/인증/owner가 되살아나지 않음 |
+
+세 경우 모두 기한 전에 native Response와 reader bytes는 노출되지 않았습니다. **서버 prefix16 bytes와 native reader0 bytes를 구분**합니다. 기본 두 경우는 abort/cancel/release를 억제하지 않았고 기한 뒤 tail 전송 시 연결은 이미 닫혀 있었습니다. 추가 독립 /me는 source signal의 aborted를 확인했으나 그 요청 하나에만 전달하지 않았습니다. 추가 cancel/release 억제는 필요하지 않았습니다. 실제 늦은 Response 이후에도 reader 생성/본문 읽기는0회였고 body cancel1회만 관측됐으므로 iPhone의 늦은 두 번째 read와 동일한 경로로 표시하지 않습니다.
+
+세 번째는 AppStore checkAccount가 진행되는 동안 같은 AuthStore/SessionManager의 공개 logout을 큐에 넣은 native 검사입니다. 실제 같은 Manager에서 직렬 실행과 해제를 확인했습니다. 새 손가락 조작이나 이 소스의 앱 재시작, 물리 Android, Release 증거로 확대하지 않습니다.
+
+모든 경우에 같은 소유자의 방문1개, 사진1개와 방문/사진 대기2개, 사진 URI와7,090,841 bytes PNG의 SHA가 유지됐습니다. 정상 계정 전환과 최종 guest에서도 A의 행이 이동하거나 삭제되지 않았고 guest import는0회입니다. 서버는 합성 계정2개만 준비했고 방문/사진 POST와 서버 방문/사진/영수증은 모두0개였습니다. Native signup과16KiB 초과 경계 stress는 새 검사에 포함하지 않았습니다.
+
+### 자동 검사와 원본 복구
+
+Node24.21.0 `bash scripts/verify-cloud.sh`가 PASS입니다. 타입, ESLint,21개 파일의 **모바일549개**, 이 Android verifier의 backend syntax/native dependency load와 양쪽 production JS/Hermes export를 포함합니다. 공통 서버61개와 공통의 실제 임시 auth HTTP/SQLite 검사를 여기서 반복한 것으로 표시하지 않습니다. 브랜치 CI도 이 임시 고정 QA 소스의549개/native3개와 구분합니다.
+
+새 시작/종료 기준으로 원래 모든 저장 테이블, 설정, 스키마, 모든 owner의 사진 bytes와 QA 외 인증을 대조해 보존했습니다. 추가 늦은 응답 뒤에도 QA credential 부재, guest와 원래 QA 행/큐 보존을 확인했습니다. 최종 QA DB와 대기 PNG를 근거로 보관한 뒤 QA DB/WAL/SHM3개, 시험 PNG1개만 정리했고 QA cache root의 부재도 확인했습니다.
+
+앱과 자체 서비스를 먼저 멈추고 **source62개(기존14개, 새48개)**의 원문/부재/해시를 복구했습니다. AuthClient/AuthStore와 새 authTransport 두 개, DB/인증/cache 상수를 포함합니다. package/lock, 설치와 보존 APK, 원래 무선 설정과 emulator boot ID가 같습니다. 자체8082/3002/3003, Metro reverse와 에뮬레이터를 종료했고 HTTP reverse는 없었습니다. iOS8081, 공통의 live source/namespace와 기존 legacy 캐시/백업은 수정하지 않았습니다. 이번 생성 JS/Hermes40개, 논리8,826,580 bytes만 사용 후 정리했으며 즉시 가용량 증가는 관측되지 않았습니다.
+
+근거는 Git 제외 `docs/test-results/android-auth-deadline-e52352c-20261026/`의 `validation-files.json`, `auth-deadline-summary.json`, `private-state-after-*.json`, native request/Manager/credential 지문과 서버 gate/release 상태, `private-synthetic-final.tar`, `private-qa-final.tar`, `verification.log`, `shutdown-status.json`입니다. 원래 개인 수량/값/해시, credential, token과 raw diagnostics는 공개하지 않습니다. 추가 제품 수정 제안은 없으며 전체 완료 수, P3-12/P3-13과 G1~G4는 변경하지 않습니다.
 
 ## 10월 25일 후속: P3-13 OS 연결 복귀 뒤 자동 방문 백업
 
