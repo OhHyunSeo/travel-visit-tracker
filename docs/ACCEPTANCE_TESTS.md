@@ -104,6 +104,8 @@ AT-05, AT-06, AT-11의 판정 엔진 자동 테스트가 공통 TypeScript로 �
 
 2026-10-26: `e52352c` Android API37 개발 앱의 계정 native3개를 통과했습니다. 실제 AppStore/AuthStore 계정 확인과 다른 로그인 일부 응답 뒤10초 제한, 인증/owner/행/사진 보존과 다음 정상 동작, 같은 Manager 뒤의 로그아웃과 늦은 응답 거부입니다. 기본2개는 실제 취소 동작을 유지했고 추가 지정 /me 하나만 abort 전달을 생략했습니다. 제한 전 native 응답/reader는 노출되지 않았고 늦은 응답도 reader 생성 전에 취소했습니다. 원본/auth/APK/네트워크와62개 임시 소스를 복구하고 시험 환경을 정리했습니다. [공유 진행 기록](../PROGRESS.md)과 [Android PR #1](https://github.com/OhHyunSeo/travel-visit-tracker/pull/1)을 따르며 실제 Android 휴대폰/Release 칸은 바꾸지 않습니다.
 
+같은 날 중단 후 잘못 시작된 Android signup/16KiB 경계 준비는 앱 HTTP 요청0건과 새 통과0개로 정리했습니다. 준비용 QA/auth/source62개와 소유 환경을 복구했고 해당 항목은 NOT RUN입니다.
+
 같은 날 준비한 iPhone 실제 OS 연결 복귀는 Locked와 이후 사용자 중단 요청으로 미실행입니다. 원래 DB/사진의 전후 보존과 세 임시 namespace/서버 복구만 확인했습니다. 앱 인증 조작이나 Wi-Fi 변경은 없었고 native Keychain 전후 대조는 하지 않았습니다. 이전 물리 iPhone 계정3개 결과를 이번 자동 복귀 통과로 대신하지 않습니다.
 
 2026-10-25 준비 사본 보완: `4bd7ea3`의 실제 iPhone14개와 Android 에뮬레이터19개를 통과했습니다. 새 native session의 미확인 사본 보존, ACK 후 수동 사진 백업 완료와 앱 시작 정리, 원본·대기 보존을 확인했습니다. 실제 재시작과 합성 marker 변형을 구분하며 새 UI 확인창 손가락 조작, 전원/OS 종료, 디스크 부족, 장기 누적이나 native 상한 stress로 확대하지 않습니다. Android 물리 기기 칸과 전체 수용 상태는 그대로입니다.
