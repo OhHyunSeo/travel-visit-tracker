@@ -1,5 +1,21 @@
 # 개발 진행 이야기
 
+## 10월 26일 현재 지점 저장과 중단
+
+사용자 요청으로 여기까지 저장하고 중단했습니다. 추가 검사는 새 재개 요청을 기다립니다. 제품 소스는 `e52352c` 그대로이며 오늘 공통 동작은 바꾸지 않았습니다.
+
+같은 소스의 Android API37 에뮬레이터 계정 native3개를 완료했습니다. 실제 AppStore/AuthStore가 native authFetch를 사용하는 것을 대조했고, 계정 확인 일부 응답은10,008ms, 다른 시험계정 로그인은10,012ms에 실패와 진행 해제로 돌아왔습니다. 기존 QA 계정/credential/owner와 방문, 사진, 대기를 보존했고 다음 정상 확인과 다른 로그인도 실행했습니다. 지정한 /me 요청 하나의 abort 전달만 생략한 추가 독립 확인은10,007ms, 같은 SessionManager 뒤에 대기한 로그아웃까지10,229ms에 끝났습니다. 늦은 응답 뒤에도 guest와 삭제한 QA 인증을 유지했습니다.
+
+세 경우 모두 제한 전 native 응답 객체와 reader 바이트가 노출되지 않았습니다. 서버prefix16바이트와 native reader0바이트를 구분합니다. 추가 독립 요청은 늦은 tail 뒤 native 응답이 나타났지만 reader를 만들기 전에 body cancel1회였으며, cancel/release 억제는 필요하지 않았습니다. 어제 iPhone의 늦은 두 번째 read 관측과 같은 경로로 표시하지 않습니다. 새 손가락 UI, signup이나16KiB native stress, 앱 재시작과 실제 Android 휴대폰/Release 결과로 확대하지 않습니다.
+
+Android는 고정 QA 소스의 타입/린트, 모바일549개와 양쪽 JS/Hermes를 확인했습니다. 공통 서버61개와 임시 HTTP/SQLite는 기존 `e52352c` 통과를 재사용하며 Android에서 반복한 검사로 표시하지 않습니다. 결과는 [PR #1](https://github.com/OhHyunSeo/travel-visit-tracker/pull/1)의 `834ba6b`, [검증 브랜치 CI](https://github.com/OhHyunSeo/travel-visit-tracker/actions/runs/40264741674)에 있습니다. 중단 기록은 `36ddb6d`와 [중단 체크포인트 CI](https://github.com/OhHyunSeo/travel-visit-tracker/actions/runs/40265235140)에 저장했습니다.
+
+Android의 모든 원래 DB행, 설정, 스키마, 사진과 인증을 새 기준으로 전후 대조해 보존했습니다. 임시 소스62개의 원문/부재/해시와 새 authTransport 두 파일, DB/인증/cache 이름을 복구했고 APK, package/lock과 네트워크도 같습니다. QA DB/인증/사진, 자체8082/3002/3003과 reverse, 에뮬레이터 정리를 마쳤습니다. 서버 방문/사진 전송과 게스트 가져오기는0회였습니다. 이번 생성 출력40개만 사용 후 정리했으며 기존 캐시, SDK와 백업은 삭제하지 않았습니다.
+
+이어서 준비한 iPhone 실제 연결 복귀 시험은 **NOT RUN**입니다. 원래 DB/사진 보존 기준과 새 QA namespace, 합성 서버와8081을 준비했지만 앱 실행이 Locked로 거절되고 Inspector에 연결되지 않았습니다. Native baseline/setup/probe, QA 로그인이나 기록 준비, Wi-Fi 변경은 실행하지 않았습니다. 새 기기 QA DB도 생성되지 않았습니다. 사용자 중단 요청 뒤 자체 서버/Metro를 종료하고 세 namespace와 package/lock을 원래 해시로 복구했습니다. 원래 모든 DB행/설정/스키마와 사진 바이트의 최종 대조도 같습니다. 앱 인증을 조작하지 않았으며 원래 Keychain 항목의 native 대조 자체도 이번 준비에서는 미실행입니다.
+
+수용 시험 문서에는 최근 결과, 실제 iPhone/Android 에뮬레이터와 필수 실제 휴대폰 판정, 남은 범위를 구분해 정리했습니다. 최종 수용 판정은 바꾸지 않았습니다. 다음은 새 보존 기준과 고유 QA 이름을 준비한 뒤 iPhone 잠금 해제/앱 foreground를 확인하고 실제 연결 복귀 시험을 안내하는 일입니다. 기존 준비 폴더와 서버 token을 그대로 재사용하지 않습니다. 전체23/54와 P3-12/P3-13 부분 완료, G1~G4 미완료를 유지합니다.
+
 ## 10월 25일 현재 검사까지 저장하고 중단
 
 사용자 요청으로 현재 시작한 검사까지만 마치고 저장했습니다. 추가 개발과 검사는 재개 요청을 기다립니다.
