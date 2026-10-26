@@ -1,5 +1,11 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
+## 10월 26일 저장과 중단 체크포인트
+
+사용자 요청으로 중단합니다. Android e52352c 계정3개는 결과 커밋 `834ba6b`와 CI PASS로 이미 저장됐고 진행 중 요청은0개입니다. 새 native 검사나 재시도 없이 소스62개 복구 해시와 자체 서비스/에뮬레이터 종료만 재확인했습니다. 원래 모든 자료/인증, APK/package/lock/무선 상태 보존과 QA 정리 근거도 저장돼 있습니다.
+
+추가 제품 제안과 완료 수 증가는 없습니다. Native signup,16KiB stress, 새 UI/실제 Android/Release는 미실행을 유지합니다. 공통에서 전달한 이번 iPhone 자동 복귀는 잠금으로 baseline/준비만 수행한 NOT RUN이며 이전 iPhone 계정 검사와 별개입니다. Android가 새 iPhone 검사를 실행하지 않았습니다. 재개는 새 사용자 요청과 고정 범위 확인 후 새 QA baseline부터 시작하며, 자세한 중단/재개 지점은 [진행 기록](ANDROID_PROGRESS.md)에 있습니다.
+
 ## 10월 26일: 계정 응답 보완의 Android 검증 완료
 
 고정 **`e52352c8543bab6726fde7ceec00c22483bab48b`**의 AuthClient 독립10초/16KiB stream과 새 native authFetch/AuthStore 연결을 기존 API37 Debug APK에서 확인했습니다. 새 Android3개이며 앞선8d01be8 자동 복귀나 iPhone3개의 대체 결과가 아닙니다. 실제 요청마다 AuthStore Client가 native authFetch를 쓰는 것을 대조했습니다.

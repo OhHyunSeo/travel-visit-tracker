@@ -2,6 +2,16 @@
 
 마지막 갱신: 2026-10-26, Asia/Seoul.
 
+## 10월 26일 사용자 요청으로 저장하고 중단
+
+중단 요청 도착 시 Android의 고정 `e52352c8543bab6726fde7ceec00c22483bab48b` 계정 native3개와 QA/원본 보존 대조, 임시 소스/환경 복구는 이미 완료돼 있었습니다. 결과 커밋은 `834ba6b42b1ce7766b08930524fa98427cd69b35`, 해당 CI도 PASS입니다. **진행 중 요청0개, 새 시나리오/재시도0개**이며 이번 중단 저장으로 완료 수를 늘리지 않습니다.
+
+현재 source62개의 원래 존재 여부/해시를 다시 대조했고 자체8082/3002/3003과 에뮬레이터가 꺼진 것을 재확인했습니다. 종료 시 원래 모든 DB/설정/사진/인증, APK/package/lock/무선 상태 보존과 QA 인증 삭제/guest, 시험 DB/사진/cache/reverse 정리는 완료됐으며 근거를 보관했습니다. 이를 확인하려고 기기나 서버를 다시 실행하지 않았습니다.
+
+완료 범위는 아래 계정 확인/다른 로그인/대기 로그아웃3개입니다. Native signup,16KiB stress, 새 손가락 UI와 실제 Android/Release는 계속 미실행입니다. 공통 채팅의 전달에 따르면 **이번 iPhone 자동 복귀는 locked로 앱 실행이 거절돼 baseline/준비만 했고 NOT RUN**입니다. Android가 그 iPhone 상태를 직접 검증한 것은 아니며, 이전 iPhone 계정3개와 이번 자동 복귀 미실행을 구분합니다.
+
+재개 지점: Android e52352c 계정 검사는 완료 상태로 보존합니다. 새 사용자 재개 요청과 공통의 고정 소스/범위가 정해진 뒤에만 새 원본 기준값과 고유 QA 이름으로 다음 작업을 시작합니다. 이번 미실행 iPhone 자동 복귀는 공통/iOS 채팅의 별도 재개 항목입니다. 로컬 중단 근거는 `docs/test-results/android-auth-deadline-e52352c-20261026/stop-checkpoint-20261026.json`입니다. 전체 완료 수와 수용 기준은 유지합니다.
+
 ## 10월 26일: 계정 요청 기한, 계정 보존과 대기 로그아웃
 
 공통 제품 **`e52352c8543bab6726fde7ceec00c22483bab48b`**를 고정했고 Android 시작 기준은 `9d72292`입니다. 독립10초/16KiB AuthClient stream, 새 authTransport.native.ts/.web.ts와 useAuthStore의 authFetch 연결을 포함합니다. 임시62개 파일 모두 고정 Git object에서 준비해 공통/iOS의 live QA namespace를 복사하지 않았습니다. 새 QA DB, 인증 key/service와 cache root, 합성 PNG 경로를 사용했고 기본 개인 DB/캐시를 새 소스로 열거나 스캔하지 않았습니다. 기존 API37 Debug APK, 실제 AppStore/AuthStore, SQLite/SecureStore와 Expo native HTTP이며 새 빌드, 설치나 의존성 변경은 없습니다.
