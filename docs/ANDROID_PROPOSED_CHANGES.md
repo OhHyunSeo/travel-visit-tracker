@@ -1,5 +1,17 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
+## 10월 27일: 준비 사본20개/64MiB 한도 검증 완료
+
+고정 `ef799c490595f2380630d30918870a291c21f45f`와 Android95060bf, 공통d4349d1에서 승인한 native 한도2개를 마쳤습니다. 새 QA DB/auth/cache/합성 PNG와 원본 보존 기준을 사용했고 기존 API37 Debug APK의 실제 파일/Crypto/SQLite/제품 cleanup 및 repository ACK guard를 관측했습니다.
+
+소형21개는 첫 pass20개만 검사/삭제하고 다음 pass에서21번째1개로 이어졌습니다.64MiB는 사본 첫 읽기+최종 원본/사본 읽기의 합입니다. 첫 큰 pass에서 실제67,108,863 bytes(한도-1byte)를 읽어3개를 정리했고 뒤의 정상 ACK 사본과 미확인 사본은 읽지 않고 보존했습니다. 다음 pass는 정상 사본1개를 처리하고 미확인 사본은 실제 ACK guard false로 marker/본문/큐를 유지했습니다. 모든 pass 전후 DB/설정/원본 SHA가 같았습니다.
+
+이전-session marker는 실제 producer에서 만든 자료를 복제해 편집한 합성 조건이며 이번 앱 재시작의 증거가 아닙니다. 실제 AppStore의 정상 서버 ACK3개와 미전송 대기1개를 이용했습니다. 준비 시점 파일 합37,285,577 bytes와 임시 producer까지 포함한 보수적 상한44,746,214 bytes를 구분했고200MiB 이내였습니다. 기존 cache/SDK/AVD/백업/증거는 그대로입니다.
+
+핵심 제품 코드가 기존 검사와 같아 모바일549/서버61, 전체 verify-cloud와 제품 CI40335429980을 재사용했으며 새 host 통과로 합산하지 않습니다. 새 빌드/설치/의존성/export가 없습니다. 원래 모든 DB/설정/사진/인증과 APK/package-lock/network를 보존 대조하고63개 임시 소스 원문/부재/해시를 복구했습니다. QA 자료를 근거 보관 뒤 제거하고 자체 서버/Metro/reverse/에뮬레이터를 종료했습니다.
+
+추가 제품 결함/수정 제안은 없습니다. [진행 기록](ANDROID_PROGRESS.md)에 정확한 읽기/순서/ACK와 정리 근거를 남겼고 승인한 묶음 완료 후 대기합니다. Storage-failure/장기 누적/Release/새 UI/실제 Android/새 restart는 이번 범위가 아니며 전체23/54와 P3-12/P3-13, G1~G4는 유지합니다.
+
 ## 10월 26일 재개: 신규 가입과16KiB native 경계 완료
 
 사용자가 새로 승인한 범위를 `daed98c`와 고정 제품 **`e52352c8543bab6726fde7ceec00c22483bab48b`**에서 완료했습니다. 고유 QA DB/인증/cache/사진과 새 원본 보존 기준을 사용했고 기존 API37 Debug APK의 실제 AppStore/AuthStore→native authFetch에서 새3개가 PASS입니다.

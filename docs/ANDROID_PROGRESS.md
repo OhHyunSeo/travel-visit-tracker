@@ -1,6 +1,35 @@
 # Android 개발·검증 기록
 
-마지막 갱신: 2026-10-26, Asia/Seoul.
+마지막 갱신: 2026-10-27, Asia/Seoul.
+
+## 10월 27일: 준비 사본 정리의20개/64MiB native 한도2개 완료
+
+사용자 재개 후 Android **`95060bf460caac24b1b0f43351fa6ea6f082279a`**, 공통 체크포인트 **`d4349d110f6616182729c71e17bfe2bd61d9d98a`**를 확인했습니다. 제품은 **`ef799c490595f2380630d30918870a291c21f45f`**를 고정했습니다. 최신 차이는 iOS의 `usePrecompiledModules:false` 선언이며 이 Android 작업에서 새 native 빌드/설치를 하지 않았습니다. 새 고유 QA DB/auth/cache와 합성 PNG 세 개, 원래 DB/설정/사진/인증/APK/package-lock/무선 상태 및 임시63개 소스 원문/부재/해시를 먼저 저장했습니다. 기본 개인 DB를 새 소스로 열지 않았고 공통 live 소스/iOS8081은 수정하지 않았습니다.
+
+기존 API37 Debug APK의 실제 Expo File/Directory, Crypto와 SQLite, 제품 `preparePhotoFile`/`cleanupPreparedPhotoFiles` 및 repository ACK 트랜잭션 경로에서 **새 native 한도2개가 PASS**입니다. 서버는 정상 응답만 사용했습니다. 실제 AppStore가 합성 방문1개와 사진3개를 백업해 서버/로컬 ACK를 먼저 만들었고, 이후 사진1개는 미전송 대기에 두어 ACK guard를 확인했습니다.
+
+| 흐름 | 실제 결과 |
+| --- | --- |
+| 소형 사본21개와20개 검사 제한 | 실제 native producer의70-byte PNG 사본을 바탕으로 소유권 marker가 있는 합성 이전-session 사본21개 준비. 첫 수동 pass는 examined20/removed20, bytesRemoved1,400, native 이미지 읽기4,200 bytes. 정렬 순서와 cursor가20번째에서 끝났고21번째 전체 파일/marker가 유지됨. 다음 pass는 그21번째만 examined1/removed1, bytesRemoved70, native 이미지 읽기210 bytes. DB/대기/설정과 원본 bytes는 두 pass 모두 동일 |
+|64MiB 읽기 한도와 다음 pass, ACK guard |7,456,540 bytes 사본2개와7,456,541 bytes 사본1개를 앞에 배치. 각 사본의 async 사본 읽기+삭제 직전 원본/사본 sync 읽기3회를 실제 File 메서드로 계측. 첫 pass는5개를 examined,3개만 제거했고 실제 이미지 읽기67,108,863 bytes로64MiB보다1byte 작음. 뒤의 정상 ACK 사본70 bytes와 미확인 사본70 bytes는 본문을 읽지 않고 그대로 보존. 다음 수동 pass는 examined2/removed1, 이미지 읽기280 bytes. 정상 ACK 사본은 처리됐고 미확인 사본은 실제 repository ACK 검사 false로 전체 marker/본문과 대기 그대로 유지 |
+
+64MiB는 삭제한 파일 크기 합이 아니라 **사본의 첫 읽기와 최종 원본/사본 비교를 합한 읽기 예산**입니다. 첫 큰 pass의 삭제량은22,369,621 bytes, 읽기는 그3배였습니다. 한도 때문에 건너뛴 사본에는 첫 pass에서 File.bytes/bytesSync 호출이 없었음을 관측했습니다. 두 번째 pass는 ACK 있는 사본3회 읽기210 bytes와 미확인 사본의 async 읽기70 bytes이며, ACK guard가 false라 미확인 원본/사본 sync 비교나 삭제는 없었습니다. 각 pass 전후 전체 QA 방문/사진/outbox/metadata/settings와 원본 SHA가 같았습니다.
+
+이번 marker는 실제 native producer의 현재-session/context/지문을 확인한 뒤 attempt ID와 이전-session 값만 바꾼 **합성 fixture**입니다. 이번에 앱을 재시작해 native session 교체를 증명한 것이 아닙니다. 실제 재시작/시작 wiring 근거는 앞선4bd7ea3의 별도 이력이며 이번 한도2개와 합산하지 않습니다. 최종 미확인 사본은 제품이 보존한 결과를 근거에 보관한 뒤 시험 도구가 소유 경로만 정리했습니다.
+
+완성된 fixture 시점의 기기 파일 합계는37,285,577 bytes입니다. 순차 생성 중 producer 임시 사본 하나와 marker를 더한 보수적 상한은44,746,214 bytes로200MiB 이내입니다. observer의 raw `peakNativeFixtureBytes` 필드는 준비 완료 시점 합계를 측정한 것이며 실제 순간 최고 측정값으로 쓰지 않습니다. raw 근거는 유지하고 요약/정리 보고에 이 구분을 기록했습니다. 기존 cache/SDK/AVD/백업/증거는 삭제하지 않았습니다.
+
+### 검증 재사용과 최종 복구
+
+핵심 `photoFile.native.ts`, `photoSnapshot.ts`, `repository.ts`가 기존4bd7ea3 검사 소스와 같은 bytes인 것을 Git object로 대조했습니다. 공통의 모바일549개/서버61개와 전체 verify-cloud, [기존 제품 CI](https://github.com/OhHyunSeo/travel-visit-tracker/actions/runs/40335429980) 통과는 재사용한 이력이며 이번에 새로 실행한 수로 표시하지 않습니다. 이번에는 host/전체 검사, native 빌드, 설치, 의존성 추가나 export를 반복하지 않았습니다. Android 결과 브랜치 CI도 임시 고정 제품/native 결과와 구분합니다.
+
+새 종료 대조에서 원래 모든 DB 테이블/스키마/설정, 모든 owner의 사진 bytes와 QA 외 인증이 같았습니다. QA는 guest/credential 부재, SQLite v5 integrity/FK 정상이며 안정된 최종 DB 사본이 native 최종 행/설정과 같았습니다. 합성 방문1개/사진4개/사진 대기1개/사진 ACK3개가 유지됐고 서버 방문/영수증1개씩, 사진/영수증3개씩과 원본 파일 SHA/크기를 대조했습니다.
+
+QA DB/WAL/SHM3개와 이번 원본4개, 보존된 미확인 cache를 로컬 근거로 보관한 뒤 시험 소유 자료만 기기에서 정리했습니다. source63개(기존15개, 새48개), auth transport와 QA 상수, app.config.ts의 원문/부재/해시를 복구했습니다. package/lock, 설치/보존 APK와 무선 설정/같은 emulator boot ID를 대조했습니다. 자체8082/3002/3003과 Metro reverse, 에뮬레이터는 종료했고 HTTP reverse는 없었습니다.
+
+근거는 Git 제외 `docs/test-results/android-snapshot-budget-ef799c4-20261027/`의 `validation-files.json`, `source-reuse-proof.json`, `budget-summary.json`, `private-state-after-*.json`의 실제 File 읽기/ACK 결정/cursor/전후 파일·DB, `private-owned-final.tar`, `private-qa-final.tar`, `measurement-clarification.json`, `shutdown-status.json`입니다. 개인 값/수량/해시, 인증/token과 raw diagnostics는 커밋하지 않습니다.
+
+승인한 한도 묶음은 완료했고 추가 제품 결함/수정 제안은 없습니다. Storage-failure/장기 누적/Release/손가락 UI/실제 Android 휴대폰이나 새로운 재시작 검사는 시작하지 않습니다. 전체23/54, P3-12/P3-13 부분 완료와 G1~G4는 유지하며 다음 지시를 기다립니다.
 
 ## 10월 26일 재개: 가입 응답 기한과16KiB 경계3개 완료
 
