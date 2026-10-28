@@ -1,6 +1,42 @@
 # Android 개발·검증 기록
 
-마지막 갱신: 2026-10-27, Asia/Seoul.
+마지막 갱신: 2026-10-28, Asia/Seoul.
+
+## 10월 28일: 통제된 파일 오류와 반복 사본 누적5개 완료
+
+사용자 재개로 Android **`019f03ef0926a2efe6629ac204f6572a8ed454ca`**에서 시작했고 제품 동작은 **`ef799c490595f2380630d30918870a291c21f45f`** 그대로 고정했습니다. 기존 AGENTS/진행/재개 기록과 native-validation 절차를 읽고 새 고유 QA DB/auth/cache, 합성 PNG 경로와 원래 모든 DB/설정/사진/인증/APK/package-lock/network 및 임시63개 소스의 원문/존재 여부/해시 기준을 저장했습니다. 기본 개인 v1 DB를 새 QA repository로 열지 않았고 공통 live 소스/iOS8081은 수정하지 않았습니다.
+
+기존 API37 Debug 에뮬레이터/APK의 실제 Expo File/Directory, Crypto, SQLite와 제품 native producer/cleanup/repository ACK guard로 **새5개가 PASS**입니다. 정상 임시 백엔드에 실제 AppStore로 방문1개와70-byte 사진1개를 백업해 ACK를 먼저 만들었습니다. 이어 같은 PNG의 별도 첨부본1개는 미전송 대기에 두었습니다. 제품 변경, 새 빌드/설치/의존성 추가나 export는 없습니다.
+
+| 통제한 사례 | 실제 Android 결과 |
+| --- | --- |
+| QA snapshot root Directory.create의 synthetic ENOSPC | 그 root 호출1회만 가로채고 다른 경로는 native에 전달. prepare가 현행 PhotoFileError(reason=invalid)로 끝나고 DB/원본/빈 cache/active registry를 보존. finally에 관측 기능 복구 후 정상 새 producer 생성과 dispose 성공 |
+| QA ownership.json File.write의 synthetic ENOSPC | QA root 안 marker 쓰기1회만 가로챔. 이미 만든 부분 사본/marker는 native dispose로 정리됐고 원본/DB는 같음. 관측 기능 복구 후 새 producer와 dispose 성공 |
+| 지정 QA duplicate File.bytes의 synthetic EIO | 정확히 그 사본 읽기1회만 실패. cleanup examined1/removed0, ACK guard 호출0이며 같은 marker/본문을 보존. finally 복구 후 같은 사본을 다음 정상 pass에서1개 제거 |
+| 지정 QA duplicate File.delete의 synthetic EACCES | 정확히 그 사본 삭제1회만 실패. cleanup examined1/removed0, repository guard에서 예외1회. 같은 QA DB의 실제 native exec BEGIN IMMEDIATE→ROLLBACK 반환을 관측했고 DB/큐/marker/본문은 동일. 관측 기능 복구 후 같은 사본을 정상 pass에서 제거하고 BEGIN IMMEDIATE→COMMIT 반환도 관측 |
+| 보존 backlog25개와 새 ACK 사본36개의 반복 누적 | 미표시8개, 다른 owner9개, ACK 없는 pending8개를 보존 대상으로 준비. 실제 native producer 기반 ACK 사본12개씩3묶음 추가. 묶음별 수동 pass 제거 수는0→12,0→12,1→11로 합계36개, 각 pass examined20 이하. 세 묶음 뒤에도25개 전체 파일/marker/지문과 미전송 큐를 그대로 유지 |
+
+파일 오류4회는 **지정 QA 경로에서만 주입한 합성 예외**입니다. 실제 디스크를 채우거나 OS ENOSPC/EIO/EACCES를 발생시킨 검사가 아닙니다. 모든 다른 호출은 원래 native 기능에 전달했고 각 fault의 finally에서 해제했습니다. 실패한 삭제의 ROLLBACK과 다음 정상 COMMIT 관측도 QA DB 경로에만 한정했으며 원래 SQLite 호출은 그대로 전달했습니다. File/Directory/SQLite prototype의 원래 함수와 own-property 존재 여부/descriptor를 최종 복구했습니다.
+
+두 producer 오류의 reason=invalid는 현행 계약이며 별도 저장 공간 안내나 UI 오류 흐름을 새로 검증한 결과가 아닙니다. 이번 전송은 정상 ACK fixture 준비였고 부분 HTTP 응답/native Response 노출 검사를 추가하지 않았습니다. 앞선 응답 기한/20개/64MiB 한도 결과는 별도 이력이며 이번5개로 재합산하지 않습니다.
+
+반복 사본은 native producer의 실제 현재-session/context/지문을 대조한 뒤 attempt ID/이전-session marker를 합성한 것입니다. 앱이나 native session을 실제로 재시작하거나 수일이 지난 결과가 아닙니다. 같은 실행 안에서 진행한3묶음의 짧은 반복이며, 새 사본이 보존 backlog 뒤에서도 진행되는 범위만 확인했습니다. 제품이 남긴25개는 근거를 보관한 뒤 시험 도구가 소유 경로만 정리했습니다.
+
+### 보존, 재사용한 검사와 저장 상태
+
+모든 cleanup pass에서 QA DB의 방문/사진/outbox/metadata/settings와 원본 SHA가 같았습니다. 합성 PNG는70 bytes 한 장과 별도 첨부본 한 개뿐입니다. 사진/사본의 준비 시점 관측 합계 최대17,748 bytes, 순차 producer 임시 파일/marker까지 포함한 보수적 상한21,914 bytes를 구분했습니다. 최종 안정 QA DB3파일 합407,696 bytes를 더한429,610 bytes도200MiB 미만입니다. 이 값들을 순간 최고 사용량의 실제 측정값으로 표시하지 않습니다.
+
+공통이 추가한 회귀10개와 모바일559개/서버61개, 전체 verify-cloud/Android+iOS JS-Hermes 통과는 전달받은 별도 공통 근거를 재사용했습니다. 현재 공통의 핵심 native cleanup/manifest/repository가 고정 ef799c4와 같은 bytes임을 대조하고 테스트 diff만 로컬 참고 자료로 보관했습니다. 이번 Android 실행에서 host/전체 검사를 반복하거나 공통559개/iPhone5개를 새 Android 통과 수로 합산하지 않았습니다. 복구한 Android 브랜치 CI도 고정 QA 제품/native5개와 구분합니다.
+
+새 최종 대조에서 원래 모든 개인 DB행/스키마/설정, 모든 owner의 사진 bytes와 QA 외 인증이 같습니다. QA는 guest/credential 부재와 SQLite v5 integrity/FK 정상이며, 안정된 최종 DB/WAL/SHM 사본이 native 최종 행/설정과 같았습니다. 합성 방문1개/사진2개/미전송 사진 대기1개/사진 ACK1개를 유지했고 서버 방문/영수증1개씩, 사진/영수증1개씩과 원본 SHA/크기도 대조했습니다.
+
+기기에서 정리하기 전 남은25개 cache marker/본문과 원본2개를 보관했고, 보관본의 모든 SHA/크기가 native 최종 증거와 같은 것을 별도로 검증했습니다. 안정 DB의 기준은 앱 force-stop 후 DB/WAL/SHM을 함께 보관한 `private-qa-final.tar`이며, `private-owned-final.tar`는 사진/cache 기준 자료입니다. 검증 후 QA DB3파일/사진2개와 이번 cache만 정리했습니다. 기존 cache/SDK/AVD/build/백업/증거는 삭제하지 않았습니다.
+
+source63개(기존15개, 새48개)와 QA DB/auth/cache 상수, auth transport/app.config.ts의 원문/부재/해시를 복구했습니다. Package/lock과 설치/보존 APK, 무선 설정/같은 emulator boot ID를 대조했고 자체8082/3002/3003, Metro reverse와 에뮬레이터를 종료했습니다. HTTP reverse는 없었습니다.
+
+로컬 Git 제외 근거는 `docs/test-results/android-snapshot-storage-ef799c4-20261028/`의 `validation-files.json`, `source-reuse-proof.json`, `storage-summary.json`, `private-state-after-*.json`의 fault/guard/SQL/전후 행과 파일, `private-owned-final.tar`, `private-qa-final.tar`, `archive-preservation-proof.json`, `shutdown-status.json`입니다. 개인 값/수량/해시, 인증/token과 raw diagnostics는 커밋하지 않습니다.
+
+승인한5개 묶음을 마쳤고 추가 제품 결함/수정 제안은 없습니다. 실제 공간 부족/수일 누적/새 실제 restart/실제 Android 휴대폰/Release/손가락 UI/전체 수용은 별도입니다. 전체23/54, P3-12/P3-13 부분 완료와 G1~G4를 유지하며 추가 검사 없이 다음 지시를 기다립니다.
 
 ## 10월 27일: 준비 사본 정리의20개/64MiB native 한도2개 완료
 

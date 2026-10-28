@@ -1,5 +1,19 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
+## 10월 28일: 통제된 파일 오류와 반복 누적5개 완료
+
+고정 `ef799c490595f2380630d30918870a291c21f45f`, Android019f03e에서 새 고유 QA와 보존 기준을 준비해 승인한 native5개를 마쳤습니다. 기존 API37 Debug APK와 실제 native producer/정상 서버 ACK/SQLite guard를 사용했습니다. 새 빌드/설치/의존성/제품 변경은 없습니다.
+
+QA cache root 생성과 ownership marker 쓰기에만 synthetic ENOSPC를 각각1회 주입했고, 기존 원본/DB와 active registry를 유지하며 정상 새 시도와 dispose가 됐습니다. 정확한 QA 사본의 bytes에 EIO1회 주입 시 같은 사본을 보존하고 다음 정상 pass에서 정리했습니다. 그 사본 delete에 EACCES1회 주입 시 실제 같은 QA SQLite의 BEGIN→ROLLBACK 반환과 원본/DB/큐/cache 보존, 다음 정상 제거의 BEGIN→COMMIT 반환을 관측했습니다. Fault는 지정 경로만 가로채고 모든 다른 native 호출을 전달했으며 finally에 함수와 prototype own-property/descriptor를 복구했습니다.
+
+미표시8개/다른 owner9개/ACK 없는 pending8개 총25개를 유지하면서 ACK된12개씩3묶음,36개를 추가했습니다. 제거 수0→12,0→12,1→11이고 매 pass20개 이하로 모두 진행됐습니다. 각 pass의 DB/설정/사진 bytes,25개 backlog와 대기는 동일합니다. 이전-session marker는 합성, 반복은 같은 실행 안의 짧은3묶음입니다. 실제 디스크 부족/수일 경과/새 actual restart/손가락 UI/Release/물리 Android 증거가 아닙니다.
+
+사진/cache 준비 시점 최대17,748 bytes와 순차 생성 보수적 상한21,914 bytes, 최종 QA DB파일407,696 bytes를 구분했고 합429,610 bytes로200MiB 미만입니다. 순간 최고 사용량 계측으로 표시하지 않습니다. 공통의 새 회귀10개/모바일559개/서버61개/전체 verifier/양쪽 JS-Hermes와 iPhone5개는 별도 이력이며 이번 Android 새 실행으로 합산하지 않았습니다.
+
+원래 모든 DB행/스키마/설정/사진/인증과 APK/package-lock/network를 보존 대조하고63개 소스 원문/부재/해시와 관측 기능을 복구했습니다. QA 최종 guest, integrity/FK와 안정 DB/서버 ACK/원본 bytes를 확인했고 남은25개 cache와 원본2개의 보관본도 native 지문과 대조했습니다. 이후 이번 소유 자료만 정리하고 자체 서버/Metro/reverse/에뮬레이터를 종료했습니다. 기존 cache/SDK/AVD/build/백업/증거는 보존했습니다.
+
+추가 제품 결함/수정 제안은 없습니다. 정확한 통제 조건과 SQL/행/파일 증거는 [진행 기록](ANDROID_PROGRESS.md)을 따릅니다. 승인한 묶음 완료 후 대기하며 전체23/54와 수용 게이트는 유지합니다.
+
 ## 10월 27일: 준비 사본20개/64MiB 한도 검증 완료
 
 고정 `ef799c490595f2380630d30918870a291c21f45f`와 Android95060bf, 공통d4349d1에서 승인한 native 한도2개를 마쳤습니다. 새 QA DB/auth/cache/합성 PNG와 원본 보존 기준을 사용했고 기존 API37 Debug APK의 실제 파일/Crypto/SQLite/제품 cleanup 및 repository ACK guard를 관측했습니다.
