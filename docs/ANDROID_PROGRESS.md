@@ -1,0 +1,1119 @@
+# Android 개발·검증 기록
+
+마지막 갱신: 2026-10-28, Asia/Seoul.
+
+## 10월 28일: 통제된 파일 오류와 반복 사본 누적5개 완료
+
+사용자 재개로 Android **`019f03ef0926a2efe6629ac204f6572a8ed454ca`**에서 시작했고 제품 동작은 **`ef799c490595f2380630d30918870a291c21f45f`** 그대로 고정했습니다. 기존 AGENTS/진행/재개 기록과 native-validation 절차를 읽고 새 고유 QA DB/auth/cache, 합성 PNG 경로와 원래 모든 DB/설정/사진/인증/APK/package-lock/network 및 임시63개 소스의 원문/존재 여부/해시 기준을 저장했습니다. 기본 개인 v1 DB를 새 QA repository로 열지 않았고 공통 live 소스/iOS8081은 수정하지 않았습니다.
+
+기존 API37 Debug 에뮬레이터/APK의 실제 Expo File/Directory, Crypto, SQLite와 제품 native producer/cleanup/repository ACK guard로 **새5개가 PASS**입니다. 정상 임시 백엔드에 실제 AppStore로 방문1개와70-byte 사진1개를 백업해 ACK를 먼저 만들었습니다. 이어 같은 PNG의 별도 첨부본1개는 미전송 대기에 두었습니다. 제품 변경, 새 빌드/설치/의존성 추가나 export는 없습니다.
+
+| 통제한 사례 | 실제 Android 결과 |
+| --- | --- |
+| QA snapshot root Directory.create의 synthetic ENOSPC | 그 root 호출1회만 가로채고 다른 경로는 native에 전달. prepare가 현행 PhotoFileError(reason=invalid)로 끝나고 DB/원본/빈 cache/active registry를 보존. finally에 관측 기능 복구 후 정상 새 producer 생성과 dispose 성공 |
+| QA ownership.json File.write의 synthetic ENOSPC | QA root 안 marker 쓰기1회만 가로챔. 이미 만든 부분 사본/marker는 native dispose로 정리됐고 원본/DB는 같음. 관측 기능 복구 후 새 producer와 dispose 성공 |
+| 지정 QA duplicate File.bytes의 synthetic EIO | 정확히 그 사본 읽기1회만 실패. cleanup examined1/removed0, ACK guard 호출0이며 같은 marker/본문을 보존. finally 복구 후 같은 사본을 다음 정상 pass에서1개 제거 |
+| 지정 QA duplicate File.delete의 synthetic EACCES | 정확히 그 사본 삭제1회만 실패. cleanup examined1/removed0, repository guard에서 예외1회. 같은 QA DB의 실제 native exec BEGIN IMMEDIATE→ROLLBACK 반환을 관측했고 DB/큐/marker/본문은 동일. 관측 기능 복구 후 같은 사본을 정상 pass에서 제거하고 BEGIN IMMEDIATE→COMMIT 반환도 관측 |
+| 보존 backlog25개와 새 ACK 사본36개의 반복 누적 | 미표시8개, 다른 owner9개, ACK 없는 pending8개를 보존 대상으로 준비. 실제 native producer 기반 ACK 사본12개씩3묶음 추가. 묶음별 수동 pass 제거 수는0→12,0→12,1→11로 합계36개, 각 pass examined20 이하. 세 묶음 뒤에도25개 전체 파일/marker/지문과 미전송 큐를 그대로 유지 |
+
+파일 오류4회는 **지정 QA 경로에서만 주입한 합성 예외**입니다. 실제 디스크를 채우거나 OS ENOSPC/EIO/EACCES를 발생시킨 검사가 아닙니다. 모든 다른 호출은 원래 native 기능에 전달했고 각 fault의 finally에서 해제했습니다. 실패한 삭제의 ROLLBACK과 다음 정상 COMMIT 관측도 QA DB 경로에만 한정했으며 원래 SQLite 호출은 그대로 전달했습니다. File/Directory/SQLite prototype의 원래 함수와 own-property 존재 여부/descriptor를 최종 복구했습니다.
+
+두 producer 오류의 reason=invalid는 현행 계약이며 별도 저장 공간 안내나 UI 오류 흐름을 새로 검증한 결과가 아닙니다. 이번 전송은 정상 ACK fixture 준비였고 부분 HTTP 응답/native Response 노출 검사를 추가하지 않았습니다. 앞선 응답 기한/20개/64MiB 한도 결과는 별도 이력이며 이번5개로 재합산하지 않습니다.
+
+반복 사본은 native producer의 실제 현재-session/context/지문을 대조한 뒤 attempt ID/이전-session marker를 합성한 것입니다. 앱이나 native session을 실제로 재시작하거나 수일이 지난 결과가 아닙니다. 같은 실행 안에서 진행한3묶음의 짧은 반복이며, 새 사본이 보존 backlog 뒤에서도 진행되는 범위만 확인했습니다. 제품이 남긴25개는 근거를 보관한 뒤 시험 도구가 소유 경로만 정리했습니다.
+
+### 보존, 재사용한 검사와 저장 상태
+
+모든 cleanup pass에서 QA DB의 방문/사진/outbox/metadata/settings와 원본 SHA가 같았습니다. 합성 PNG는70 bytes 한 장과 별도 첨부본 한 개뿐입니다. 사진/사본의 준비 시점 관측 합계 최대17,748 bytes, 순차 producer 임시 파일/marker까지 포함한 보수적 상한21,914 bytes를 구분했습니다. 최종 안정 QA DB3파일 합407,696 bytes를 더한429,610 bytes도200MiB 미만입니다. 이 값들을 순간 최고 사용량의 실제 측정값으로 표시하지 않습니다.
+
+공통이 추가한 회귀10개와 모바일559개/서버61개, 전체 verify-cloud/Android+iOS JS-Hermes 통과는 전달받은 별도 공통 근거를 재사용했습니다. 현재 공통의 핵심 native cleanup/manifest/repository가 고정 ef799c4와 같은 bytes임을 대조하고 테스트 diff만 로컬 참고 자료로 보관했습니다. 이번 Android 실행에서 host/전체 검사를 반복하거나 공통559개/iPhone5개를 새 Android 통과 수로 합산하지 않았습니다. 복구한 Android 브랜치 CI도 고정 QA 제품/native5개와 구분합니다.
+
+새 최종 대조에서 원래 모든 개인 DB행/스키마/설정, 모든 owner의 사진 bytes와 QA 외 인증이 같습니다. QA는 guest/credential 부재와 SQLite v5 integrity/FK 정상이며, 안정된 최종 DB/WAL/SHM 사본이 native 최종 행/설정과 같았습니다. 합성 방문1개/사진2개/미전송 사진 대기1개/사진 ACK1개를 유지했고 서버 방문/영수증1개씩, 사진/영수증1개씩과 원본 SHA/크기도 대조했습니다.
+
+기기에서 정리하기 전 남은25개 cache marker/본문과 원본2개를 보관했고, 보관본의 모든 SHA/크기가 native 최종 증거와 같은 것을 별도로 검증했습니다. 안정 DB의 기준은 앱 force-stop 후 DB/WAL/SHM을 함께 보관한 `private-qa-final.tar`이며, `private-owned-final.tar`는 사진/cache 기준 자료입니다. 검증 후 QA DB3파일/사진2개와 이번 cache만 정리했습니다. 기존 cache/SDK/AVD/build/백업/증거는 삭제하지 않았습니다.
+
+source63개(기존15개, 새48개)와 QA DB/auth/cache 상수, auth transport/app.config.ts의 원문/부재/해시를 복구했습니다. Package/lock과 설치/보존 APK, 무선 설정/같은 emulator boot ID를 대조했고 자체8082/3002/3003, Metro reverse와 에뮬레이터를 종료했습니다. HTTP reverse는 없었습니다.
+
+로컬 Git 제외 근거는 `docs/test-results/android-snapshot-storage-ef799c4-20261028/`의 `validation-files.json`, `source-reuse-proof.json`, `storage-summary.json`, `private-state-after-*.json`의 fault/guard/SQL/전후 행과 파일, `private-owned-final.tar`, `private-qa-final.tar`, `archive-preservation-proof.json`, `shutdown-status.json`입니다. 개인 값/수량/해시, 인증/token과 raw diagnostics는 커밋하지 않습니다.
+
+승인한5개 묶음을 마쳤고 추가 제품 결함/수정 제안은 없습니다. 실제 공간 부족/수일 누적/새 실제 restart/실제 Android 휴대폰/Release/손가락 UI/전체 수용은 별도입니다. 전체23/54, P3-12/P3-13 부분 완료와 G1~G4를 유지하며 추가 검사 없이 다음 지시를 기다립니다.
+
+## 10월 27일: 준비 사본 정리의20개/64MiB native 한도2개 완료
+
+사용자 재개 후 Android **`95060bf460caac24b1b0f43351fa6ea6f082279a`**, 공통 체크포인트 **`d4349d110f6616182729c71e17bfe2bd61d9d98a`**를 확인했습니다. 제품은 **`ef799c490595f2380630d30918870a291c21f45f`**를 고정했습니다. 최신 차이는 iOS의 `usePrecompiledModules:false` 선언이며 이 Android 작업에서 새 native 빌드/설치를 하지 않았습니다. 새 고유 QA DB/auth/cache와 합성 PNG 세 개, 원래 DB/설정/사진/인증/APK/package-lock/무선 상태 및 임시63개 소스 원문/부재/해시를 먼저 저장했습니다. 기본 개인 DB를 새 소스로 열지 않았고 공통 live 소스/iOS8081은 수정하지 않았습니다.
+
+기존 API37 Debug APK의 실제 Expo File/Directory, Crypto와 SQLite, 제품 `preparePhotoFile`/`cleanupPreparedPhotoFiles` 및 repository ACK 트랜잭션 경로에서 **새 native 한도2개가 PASS**입니다. 서버는 정상 응답만 사용했습니다. 실제 AppStore가 합성 방문1개와 사진3개를 백업해 서버/로컬 ACK를 먼저 만들었고, 이후 사진1개는 미전송 대기에 두어 ACK guard를 확인했습니다.
+
+| 흐름 | 실제 결과 |
+| --- | --- |
+| 소형 사본21개와20개 검사 제한 | 실제 native producer의70-byte PNG 사본을 바탕으로 소유권 marker가 있는 합성 이전-session 사본21개 준비. 첫 수동 pass는 examined20/removed20, bytesRemoved1,400, native 이미지 읽기4,200 bytes. 정렬 순서와 cursor가20번째에서 끝났고21번째 전체 파일/marker가 유지됨. 다음 pass는 그21번째만 examined1/removed1, bytesRemoved70, native 이미지 읽기210 bytes. DB/대기/설정과 원본 bytes는 두 pass 모두 동일 |
+|64MiB 읽기 한도와 다음 pass, ACK guard |7,456,540 bytes 사본2개와7,456,541 bytes 사본1개를 앞에 배치. 각 사본의 async 사본 읽기+삭제 직전 원본/사본 sync 읽기3회를 실제 File 메서드로 계측. 첫 pass는5개를 examined,3개만 제거했고 실제 이미지 읽기67,108,863 bytes로64MiB보다1byte 작음. 뒤의 정상 ACK 사본70 bytes와 미확인 사본70 bytes는 본문을 읽지 않고 그대로 보존. 다음 수동 pass는 examined2/removed1, 이미지 읽기280 bytes. 정상 ACK 사본은 처리됐고 미확인 사본은 실제 repository ACK 검사 false로 전체 marker/본문과 대기 그대로 유지 |
+
+64MiB는 삭제한 파일 크기 합이 아니라 **사본의 첫 읽기와 최종 원본/사본 비교를 합한 읽기 예산**입니다. 첫 큰 pass의 삭제량은22,369,621 bytes, 읽기는 그3배였습니다. 한도 때문에 건너뛴 사본에는 첫 pass에서 File.bytes/bytesSync 호출이 없었음을 관측했습니다. 두 번째 pass는 ACK 있는 사본3회 읽기210 bytes와 미확인 사본의 async 읽기70 bytes이며, ACK guard가 false라 미확인 원본/사본 sync 비교나 삭제는 없었습니다. 각 pass 전후 전체 QA 방문/사진/outbox/metadata/settings와 원본 SHA가 같았습니다.
+
+이번 marker는 실제 native producer의 현재-session/context/지문을 확인한 뒤 attempt ID와 이전-session 값만 바꾼 **합성 fixture**입니다. 이번에 앱을 재시작해 native session 교체를 증명한 것이 아닙니다. 실제 재시작/시작 wiring 근거는 앞선4bd7ea3의 별도 이력이며 이번 한도2개와 합산하지 않습니다. 최종 미확인 사본은 제품이 보존한 결과를 근거에 보관한 뒤 시험 도구가 소유 경로만 정리했습니다.
+
+완성된 fixture 시점의 기기 파일 합계는37,285,577 bytes입니다. 순차 생성 중 producer 임시 사본 하나와 marker를 더한 보수적 상한은44,746,214 bytes로200MiB 이내입니다. observer의 raw `peakNativeFixtureBytes` 필드는 준비 완료 시점 합계를 측정한 것이며 실제 순간 최고 측정값으로 쓰지 않습니다. raw 근거는 유지하고 요약/정리 보고에 이 구분을 기록했습니다. 기존 cache/SDK/AVD/백업/증거는 삭제하지 않았습니다.
+
+### 검증 재사용과 최종 복구
+
+핵심 `photoFile.native.ts`, `photoSnapshot.ts`, `repository.ts`가 기존4bd7ea3 검사 소스와 같은 bytes인 것을 Git object로 대조했습니다. 공통의 모바일549개/서버61개와 전체 verify-cloud, [기존 제품 CI](https://github.com/OhHyunSeo/travel-visit-tracker/actions/runs/40335429980) 통과는 재사용한 이력이며 이번에 새로 실행한 수로 표시하지 않습니다. 이번에는 host/전체 검사, native 빌드, 설치, 의존성 추가나 export를 반복하지 않았습니다. Android 결과 브랜치 CI도 임시 고정 제품/native 결과와 구분합니다.
+
+새 종료 대조에서 원래 모든 DB 테이블/스키마/설정, 모든 owner의 사진 bytes와 QA 외 인증이 같았습니다. QA는 guest/credential 부재, SQLite v5 integrity/FK 정상이며 안정된 최종 DB 사본이 native 최종 행/설정과 같았습니다. 합성 방문1개/사진4개/사진 대기1개/사진 ACK3개가 유지됐고 서버 방문/영수증1개씩, 사진/영수증3개씩과 원본 파일 SHA/크기를 대조했습니다.
+
+QA DB/WAL/SHM3개와 이번 원본4개, 보존된 미확인 cache를 로컬 근거로 보관한 뒤 시험 소유 자료만 기기에서 정리했습니다. source63개(기존15개, 새48개), auth transport와 QA 상수, app.config.ts의 원문/부재/해시를 복구했습니다. package/lock, 설치/보존 APK와 무선 설정/같은 emulator boot ID를 대조했습니다. 자체8082/3002/3003과 Metro reverse, 에뮬레이터는 종료했고 HTTP reverse는 없었습니다.
+
+근거는 Git 제외 `docs/test-results/android-snapshot-budget-ef799c4-20261027/`의 `validation-files.json`, `source-reuse-proof.json`, `budget-summary.json`, `private-state-after-*.json`의 실제 File 읽기/ACK 결정/cursor/전후 파일·DB, `private-owned-final.tar`, `private-qa-final.tar`, `measurement-clarification.json`, `shutdown-status.json`입니다. 개인 값/수량/해시, 인증/token과 raw diagnostics는 커밋하지 않습니다.
+
+승인한 한도 묶음은 완료했고 추가 제품 결함/수정 제안은 없습니다. Storage-failure/장기 누적/Release/손가락 UI/실제 Android 휴대폰이나 새로운 재시작 검사는 시작하지 않습니다. 전체23/54, P3-12/P3-13 부분 완료와 G1~G4는 유지하며 다음 지시를 기다립니다.
+
+## 10월 26일 재개: 가입 응답 기한과16KiB 경계3개 완료
+
+새 사용자 재개 승인에 따라 **`daed98caec111d96a9956c5245cd266315453dba`**에서 시작했고 제품은 **`e52352c8543bab6726fde7ceec00c22483bab48b`** 그대로 고정했습니다. 직전 중단 준비와 별개의 새 QA DB, 인증 key/service, cache root와 합성 사진 경로를 만들었습니다. source62개를 고정 Git object에서 준비하고 원문/부재/해시를 저장했으며 기본 개인 DB를 새 소스로 열지 않았습니다. 기존 API37 Debug APK, 실제 AppStore/AuthStore의 AuthClient→native authFetch와 SQLite/SecureStore를 사용했습니다. 제품 수정, 새 빌드/설치/의존성 변경은 없습니다.
+
+이번 범위의 **새 native3개가 PASS**입니다. 앞선 `834ba6b`의 계정 확인/다른 로그인/대기 로그아웃3개와 아래 중단 준비의 요청0건은 별도 이력입니다. 초기 정상 A 로그인과 합성 방문/사진 준비는 시험 설정이며 추가 native 시나리오 수로 합산하지 않습니다.
+
+| 요청과 조건 | 실제 Android 결과 |
+| --- | --- |
+| 실제 AppStore 신규 가입, 서버 저장 뒤 일부 응답 | 서버가 신규 합성 계정을 저장한 뒤 정상 응답16/349 bytes만 보냄. 요청은10,016ms에 AuthError(status0)로 종료, AppStore busy 해제와 오류 안내. 기존 A credential/session/owner와 기록·사진·큐 유지. 실제 abort/cancel/release 전달 유지. 기한 전 native Response와 reader bytes는0이며 서버 prefix16과 구분. 기한 뒤 tail 전송 시 연결은 이미 닫혔고 인증/owner가 바뀌지 않음. 같은 이메일의 다음 가입은409, 서버 계정 수3개 그대로. 이후 정상 로그인으로 이미 생성된 계정을 사용했고 A 행/사진/큐는 보존 |
+| 실제 AppStore B 로그인, 정확히16KiB | Content-Length 없는 chunked 정상 JSON에 공백을 붙여16,384 bytes. 서버 기록과 native Content-Length 부재 대조. 실제 native reader가16,384 bytes를3번의 read로 수신했고541ms에 로그인 성공. B credential/owner로 정상 전환, A 행/사진/큐와 원본 bytes 보존 |
+| 실제 AppStore B 로그인,16KiB+1byte | 같은 방식의 Content-Length 없는16,385 bytes. 실제 native reader5번으로16,385 bytes를 관측한 뒤744ms에 AuthError(status0), busy 해제와 오류 안내. 기존 B credential/session/owner 및 A 행/사진/큐 보존. 다음 정상 계정 확인 성공 |
+
+크기 경계 두 경우의 실제 native reader cancel과 releaseLock은 각각1회였고 abort 전달도 유지했습니다. 취소/정리를 무시하도록 바꾼 요청은 없습니다. 정확한 경계와1바이트 초과의 native 읽기/판정 결과이며 큰 본문 전체 부하나 새 손가락 UI 검증으로 확대하지 않습니다. AppStore 공개 액션을 관측 도구로 호출한 Debug 에뮬레이터 결과입니다.
+
+모든 계정 전환과 최종 guest에서 A의 합성 방문1개, 사진1개와 대기2개, 사진 URI와7,090,841-byte PNG SHA를 보존했습니다. Guest import와 방문/사진 전송, 서버 방문/사진/영수증은0개입니다. 서버 계정3개 중2개는 host 준비,1개만 이번 native 가입으로 생성됐으며 중복 가입은 새 계정을 만들지 않았습니다.
+
+### 검사와 최종 복구
+
+Node24.21.0의 **`npm --prefix travel_visit_tracker run check` PASS**: 타입, ESLint,21파일의 모바일549개입니다. 같은 고정 제품의 앞선 전체 verify-cloud/JS-Hermes와 서버61개를 이번에 새로 실행한 것으로 합산하지 않습니다. Android 브랜치 CI는 복구한 브랜치 기준이며 임시 고정 제품의549개/native3개와 구분합니다.
+
+새 시작/종료 대조에서 원래 모든 DB 테이블/설정/스키마, 모든 owner의 사진 bytes와 QA 외 인증이 같았습니다. 최종 guest/QA credential 부재와 QA SQLite v5의 integrity/FK, A 행/큐 보존도 확인했습니다. QA 최종 DB와 사진 근거는 로컬에 보관한 뒤 QA DB/WAL/SHM3개와 이번 사진만 기기에서 제거했고 빈 QA cache root의 부재를 확인했습니다.
+
+앱과 자체 서비스를 멈춘 뒤 source62개의 원문/부재/해시, 새 auth transport2개와 QA 상수를 복구했습니다. package/lock과 설치/보존 APK, 원래 무선 설정과 같은 emulator boot ID를 대조했습니다. 자체8082/3002/3003과 Metro reverse, 에뮬레이터는 종료했고 HTTP reverse는 없었습니다. iOS8081과 공통 live 소스/namespace, 기존 cache/SDK/AVD/백업은 수정하거나 삭제하지 않았습니다. 이번에는 production export를 생성하지 않았습니다.
+
+근거는 Git 제외 `docs/test-results/android-auth-boundary-e52352c-20261026-resume/`의 `validation-files.json`, `auth-boundary-summary.json`, `private-state-after-*.json`, native transport reader/credential 지문, server gate/release와 크기별 기록, `private-synthetic-final.tar`, `private-qa-final.tar`, `verification.log`, `shutdown-status.json`입니다. 개인 값/수량/해시, 인증/token과 raw diagnostics는 커밋하지 않습니다.
+
+승인한 가입과16KiB 경계 묶음은 완료했고 다음 새 검사는 시작하지 않습니다. 공통 제품 결함이나 수정 제안은 없습니다. 실제 Android 휴대폰/Release, 손가락 UI, 전원/OS 비정상 종료와 전체 수용은 별도이며 전체23/54, P3-12/P3-13 부분 완료와 G1~G4는 유지합니다.
+
+## 10월 26일 중단 재확인과 준비 환경 복구
+
+기존 중단 체크포인트 `36ddb6d`에서 새 가입/16KiB 검사 준비를 시작한 오류를 바로잡았습니다. 중단 지시를 재확인한 즉시 다음 요청이나 재시도 없이 이번 준비만 정리했습니다. **새 native 완료0개, 앱 HTTP 요청0건, 가입과16KiB 경계 검사는 NOT RUN**입니다. 서버의 합성 계정2개는 host 준비 자료이며 native 가입 결과가 아닙니다. 기존 `e52352c` 계정3개와 결과 커밋 `834ba6b`, 해당 CI PASS는 그대로 유효합니다.
+
+기존 APK/API37을 실행해 새 QA 이름을 적용하고 합성 파일을 준비했지만 관측 연결 준비에서 timeout이 발생했습니다. 가입, 로그인, 계정 확인이나 크기 경계 요청은 보내지 않았습니다. 새 빌드/설치/의존성 변경도 없습니다. 실패한 연결 준비와 미실행 시나리오를 통과로 합산하지 않습니다.
+
+최종 대조에서 원래 모든 DB 테이블/설정/스키마, 모든 owner의 사진과 QA 외 인증이 보존됐습니다. QA credential은 없었고 QA DB/WAL/SHM3개와 이번 합성 사진은 로컬 근거로 보관한 뒤 기기에서 정리했습니다. 빈 QA cache root도 부재를 확인했습니다. source62개의 원문/존재 여부/해시와 package/lock, 설치/보존 APK, 무선 설정과 같은 emulator boot ID를 대조했습니다. 자체8082/3002/3003과 관측 도구, Metro reverse와 에뮬레이터는 모두 종료했고 iOS8081/공통 live 소스는 수정하지 않았습니다. 기존 캐시, SDK, AVD 자료와 Time Machine 백업은 이번에 삭제하지 않았습니다.
+
+로컬 근거: `docs/test-results/android-auth-boundary-e52352c-20261026/shutdown-status.json`. 사용자 재개 지시와 고정 범위가 새로 정해지기 전에는 추가 준비나 검사를 시작하지 않습니다. 재개가 승인되면 새 보존 기준과 고유 QA 이름부터 준비합니다. 이번 저장은 완료 수와 수용 게이트를 바꾸지 않습니다.
+
+## 10월 26일 사용자 요청으로 저장하고 중단
+
+중단 요청 도착 시 Android의 고정 `e52352c8543bab6726fde7ceec00c22483bab48b` 계정 native3개와 QA/원본 보존 대조, 임시 소스/환경 복구는 이미 완료돼 있었습니다. 결과 커밋은 `834ba6b42b1ce7766b08930524fa98427cd69b35`, 해당 CI도 PASS입니다. **진행 중 요청0개, 새 시나리오/재시도0개**이며 이번 중단 저장으로 완료 수를 늘리지 않습니다.
+
+현재 source62개의 원래 존재 여부/해시를 다시 대조했고 자체8082/3002/3003과 에뮬레이터가 꺼진 것을 재확인했습니다. 종료 시 원래 모든 DB/설정/사진/인증, APK/package/lock/무선 상태 보존과 QA 인증 삭제/guest, 시험 DB/사진/cache/reverse 정리는 완료됐으며 근거를 보관했습니다. 이를 확인하려고 기기나 서버를 다시 실행하지 않았습니다.
+
+완료 범위는 아래 계정 확인/다른 로그인/대기 로그아웃3개입니다. Native signup,16KiB stress, 새 손가락 UI와 실제 Android/Release는 계속 미실행입니다. 공통 채팅의 전달에 따르면 **이번 iPhone 자동 복귀는 locked로 앱 실행이 거절돼 baseline/준비만 했고 NOT RUN**입니다. Android가 그 iPhone 상태를 직접 검증한 것은 아니며, 이전 iPhone 계정3개와 이번 자동 복귀 미실행을 구분합니다.
+
+재개 지점: Android e52352c 계정 검사는 완료 상태로 보존합니다. 새 사용자 재개 요청과 공통의 고정 소스/범위가 정해진 뒤에만 새 원본 기준값과 고유 QA 이름으로 다음 작업을 시작합니다. 이번 미실행 iPhone 자동 복귀는 공통/iOS 채팅의 별도 재개 항목입니다. 로컬 중단 근거는 `docs/test-results/android-auth-deadline-e52352c-20261026/stop-checkpoint-20261026.json`입니다. 전체 완료 수와 수용 기준은 유지합니다.
+
+## 10월 26일: 계정 요청 기한, 계정 보존과 대기 로그아웃
+
+공통 제품 **`e52352c8543bab6726fde7ceec00c22483bab48b`**를 고정했고 Android 시작 기준은 `9d72292`입니다. 독립10초/16KiB AuthClient stream, 새 authTransport.native.ts/.web.ts와 useAuthStore의 authFetch 연결을 포함합니다. 임시62개 파일 모두 고정 Git object에서 준비해 공통/iOS의 live QA namespace를 복사하지 않았습니다. 새 QA DB, 인증 key/service와 cache root, 합성 PNG 경로를 사용했고 기본 개인 DB/캐시를 새 소스로 열거나 스캔하지 않았습니다. 기존 API37 Debug APK, 실제 AppStore/AuthStore, SQLite/SecureStore와 Expo native HTTP이며 새 빌드, 설치나 의존성 변경은 없습니다.
+
+**새 Android native3개가 PASS**입니다. 앞선8d01be8 자동 복귀2개/방문 기한3개나 iPhone 계정3개를 이 결과로 대신하지 않습니다. 실제 AuthStore의 AuthClient.send가 native authFetch와 같은 것을 요청마다 대조했습니다.
+
+| 요청과 조건 | 실제 Android 결과 |
+| --- | --- |
+| 실제 AppStore 계정 확인의 부분 /me | 서버가 정상200 응답16/153 bytes만 보낸 뒤 유지. AuthClient 요청은 약10.008초에 AuthError(status0)로 실패하고 AppStore busy 해제. 기존 QA A 계정/credential 값, active owner, 방문/사진/큐와 원본 bytes 보존. 상태는 offline이며 다음 정상 확인에서 같은 A 계정 signed-in 복귀 |
+| 실제 AppStore의 다른 시험계정 로그인 | B 계정의 정상 로그인 응답16/354 bytes 뒤 유지. 약10.012초에 실패와 busy 해제, AppStore 오류 안내. 옛 A 계정/credential/owner와 모든 기록 유지. 다음 정상 B 로그인은 성공하고 owner가 B로 바뀌었지만 A의 원래 행과 사진/큐는 그대로, guest import0회 |
+| Held /me 하나만 abort forwarding 생략, 같은 Manager의 로그아웃 대기 | B 계정의 AppStore 확인 뒤 실제 AuthStore.logout을 같은 SessionManager에 대기. 전용 요청만 signal 전달 생략, cancel/release는 실제대로 유지. 요청은 약10.007초에 독립 실패, 확인과 대기 로그아웃 모두 약10.229초에 완료. logout이 기한 전에는 대기한 상태였고 같은 Manager 식별자를 확인. Guest, credential 삭제와 owner guest 상태 완료. 열린 서버 연결에 늦은 tail을 보내자 native Response는 나타났지만 reader를 만들지 않고 body cancel1회, 계정/인증/owner가 되살아나지 않음 |
+
+세 경우 모두 기한 전에 native Response와 reader bytes는 노출되지 않았습니다. **서버 prefix16 bytes와 native reader0 bytes를 구분**합니다. 기본 두 경우는 abort/cancel/release를 억제하지 않았고 기한 뒤 tail 전송 시 연결은 이미 닫혀 있었습니다. 추가 독립 /me는 source signal의 aborted를 확인했으나 그 요청 하나에만 전달하지 않았습니다. 추가 cancel/release 억제는 필요하지 않았습니다. 실제 늦은 Response 이후에도 reader 생성/본문 읽기는0회였고 body cancel1회만 관측됐으므로 iPhone의 늦은 두 번째 read와 동일한 경로로 표시하지 않습니다.
+
+세 번째는 AppStore checkAccount가 진행되는 동안 같은 AuthStore/SessionManager의 공개 logout을 큐에 넣은 native 검사입니다. 실제 같은 Manager에서 직렬 실행과 해제를 확인했습니다. 새 손가락 조작이나 이 소스의 앱 재시작, 물리 Android, Release 증거로 확대하지 않습니다.
+
+모든 경우에 같은 소유자의 방문1개, 사진1개와 방문/사진 대기2개, 사진 URI와7,090,841 bytes PNG의 SHA가 유지됐습니다. 정상 계정 전환과 최종 guest에서도 A의 행이 이동하거나 삭제되지 않았고 guest import는0회입니다. 서버는 합성 계정2개만 준비했고 방문/사진 POST와 서버 방문/사진/영수증은 모두0개였습니다. Native signup과16KiB 초과 경계 stress는 새 검사에 포함하지 않았습니다.
+
+### 자동 검사와 원본 복구
+
+Node24.21.0 `bash scripts/verify-cloud.sh`가 PASS입니다. 타입, ESLint,21개 파일의 **모바일549개**, 이 Android verifier의 backend syntax/native dependency load와 양쪽 production JS/Hermes export를 포함합니다. 공통 서버61개와 공통의 실제 임시 auth HTTP/SQLite 검사를 여기서 반복한 것으로 표시하지 않습니다. 브랜치 CI도 이 임시 고정 QA 소스의549개/native3개와 구분합니다.
+
+새 시작/종료 기준으로 원래 모든 저장 테이블, 설정, 스키마, 모든 owner의 사진 bytes와 QA 외 인증을 대조해 보존했습니다. 추가 늦은 응답 뒤에도 QA credential 부재, guest와 원래 QA 행/큐 보존을 확인했습니다. 최종 QA DB와 대기 PNG를 근거로 보관한 뒤 QA DB/WAL/SHM3개, 시험 PNG1개만 정리했고 QA cache root의 부재도 확인했습니다.
+
+앱과 자체 서비스를 먼저 멈추고 **source62개(기존14개, 새48개)**의 원문/부재/해시를 복구했습니다. AuthClient/AuthStore와 새 authTransport 두 개, DB/인증/cache 상수를 포함합니다. package/lock, 설치와 보존 APK, 원래 무선 설정과 emulator boot ID가 같습니다. 자체8082/3002/3003, Metro reverse와 에뮬레이터를 종료했고 HTTP reverse는 없었습니다. iOS8081, 공통의 live source/namespace와 기존 legacy 캐시/백업은 수정하지 않았습니다. 이번 생성 JS/Hermes40개, 논리8,826,580 bytes만 사용 후 정리했으며 즉시 가용량 증가는 관측되지 않았습니다.
+
+근거는 Git 제외 `docs/test-results/android-auth-deadline-e52352c-20261026/`의 `validation-files.json`, `auth-deadline-summary.json`, `private-state-after-*.json`, native request/Manager/credential 지문과 서버 gate/release 상태, `private-synthetic-final.tar`, `private-qa-final.tar`, `verification.log`, `shutdown-status.json`입니다. 원래 개인 수량/값/해시, credential, token과 raw diagnostics는 공개하지 않습니다. 추가 제품 수정 제안은 없으며 전체 완료 수, P3-12/P3-13과 G1~G4는 변경하지 않습니다.
+
+## 10월 25일 후속: P3-13 OS 연결 복귀 뒤 자동 방문 백업
+
+제품은 **`8d01be8b8e3bf4896fbc76264b442b9dfe415d55`** 그대로 고정했고 Android 시작 기준은 `419c062`입니다. 기존 API37 Debug 앱에서 새 QA DB, 인증과 cache root를 사용했습니다. 이번에는 응답 지연이나 fetch 예외, abort 생략, 과거 시계나 재시도 시각 편집을 사용하지 않았습니다. 실제 에뮬레이터 OS의 비행기 모드 ON, Wi-Fi/모바일 데이터 OFF와 native HTTP 실패를 확인한 뒤 합성 방문1개와 PNG1개의 큐를 준비했습니다. 고유 QA 계정의 실제 AppStore 자동 방문 백업 opt-in을 켰습니다.
+
+**새 실제 OS 자동 복귀2개가 PASS**입니다. 연결 복구 뒤 시험 도구는 AppStore.backupVisits나 Coordinator.run을 직접 호출하지 않았습니다. 계측은 실제 앱 호출을 그대로 전달해 기록했고, helper에는 별도 백업 실행 단계가 없습니다. opt-in ON 액션은 처음 오프라인 준비 때 한 번뿐입니다.
+
+| 흐름 | 실제 결과 |
+| --- | --- |
+| 같은 foreground에서 OS 연결 복구 | 자연스러운 자동 실패2회를 기다려 약30초,60초 재시도를 관찰. 두 번째 실패의 health 시각은 긴 nextAttemptAt보다 약30초 이르게 저장됨. QA SQLite/WAL 사본을 읽기 전용으로 열어 nextAttemptAt, connectionCheckAt와 마지막 성공 시각이 native 상태와 같음을 확인. 원래 OS 연결 설정으로 복구한 뒤 앱의4초 foreground 주기만으로 health→방문 ACK 완료. health는 원래 긴 재시도 시각보다27.884초, ACK 성공은26.791초 먼저 발생. AppState는 내내 active, 서버 방문/영수증 각각1개, 같은 operation/payload 유지 |
+| Background에서 OS 복구 후 foreground 복귀 | 별도 합성 방문을 오프라인 대기에 남기고 실제 HOME으로 background 진입. 그 상태에서 원래 OS 연결을 복원하고 자연 재시도 시각이 지난 뒤까지 기다림. 관측한 background 약32.316초 동안, 연결 복구부터 foreground 복귀 사이 서버 요청0회. 같은 PID와 JS instance로 앱에 돌아오자 버튼/도구의 백업 호출 없이 방문 자동 ACK 완료. 서버 방문/영수증 최종 각각2개, 사진 전송0회 |
+
+첫 흐름은 **OS 네트워크 이벤트 listener를 새로 구현한 결과가 아닙니다.** 연결만 복구됐고 AppState 전환은 없었으며, 기존 foreground 주기 health가 상태를 확인해 재시도를 앞당겼습니다. 두 번째는 실제 background→active 전환 이후 기존 앱의 foreground 진입/주기 요청 경로에서 완료된 범위입니다. OS의 background 전송 서비스나 위치/GPS 수집, 배터리, 앱/OS 강제 종료 내구성으로 확대하지 않습니다.
+
+실패 중 방문의 operation ID와 payload, 방문 행은 그대로이고 attempts만2회로 증가했습니다. 두 실패 간격은 실제 현재 wall clock과 제품의 failure count가 만들었으며 timestamp를 바꾸지 않았습니다. 서버에 도착한 sync POST는 방문마다1회, 전체2회였고 operation ID도 각각 유일했습니다. 전체 서버 방문 내용을 기기 합성 방문과 직접 대조했습니다.
+
+사진은 두 흐름 내내 대기1건, 같은 payload/URI와7,090,841 bytes PNG의 크기/SHA가 유지됐습니다. photo metadata 생성, 사진 POST, 서버 사진과 사진 영수증은 모두0개입니다. 방문의 마지막 성공 시각과 대기 수는 실제 AppStore/DB 상태에서 확인했으며 새 손가락 UI 표시는 검사하지 않았습니다. 최종 대기 사진과 DB는 근거에 보존한 뒤 시험 소유 자료만 정리했습니다.
+
+### 원본 보존과 체크포인트
+
+새 시작/종료 기준으로 원래 개인 DB의 모든 저장 행, 설정, 스키마, 사진 bytes와 QA 외 인증 보존 대조를 통과했습니다. QA 로그인과 로그아웃, 시험 인증 삭제도 확인했습니다. source59개(기존14개, 새45개)의 원문/부재/해시, cache root와 visitTransport 두 개를 복구했습니다. package/lock, 설치와 보존 APK, 원래 비행기/Wi-Fi/데이터 설정과 emulator boot ID도 같습니다. 새 빌드, 설치와 의존성 변경은 없습니다.
+
+최종 QA DB와 대기 PNG 사본을 보관한 뒤 QA DB/WAL/SHM3개, 시험 소유 PNG1개와 cache root의 부재를 확인했습니다. 자체8082/3002/3003, Metro reverse와 에뮬레이터를 종료했고 HTTP reverse는 없었습니다. iOS8081, iPhone, 원래 checkout, legacy/기본 캐시나 백업은 조작하지 않았습니다.
+
+같은8d01be8의 타입/린트, 모바일537개와 양쪽 JS/Hermes의 앞선 통과를 재사용했으며, 제품 변경이 없어 이 단계에서 반복하지 않았습니다. 이번 결과는 새 native2개와 원본/환경 보존이며 브랜치 CI와도 구분합니다. P3-13의 이 Android 자동 복귀 범위가 확인됐지만 전체 P3-13, 실제 Android 휴대폰/Release와 G1~G4, 완료 수는 변경하지 않습니다. 추가 공통 수정 제안은 없습니다.
+
+근거는 Git 제외 `docs/test-results/android-auto-reconnect-8d01be8-20261025/`의 `auto-reconnect-summary.json`, `network-events.json`, native AppState/호출/Coordinator/전후 DB 상태, `private-db-foreground-natural-backoff.tar`, `private-db-background-pending.tar`, 서버 전후 상태, `artifact-audit.json`, `private-synthetic-final.tar`, `private-qa-final.tar`, `shutdown-status.json`입니다. raw OS 진단, 개인 원본 수량/값/해시, 인증과 fixture 비밀값은 공개하지 않습니다.
+
+## 10월 25일 후속: 방문 ACK와 foreground 연결 확인의 독립 기한
+
+공통 **`8d01be8b8e3bf4896fbc76264b442b9dfe415d55`**를 고정했습니다. `cb61e47`의 VisitSyncClient 독립 기한과 bounded stream에 더해 새 `visitTransport.native.ts`/`.web.ts`, AppStore의 Expo 스트림 연결을 포함합니다. Android 시작 기준은 `4a770eb`입니다. source59개를 임시 적용하고 DB, 인증과 photo snapshot root를 새 QA 이름으로 격리했습니다. 기본 개인 DB, 기존 legacy/기본 캐시는 새 소스로 열거나 스캔하지 않았습니다. 기존 Debug APK/API37과 실제 AppStore 액션, 비동기 SQLite와 native HTTP를 사용했으며 새 빌드, 설치와 의존성 변경은 없습니다.
+
+**새 native3개가 PASS**입니다. 이전 캐시 정리19개, 다른 SHA의 사진/복원 기한 결과와 합산하지 않습니다. 제품의 실제 VisitSyncClient가 `visitFetch`를 사용하는 것을 호출 시 대조했고, 기본 두 검사에서는 원래 abort를 그대로 전달했습니다.
+
+| 새 검사 | 실제 결과 |
+| --- | --- |
+| 수동 방문 백업의 저장 후 부분 ACK | 실제 AppStore 수동 방문 백업에서 서버 commit 뒤 ACK16/60 bytes만 보내고 유지. VisitSyncClient가 약10.015초에 VisitConnectionError로 반환했고 AppStore backupBusy도 해제. 기한 전 native 응답 객체와 reader 바이트는 노출되지 않음. 같은 operation/payload와 방문, 로컬 대기 보존, 성공 시각 미생성. attempts의 정상 증가만 허용. 기존 QA DB를 재개방해 같은 작업을 정상 수동 재시도, 서버 방문/영수증 각각1개와 요청 본문 완전 동일. 반복 빈 전송에서 추가 POST 없음 |
+| foreground 자동 백업의 부분 health | 실제 AppStore 자동 경로와 현재 wall clock 사용. 제품 repository API로 nextAttemptAt를 현재+120초, connectionCheckAt를 현재-1ms로 준비해 backoff 중 연결 확인을 재현. 서버가 실제 health 본문16 bytes만 보낸 상태에서 connectionAvailable이 약3.016초에 false 반환. 기한 전 native 응답 객체/reader 바이트 미노출. 큐와 마지막 성공 시각, nextAttemptAt 유지, connectionCheckAt만 정책대로 다음 확인 시각으로 연기. health 실패 중 방문 POST 없음. 진행 상태 해제 뒤 정상 수동 요청 성공 |
+| held ACK만 abort 전달 생략한 독립 기한과 늦은 응답 | 자동 백업 opt-in OFF, 해당 수동 ACK 요청 하나의 transport signal 전달만 생략. 원래 AbortSignal은 aborted가 됐지만 native에 전달하지 않은 상태에서 약10.010초에 반환. 기한 전 native 응답 객체/reader0 bytes. 서버 연결이 열린 상태에서 늦은 tail을 실제 전송하자 native 응답 객체가 뒤늦게 노출됐고, 제품은 body reader를 만들지 않은 채 cancel. 늦은 ACK 미적용, 큐와 성공/재시도 상태 유지. DB 재개방 후 같은 작업을 정상 수동 재시도, 서버 중복 없음 |
+
+기본 ACK와 health는 기한 뒤 tail 시도 때 소켓이 이미 닫혀 있었습니다. 추가 독립 ACK는 원래 signal을 **해당 held 요청에만** 전달하지 않은 통제 조건이며, 열린 연결에 실제 늦은 tail을 보낸 뒤 native Response 반환과 reader 미생성/cancel을 구분해 확인했습니다. 서버가 보낸16 bytes를 기본 두 경우의 native reader가 소비한 것으로 표시하지 않습니다. 늦은 native Response가 나타났다는 사실도 JS reader가 본문을 읽거나 파싱했다는 주장으로 확대하지 않습니다.
+
+자동 health에는 과거 합성 시계를 사용하지 않았습니다. 현재 시각에서 제품 API로 저장한 backoff만 통제했고 실제 앱의 foreground Coordinator 하나가 처리했습니다. 자동 interval과 직접 액션은 같은 AppStore/Coordinator를 사용했습니다. 후속 독립 ACK 전에 autoEnabled=false를 저장해 다른 자동 전송이 같은 큐를 처리하지 않도록 했습니다. 연결 실패 뒤 connectionCheckAt가 연기되는 것은 정상 동작이며 nextAttemptAt/lastSuccessAt 보존과 구분합니다.
+
+DB 재개방은 실제 앱을 닫고 기존 QA DB를 다시 여는 방식이며 큐를 reseed하거나 재주입하지 않았습니다. QA 인증도 복구됐습니다. 새 손가락 UI, OS force-stop 내구성, 무선 전환이나 전원 장애의 증거로 사용하지 않습니다. AppStore busy 해제와 실제 다음 액션 실행을 확인한 범위입니다.
+
+초기 계측기의 메서드 연결 오류로 정상 health만 실행되고 방문 POST가 없는 준비 실패가 있었습니다. 메서드별 wrapper를 분리한 뒤 같은 QA DB/작업으로 진행했으며 제품 파일은 바꾸지 않았습니다. 앱 재실행 때 Inspector 주소가 유지되는 환경의 준비 대기도 보완했습니다. 이미 끝난 실제 기한 요청은 도구 재개 때 다시 보내지 않고 저장한 상태에서 재개방/재시도를 이어갔습니다. 이 준비 관찰은 제품 결함이나 native 통과 수로 계산하지 않습니다.
+
+### 자동 검사와 최종 보존
+
+Node24.21.0 `bash scripts/verify-cloud.sh`가 PASS입니다. 타입, ESLint, 20개 파일의 **모바일537개**, 이 Android verifier의 backend syntax/native dependency load, 양쪽 production JS/Hermes export를 포함합니다. 공통 서버61개와 공통 HTTP 검사는 이 Android 단계에서 반복한 것으로 표시하지 않습니다. health4KiB/ACK64KiB의 초과 본문은 새 native 검사로 별도 실행하지 않았으며 host 회귀와 구분합니다. Android 브랜치 CI도 임시 QA 소스의537개/native3개와 별도입니다.
+
+원래 DB의 모든 저장 테이블, 설정, 스키마와 사진 bytes, QA 외 인증의 새 시작/종료 대조가 통과했습니다. QA 로그인/복구와 로그아웃, 시험 인증 삭제도 확인했습니다. 최종 합성 DB를 보관했고 서버 방문/영수증3개를 기기의 동일 방문 내용과 직접 대조했습니다. 각 시나리오의 중간 서버1개/2개/3개와 전체 종료 수량을 구분합니다. 최종 QA DB/WAL/SHM3개만 지웠고 QA cache root의 부재도 확인했습니다.
+
+앱과 자체 서비스를 먼저 멈춘 뒤 **source59개(기존14개, 새45개)**의 원문, 부재와 해시를 복구했습니다. 새 visitTransport 두 개와 cache root 상수도 복구 목록에 포함했습니다. package/lock, 설치와 보존 APK, 원래 무선 상태는 같습니다. 자체8082/3002/3003, reverse와 에뮬레이터를 종료했고 HTTP reverse는 없었습니다. iOS8081, iPhone, 원래 checkout과 기존 캐시/백업은 조작하지 않았습니다. 이번 생성 JS/Hermes40개, 논리8,820,611 bytes만 사용 후 정리했으며 즉시 가용량 증가는 관측되지 않았습니다.
+
+근거는 Git 제외 `docs/test-results/android-visit-deadline-8d01be8-20261025/`의 `validation-files.json`, `visit-deadline-summary.json`, `private-state-after-*.json`, 서버 gate/release/retry 상태, DB 재개방 직전 사본과 `private-qa-final.tar`, `verification.log`, `shutdown-status.json`입니다. 개인 원본 수량, 값, 해시와 인증/fixture 비밀값은 공개하지 않습니다. 추가 제품 수정 제안은 없습니다. 실제 Android 휴대폰, Release와 전체 G1~G4는 별도입니다.
+
+## 10월 25일 후속: 전송 준비 사본의 안전한 자동 정리 검증
+
+공통 **`4bd7ea3670d148a3df8c35bb49066e4dbfc4d10e`**를 고정했습니다. Android 시작 기준은 `6301c8e`입니다. 새 `photoSnapshot.ts`를 포함한56개 파일을 임시 적용했고 DB 이름, 인증 key/service와 **snapshotRoot 상수**를 고유 QA 값으로 격리했습니다. 기본 개인 DB와 기본 전송 캐시 root를 새 소스로 열거나 스캔하지 않았습니다. 기존 Debug APK/API37, 실제 SQLite, 파일, native HTTP이며 새 빌드, 설치나 의존성 변경은 없습니다.
+
+**native19개가 PASS**입니다. 실제 앱 종료/재실행을 포함한 전송2개, 시작 wiring1개, 명시한 합성 marker 변형16개로 구분합니다. 앞선55b7bda/c2c871f 검사와 합산하지 않습니다.
+
+| 실제 실행 흐름 | 관찰과 결과 |
+| --- | --- |
+| 업로드 일부 수신 중 앱 force-stop, 재실행 | 실제 앱의 수동 사진 백업 액션 → PhotoBackupCoordinator → preparePhotoFile의 owner/operation/photo context로 marker 생성. Backend multipart16,384 bytes와 사진 부분15,727 bytes 수신 상태에서 PID 종료. 새 PID/JS와 실제 Constants.sessionId, QA 인증 복구 확인. 기존 DB의 작업, payload, fingerprint와 원본 SHA, marker/사본 보존. ACK 전 cleanup0개, 서버 사진/영수증0개. 동일 작업 재시도에서 로컬 ACK 확정 뒤 실제 수동 백업 완료 wiring이 옛 사본만 제거, 서버 사진/영수증 각각1개 |
+| 서버 저장 후 ACK 일부 대기 중 앱 force-stop, 재실행 | 서버가 두 번째 사진과 영수증을 저장하고 ACK32 bytes를 보낸 상태에서 종료. 새 실제 session과 인증 복구 뒤 로컬 ACK 미확인, 같은 큐와 원본, 옛 marker/사본 유지. ACK 전 cleanup0개. 같은 작업을 재시도해 로컬 ACK 확정 뒤 완료 wiring에서 옛 사본 제거. 서버 사진과 영수증은 각각2개로 유지 |
+| 이미 로컬 ACK가 있는 사본의 실제 시작 wiring | 실제 native preparePhotoFile에 ACK와 맞는 context를 제공해 만든 사본을 현재 session/active 상태에서 보존. 앱만 force-stop, 재실행해 새 Constants.sessionId와 QA 인증 복구 확인. 새 실행에서 **수동 cleanup을 호출하지 않고 initialize의 시작 정리로 사본 제거**. DB 사진/ACK 행, 원본 바이트와 다른 사진의 미전송 대기1건 유지 |
+
+세 번 모두 PID 소멸 뒤 새 PID/JS와 **실제 Constants.sessionId 변화**를 별도 근거로 보존했고 emulator boot ID는 같았습니다. DB 재주입이나 reseed 없이 기존 QA DB와 실제 QA SecureStore 로그인 상태를 재개방했습니다. 첫 두 경우의 사본은 실제 제품 Coordinator가 생성했습니다. 시작 wiring의 사본은 실제 prepare API가 생성했습니다. 앱 액션을 native에서 직접 실행한 검증이며 새 화면 확인창 조작, OS 재부팅, 전원 손실, 에뮬레이터 비정상 종료나 실제 Android 휴대폰 결과로 확대하지 않습니다.
+
+### native 파일과 실제 DB의 marker 변형16개
+
+변형은 실제 preparePhotoFile이 만든 marker와 bytes를 이번 QA 소유 디렉터리에 복사한 합성 자료입니다. 이전 session UUID나 개별 필드를 바꾼 경우를 위 실제 앱 재시작의 session 변화와 구분합니다. 활성 registry 검사는 실제 producer가 등록한 사본을 유지한 채 marker session만 과거 값으로 바꿔 registry 보호를 별도로 확인했습니다. 현재 session 검사는 활성 registry에 없는 별도 사본입니다.
+
+| 기대 결과 | 확인한 조건 |
+| --- | --- |
+| 보존15개 | 실제 active registry, 현재 native session, 이번 시험의 legacy 무표시 사본, 새 root 안 marker 없음, 로컬 ACK 없음, 다른 owner, 다른 operation, 다른 photo, fingerprint 불일치, 합성 원본 누락, 원본 변경, 사본 변경, 추가 파일, 깨진 JSON, 미지원 marker 형식 |
+| 제거1개 | 이전 session으로 표시한 유효 사본, 같은 owner/operation/photo/fingerprint의 실제 로컬 ACK, 현재 원본과 사본 바이트 일치. 제품의 실제 repository 트랜잭션과 native 최종 동기 비교를 거쳐 이 사본만 제거. 재실행 cleanup0개 |
+
+각 cleanup 전후 QA DB의 방문, 사진, metadata와 outbox 행, 원본 바이트/부재 상태가 그대로였습니다. 원본 변경/누락 조건은 이 시험 소유 파일에만 만들었고 관찰 뒤 합성 원래 바이트로 복구했습니다. 제품이 보존한15개는 결과와 파일/marker 해시를 기록한 **뒤 하네스가 정확한 시험 소유 경로만 정리**했습니다. 제품이15개를 자동 삭제한 것으로 표시하지 않습니다. 원래 legacy 캐시와 기본 snapshot root는 읽거나 삭제하지 않았습니다.
+
+준비 계획의 파일 읽기 오류 주입과20개/64MiB 상한 stress를 새 native 항목으로 실행하지 않았습니다. 이 한계는 공통 host 회귀와 구분합니다. 실제 디스크 부족, OS 권한 오류나 장기 캐시 누적을 검증한 결과가 아닙니다. 시작 관찰기의 Directory URI 끝 슬래시 비교는 사본을 다시 만들거나 제품을 바꾸지 않고 정규화한 뒤 이어갔습니다.
+
+### 자동 검사와 최종 보존
+
+Node24.21.0 `bash scripts/verify-cloud.sh`가 PASS입니다. 타입, ESLint, 19개 파일의 **모바일525개**, 이 Android verifier의 backend syntax/native dependency load와 양쪽 production JS/Hermes export를 포함합니다. 공통 서버61개와 공통 HTTP 검사는 이번 Android 단계에서 다시 실행한 것으로 표시하지 않습니다. Android 브랜치 CI는 이 고정 QA 소스와 별도 기준입니다.
+
+모든 개인 원본 저장 행, 설정, 스키마, 사진 바이트와 QA 외 인증을 시작/종료 대조해 보존했습니다. QA 로그아웃과 SecureStore 삭제도 확인했습니다. 최종 QA DB와 합성 원본3개를 로컬에 보관한 뒤, 시험 소유 원본과 managed/legacy 사본, QA root와 QA DB/WAL/SHM3개만 정리했습니다. 합성 미전송 대기는 임의로 ACK 처리하지 않고 최종 DB 근거에 남겼습니다. 서버의 두 확인 사진/영수증과 모든 사진 bytes/SHA도 대조했습니다.
+
+앱과 자체 서버를 먼저 멈춘 뒤 **임시 소스56개(기존14개, 새42개)**의 원문/부재/해시와 cache root 상수를 복구했습니다. package/lock과 설치·보존 APK가 같고 원래 무선 상태도 유지됐습니다. 자체8082/3002/3003, reverse와 에뮬레이터를 종료했습니다. HTTP reverse, iOS8081과 iPhone, 원래 checkout 변경은 없습니다. 이번 생성 JS/Hermes 출력40개, 논리8,814,174 bytes만 사용 후 정리했으며 즉시 가용량 증가는 관측되지 않았습니다. 추가 전역 캐시, Time Machine나 프로젝트 백업 삭제는 하지 않았습니다.
+
+근거는 Git 제외 `docs/test-results/android-photo-snapshot-4bd7ea3-20261025/`의 `validation-files.json`, `snapshot-lifecycle-summary.json`, `snapshot-preservation-summary.json`, `snapshot-startup-wiring-summary.json`, `private-process-proof-*.json`, 실제 종료 직후 DB/전후 상태, `private-synthetic-final.tar`, `private-qa-final.tar`, `verification.log`, `shutdown-status.json`입니다. 개인 원본 수량/값/해시, 인증 상태와 fixture 비밀값은 공개하지 않습니다. 원래 불명확 사본을 회수했다는 주장은 하지 않습니다. 실제 Android, Release, OS 자동 회수와 전체 G1~G4는 별도입니다.
+
+## 10월 25일: 전송 중 앱 강제 종료와 복원 응답 기한
+
+Android 시작 기준은 `e3f922d`입니다. 공통 소스 두 개를 순서대로 고정해 각각 새 QA DB와 인증 이름, 원본 보존 기준을 만들었습니다. 기존 API 37 에뮬레이터와 Debug APK, 실제 비동기 SQLite, 파일과 HTTP를 사용했고 새 native 빌드, 설치, 의존성 변경은 없습니다. 원래 개인 v1 DB를 새 소스로 열지 않았습니다.
+
+### 55b7bda: 실제 앱 프로세스 강제 종료 3개 PASS
+
+고정 소스는 **`55b7bdae804d74ef0776ef37c7aeb91d50b40493`**입니다. 세 번 모두 실제 앱을 force-stop해 기존 PID가 사라진 것을 확인한 다음, 새 PID와 새 JS instance에서 기존 합성 DB를 열었습니다. 재개방 시 큐를 재주입하거나 reseed하지 않았습니다. 에뮬레이터 boot ID는 같았고 OS 재시작, 에뮬레이터 충돌, 전원 장애나 무선 설정 변경은 없습니다.
+
+| 종료 시점 | 실전송 근거와 재실행 결과 |
+| --- | --- |
+| multipart 일부가 backend에 도착한 뒤 | backend 본문 21,900 bytes, 사진 부분 21,243 bytes를 받은 상태에서 종료. 재실행 뒤 서버 사진과 영수증은 없고, 원본 SHA, 작업 ID, payload와 fingerprint, 전송 대기가 그대로임. 같은 작업을 명시적으로 재시도해 사진과 영수증 각각 한 번만 저장 |
+| 서버 저장 완료, ACK 일부만 보낸 뒤 | 서버 사진과 영수증 저장 후 ACK 32 bytes를 보내고 유지한 상태에서 종료. 재실행 뒤 로컬 ACK는 미적용이며 같은 작업과 fingerprint 보존. 같은 작업 재시도에서 기존 영수증을 확인하고 서버 중복 없음 |
+| 복구 사진 본문 일부를 실제로 읽은 뒤 | native reader가 PNG 16,384 bytes를 읽은 상태에서 종료. 새 파일 생성이나 부분 사진 등록 없이 복구 대기, 조회 위치, 출처와 기존 URI, 0바이트 파일 유지. 재시도에서 전체 SHA와 크기가 맞는 새 사본만 연결, 이전 파일 보존과 반복 중복 없음 |
+
+살아 있는 앱에 fetch 예외를 주입한 결과가 아닙니다. 호스트 프록시는 실전송 시점을 제어했으며, PID 소멸 확인 뒤에만 남은 연결을 정리했습니다. 새 실행에 합성 세션을 다시 제공한 독립 native Coordinator 검사이므로 인증 자동 복구나 새 UI 전체 검증으로 표시하지 않습니다.
+
+**별도 자원 정리 관찰:** 강제 종료된 두 업로드가 만들었던 준비용 캐시 사본 두 개가 정상 재시도 뒤에도 남았습니다. 각 7,090,841 bytes, 합계 14,181,682 bytes이며 합성 원본과 SHA가 같았습니다. 종료 시에는 finally 정리가 실행되지 않는 경로입니다. 큐 보존과 중복 방지 통과와 구분하며, 시작/복구 시 활성 전송과 원본을 보호하는 고아 준비 캐시 정리를 공통 개선으로 제안합니다. 제품 코드는 바꾸지 않았고 OS 자동 회수나 장기 누적은 미검증입니다. 최종 근거에 보관한 후 정확히 기록한 시험 소유 캐시 경로만 지웠습니다.
+
+원본 DB의 모든 저장 행, 설정, 스키마, 사진 바이트와 인증 보존 대조를 통과했습니다. 합성 DB 두 개와 사진 네 개, 잔여 캐시를 로컬에 보관한 뒤 시험 소유분과 QA 앱 DB/WAL/SHM 세 개를 정리했습니다. 자체 서버와 Metro를 멈추고 임시 소스54개(기존14개, 새40개)의 존재 여부와 해시, package/lock, 설치 APK와 보존 APK를 대조·복구했습니다. 다음 격리 단계까지 에뮬레이터만 유지했습니다.
+
+근거는 Git 제외 `docs/test-results/android-process-restart-55b7bda-20261025/`의 `process-cycle-summary.json`, `private-process-proof-*.json`, 종료 직후 DB 사본, 재실행 상태, `private-synthetic-final.tar`, `shutdown-status.json`입니다. 이전 OS 연결 차단4개와 이번 앱 종료3개를 합쳐 새 소스 검사 수로 표시하지 않습니다.
+
+### c2c871f: 복원 목록과 사진의 독립 기한 2개 PASS
+
+고정 소스는 **`c2c871feb2ddaca7f9132e930cb695657193ee69`**입니다. `RestoreClient`가 abort만 기다리지 않고 전체 요청 기한을 독립적으로 반환하며, 취소 정리도 반환을 막지 않도록 보완한 소스입니다. 합성 복원 사진을 정상 수신한 뒤 해당 시험 파일만 0바이트로 만들고, 제품의 점검 기록 API로 복구 대기를 보존한 별도 DB 두 개를 사용했습니다.
+
+| 실제 HTTP 지연 | Android 관찰과 결과 |
+| --- | --- |
+| 방문 목록 headers와 본문 16/40 bytes 뒤 유지 | native 요청 시작에서 반환까지 약10.025초, Coordinator 전체 약10.033초. 기한 전 native 응답 객체나 reader 바이트는 노출되지 않음. 복구 큐, 서버 조회 cursor, 기존 URI/출처와 0바이트 파일 보존 |
+| 사진 headers와 본문 16/7,090,841 bytes 뒤 유지 | 실제 native 응답 객체와 reader16 bytes 관측. 사진 요청 시작에서 반환까지 약30.029초, 선행 목록 조회와 점검을 포함한 Coordinator 전체 약31.159초. 새 파일 생성·등록 없이 기존 자료와 복구 대기 보존 |
+
+두 경우 모두 실패 반환 뒤 DB를 닫고 다시 열어 대기가 유지됐고, 명시적 재시도에서 전체 크기·SHA가 맞는 새 URI만 연결했습니다. 이전 0바이트 파일을 보존했으며 반복 실행에서 재다운로드나 중복 등록은 없었습니다. 서버 조회 cursor와 대기 payload는 유지됐습니다. 사진 경우의 방문/파일 점검 scan은 정상 순환 점검으로1→0 되감겼고, 이 실패 후 값은 늦은 전송 시도와 DB 재개방 동안 그대로였습니다.
+
+기한 뒤 tail을 보내려 할 때 두 연결 모두 이미 닫혀 있었습니다. 이후 대기·URI·파일 목록이 바뀌지 않은 것은 확인했지만, 실제 늦은 본문을 native가 수신하고 거절한 모든 경로를 입증하지는 않습니다. 이번 두 검사에는 OS 무선 설정 변경이나 앱 강제 종료가 없습니다.
+
+첫 판정 도구의 네트워크 실패 시 paused 기대와 모든 scan 값의 전후 동일 기대를 실제 계약에 맞게 수정했습니다. paused는 계정/화면 중단에 사용되고 scan은 재점검 과정에서 되감길 수 있습니다. 이미 끝난 실제 기한 요청을 다시 시작하거나 제품을 바꾸지 않고 보존한 결과에서 재시도를 이어갔습니다.
+
+Node24.21.0의 `bash scripts/verify-cloud.sh`가 PASS입니다. 타입, ESLint, 19개 파일의 **모바일498개**, 이 Android 브랜치 verifier의 backend syntax/native dependency load와 양쪽 production JS/Hermes export를 포함합니다. 공통 서버61개와 공통 HTTP 검사를 이번 Android 단계에서 다시 실행한 것으로 표시하지 않습니다. 브랜치 CI도 고정 QA 소스의498개/native2개와 구분합니다.
+
+새 원본/인증 기준과의 최종 보존 대조를 통과했습니다. 합성 DB 두 개와 사진 다섯 개를 근거로 보관한 뒤 시험 소유분과 QA 앱 DB/WAL/SHM 세 개를 지웠습니다. 앱과 자체 서버를 먼저 멈추고 임시 소스55개(기존14개, 새41개)를 원래 존재 여부와 해시로 복구했습니다. package/lock, 설치·보존 APK와 무선 설정도 같습니다. 전용8082 reverse와 loopback3002/3003을 정리하고 모든 검사를 마친 뒤 에뮬레이터를 정상 종료했습니다. HTTP reverse와 iOS8081, iPhone, 원래 checkout 조작은 없습니다. 생성된 JS/Hermes 출력40개, 논리8,784,523 bytes만 사용 후 정리했습니다.
+
+근거는 Git 제외 `docs/test-results/android-restore-deadline-c2c871f-20261025/`의 `deadline-cycle-summary.json`, `private-observed-*.json`, `private-state-after-*.json`, `private-synthetic-final.tar`, `verification.log`, `shutdown-status.json`입니다. 개인 원본 수량, 값, 해시와 인증 항목, fixture 비밀값은 공개하지 않습니다. 실제 Android 휴대폰, Release, 이동 중 무선망 전환, 자동 복구, 전원 장애와 G1~G4 전체 수용 기준은 계속 별도입니다.
+
+### 저장공간 정리
+
+실행 중인 Gradle 빌드가 없는 것을 확인한 뒤 사용자 요청에 따라 `/Users/oh/.gradle/caches`의 재생성 캐시 **2,319,745,024 bytes(약2.32GB)**를 정리했습니다. 다음 native 빌드 때 다시 다운로드할 수 있습니다. SDK, NDK, JDK, AVD 데이터, 소스, APK, 개인 DB/사진과 기존 검증 근거는 보존했습니다. 캐시 삭제 직후 가용량 증가는 관측되지 않았습니다.
+
+9월28일·10월12일 로컬 백업은 앞선 정리 이력대로 현재 없었습니다. 새로 확인한 **10월20일21:59:52 Time Machine 로컬 백업 한 개는 사용자에게 별도 삭제 승인을 받은 뒤 삭제**했고, 로컬 스냅샷 목록이 빈 것을 확인했습니다. 해당 삭제 전후 실제 가용량은 **35,298,185,216→55,692,115,968 bytes**, 관측 증가는 **20,393,930,752 bytes(약20.39GB)**입니다. 캐시 삭제량을 여기에 다시 더하지 않습니다. 프로젝트 `.snapshots/`, 외장·원격 백업, 소스와 기기 자료는 삭제하지 않았습니다. 근거는 로컬 `storage-cleanup-20261025.json`, `time-machine-cleanup-20261025.json`입니다.
+
+## 10월 24일 후속: 사진 ACK의 부분 응답과 기한 검증
+
+공통 **`55b7bdae804d74ef0776ef37c7aeb91d50b40493`**를 새로 고정했습니다. 제품 변경은 `PhotoSyncClient`의 응답 stream 읽기, 64KiB 제한과 독립적인 전체 요청 30초 기한입니다. 패키지, SDK, 기존 APK는 그대로이며 Android 시작 기준은 `287ae1c`입니다. 아래 4개는 새 소스의 시나리오이며, 앞선 `8b48ec8`의 두 시나리오와 v5 native16개에 합산하지 않습니다.
+
+| 새 소스 시나리오 | 실제 결과 |
+| --- | --- |
+| multipart 전송 중 OS 연결 차단 | 프록시가 사진 21,243 bytes, backend가 multipart 21,900 bytes를 받은 뒤 비행기 모드와 Wi-Fi/데이터 OFF. Native HTTP도 실제 실패. 서버 사진, 영수증, 부분 파일 없음. 원래 사진 SHA와 작업, 대기 보존. DB 재개방 후 같은 작업 재시도로 한 번만 저장 |
+| 사진 응답 중 OS 연결 차단 | 실제 native reader가 PNG 16,384 bytes를 읽은 뒤 차단. 새 파일 생성/등록 없이 복구 대기와 기존 URI, 0바이트 파일 보존. DB 재개방 뒤 전체 본문을 새 사본으로 검증해 연결, 기존 손상 파일 보관. 반복 실행 중복 없음 |
+| 저장된 사진의 ACK 일부 뒤 TCP 중단 | 서버가 사진과 영수증을 저장한 뒤 전체 ACK 486 bytes 중 32 bytes를 보낸 다음 TCP를 닫음. Native reader에서도 32 bytes가 관측되고 약 1.002초에 실패 반환. 로컬 ACK 미적용, 파일과 고정 작업/fingerprint 보존. DB 재개방과 같은 작업 재시도로 확인되며 서버 중복 없음 |
+| 끝나지 않는 ACK의 전체 기한 | 서버가 ACK 32/486 bytes만 보낸 채 유지. Android transport가 기한 전 응답 객체를 반환하지 않은 경로에서 약 30.041초에 실패 반환. 대기와 미확인 fingerprint 유지, native 요청 종료. 기한 뒤 tail 전송 시도 시 연결은 이미 닫힘. DB 재개방, 동일 작업 재시도와 중복 방지 통과 |
+
+ACK 두 시나리오는 서버가 이미 저장을 마친 경우이므로 사진과 영수증이 각각 하나 있는 것이 정상입니다. 부분 업로드가 서버 사진/영수증을 만들지 않은 경우와 구분합니다. 복귀와 재시도는 native Coordinator를 명시적으로 실행했으며 이번 단계에서 새 UI 확인창이나 물리 Android를 검사하지 않았습니다.
+
+첫 도구는 TCP를 끊기 **전에** native reader의 32 bytes 관측을 기다렸지만 Android에서는 그 시점에 응답 객체가 노출되지 않아 관측 조건이 끝났습니다. 해당 대기에서 실제 30초 기한 반환을 별도로 보존했고, TCP 시나리오는 서버가 32 bytes를 보낸 뒤 끊어 native reader의 32 bytes를 확인했습니다. 제품은 바꾸지 않았습니다. 기한 시나리오는 응답 객체 반환 전 transport 경로이며, 부분 32 bytes를 reader가 소비한 것으로 표시하지 않습니다. 기한 뒤에는 소켓이 닫혀 실제 늦은 ACK를 수신하지 않았으므로, 이를 늦은 ACK 소비/거절의 모든 native 경우로 확대하지 않습니다. iOS 내부 JSON/text 경로의 원인은 이 Android 기록에서 단정하지 않습니다.
+
+새 QA 소스의 Node24.21.0 `bash scripts/verify-cloud.sh`가 PASS입니다. 타입, ESLint, 18개 파일의 **모바일489개**, 기존 backend syntax/native dependency load와 Android/iOS production JS/Hermes export를 포함합니다. 공통 서버61개는 여기서 반복하지 않았으며 실제 합성 서버와 native HTTP 결과와 구분합니다.
+
+두 고정 소스 모두 원래 개인 DB의 모든 저장 행, 설정, 스키마, 사진 바이트와 인증 보존 대조를 통과했습니다. 기본 개인 DB를 새 소스로 열지 않았습니다. 새 소스의 합성 DB 두 개와 파일 다섯 개를 최종 근거로 보관한 뒤 시험 DB/파일, QA 앱 DB/WAL/SHM 세 개를 정리했습니다. 원래 무선 설정과 임시 소스54개의 원문, 존재 여부, 해시를 복구했고 package/lock과 APK도 같습니다. 자체 8082, 프록시3002, backend3003과 reverse, 에뮬레이터를 종료했습니다. HTTP reverse, macOS나 사용자 라우터 설정 변경, 새 native 빌드/설치/의존성 변경은 없습니다. 사용 종료된 JS/Hermes 출력만 정리했으며 즉시 여유 공간 증가는 관측되지 않았습니다.
+
+새 소스 근거는 Git 제외 `docs/test-results/android-ack-stream-55b7bda-20261024/`의 `inflight-cycle-summary.json`, `ack-response-cycle-summary.json`, `private-ack*-*.json`, `private-state-after-*.json`, `private-synthetic-final.tar`, `verification.log`, `shutdown-status.json`에 있습니다. 기존 소스 근거는 아래 별도 폴더로 유지합니다. 개인 원본 수량, 값, 해시, 인증 상태와 fixture 비밀값은 공개하지 않습니다. 실제 Android 휴대폰, Wi-Fi↔모바일망의 이동 전환, Release, 배터리, 전원 장애와 전체 수용 기준은 별도입니다. 추가 제품 수정 제안은 없습니다.
+
+## 10월 24일 재개: 전송 본문 중 실제 연결 중단
+
+공통 `8b48ec8`을 고정해 기존 APK/API 37에서 새 두 범위를 검사했습니다. HTTP용 reverse 없이 에뮬레이터의 `10.0.2.2:3002` 경로와 loopback 프록시/백엔드를 사용했습니다. macOS나 사용자 라우터의 네트워크는 변경하지 않았습니다. 기존 정상/요청 전 오프라인 결과를 반복한 수에 넣지 않습니다.
+
+7,090,841 bytes의 유효 합성 PNG를 사용했습니다. 프록시 게이트는 본문의 일부가 실제로 흐른 것을 기록하는 용도이며, Android 비행기 모드와 Wi-Fi/모바일 데이터 OFF 뒤 게이트를 해제해 단순 서버 대기를 실패 원인으로 삼지 않았습니다. 두 경우 모두 별도 native HTTP도 차단됐고 요청은 기본 30초 제한 전에 실패로 반환됐습니다.
+
+| 범위 | 실제 관찰과 결과 |
+| --- | --- |
+| multipart 본문 중 업로드 단절 | 사진 부분 32,923 bytes와 backend multipart 본문 33,580 bytes 실수신 후 OS 연결 차단. Native 요청 실패, 서버 사진/영수증 0개와 부분 파일 없음. 작업 ID, payload, 사진 SHA와 미확인 fingerprint 보존. DB 재개방 뒤 같은 작업을 명시적으로 보내 사진/영수증 각각 1개만 저장, 반복 실행도 중복 없음 |
+| 사진 응답 본문 중 복구 단절 | 앱의 실제 native reader가 PNG 16,384 bytes를 읽은 뒤 OS 연결 차단. 전체 본문 미수신 상태로 실패했고 새 파일 생성/사진 등록은 없었음. 기존 0바이트 파일, 사진 URI, 복구 대기와 조회 위치가 DB 재개방 뒤 유지. 복귀 후 새 검증 사본으로만 연결하고 이전 손상 파일 보존. 반복 실행에서 재다운로드나 중복 등록 없음 |
+
+두 번째는 이미 받은 QA 사진을 0바이트로 만든 복구 다운로드의 중단입니다. 실제 사용자 사진이나 원본 DB를 손상시키지 않았습니다. 전송 경로와 타이밍은 합성 프록시로 제어했으며 물리 Android, 실제 이동 중 무선망 전환, 전원 장애나 화면 확인창의 결과가 아닙니다. 업로드와 다운로드 실패 반환은 각각 약 1.1초, 1.4초였고, 임의 fetch 예외나 body 오류를 만들어 반환하지 않았습니다.
+
+초기 검사 서버의 본문 계측 listener가 인증 미들웨어보다 먼저 스트림을 소비해 준비 요청이 400으로 끝났습니다. 계측을 스트림 흐름을 바꾸지 않는 방식으로 고친 뒤 동일한 제품 소스에서 위 결과를 확인했습니다. 이는 하네스 수정이며 제품 코드를 바꾸지 않았습니다.
+
+개인 원본 행, 설정, 스키마, 사진 바이트와 인증의 전후 보존 대조를 통과했습니다. 합성 DB 두 개와 첨부본 세 개의 최종 사본을 로컬에 보관하고 시험 자료, QA 앱 DB/WAL/SHM, 자체 Metro/프록시/백엔드와 에뮬레이터를 정리했습니다. 무선 설정과 임시 소스54개의 원문/부재/해시, package/lock과 APK를 복구·대조했습니다. SDK, AVD, 원래 checkout과 기존 백업은 보존했습니다.
+
+근거는 Git 제외 `docs/test-results/android-inflight-network-20261024/`의 `inflight-cycle-summary.json`, `request-timing-summary.json`, `private-*-at-gate.json`, `private-state-after-*.json`, `private-synthetic-final.tar`, `shutdown-status.json`에 있습니다. 개인 원본 수량, 값, 해시와 인증 상태는 공개하지 않습니다. 사진 저장 후 일부 ACK 응답의 중단은 이 두 검사에 포함하지 않으며, 공통 응답 처리 후속 소스에서 별도로 확인합니다.
+
+## 10월 21일 종료 전: 실제 OS 네트워크 차단과 복귀 1회
+
+사용자가 현재 검사까지만 마치고 저장·중단하도록 요청해, 시작한 네트워크 차단/복귀 한 차례만 완료했습니다. 공통 `8b48ec8`과 기존 APK/API 37을 고정했고 고유 QA DB, 인증 이름, 합성 HTTP 서버를 사용했습니다. 공통 제품 코드는 변경하지 않았습니다.
+
+HTTP는 `10.0.2.2:3002`의 에뮬레이터 호스트 네트워크 경로로 연결했습니다. **HTTP용 adb reverse는 만들지 않았으며 전용 Metro 8082 reverse만 유지**했습니다. 실제 `expo/fetch`로 정상 HTTP 200을 먼저 확인한 뒤 Android OS의 비행기 모드를 켜고 Wi-Fi와 모바일 데이터를 껐습니다. 해당 OS 상태와 Connectivity 진단을 보존했으며 같은 native HTTP가 실제 오류로 실패했습니다. fetch 예외, 응답 유실, 타임아웃을 하네스로 주입한 결과가 아닙니다.
+
+| 단계 | 실제 관찰 |
+| --- | --- |
+| 연결 정상 | 합성 서버의 native HTTP 200. 합성 방문 1건과 사진 1장의 전송 대기 준비 |
+| OS 연결 차단 | 비행기 모드 켜짐, Wi-Fi와 모바일 데이터 꺼짐. native HTTP 실패, 방문 전송도 실패. 방문/사진 작업 ID, payload, 대기와 사진 SHA 보존. ACK metadata 없음. 방문 시도 횟수 증가는 허용하되 성공으로 처리하지 않음 |
+| 원래 설정 복귀 | 원래 무선 설정으로 복구한 뒤 같은 native HTTP 200 |
+| 명시적 재시도 | Coordinator를 다시 실행해 방문 다음 실제 multipart 사진 전송. 사진 ACK 1개, 대기 0건. 기기 첨부본의 SHA 유지, 서버 저장 바이트도 읽기 대조로 일치 확인 |
+
+이는 에뮬레이터 OS 네트워크를 끊고 복귀한 조건입니다. 방문 우선 전송이 차단돼 사진은 전송 전에 대기했습니다. **사진을 전송하는 도중의 단절, Wi-Fi↔모바일망 전환, 물리 기기의 무선 환경이나 다운로드 도중 단절을 확인한 결과는 아닙니다.** 사용자 중단 요청에 따라 사진만 단독 실패시키는 추가 주기와 다운로드 중단 검사는 시작하지 않았습니다. 실제 화면 확인창 검사는 앞선 v5 결과이며 이번에는 native Coordinator를 명시적으로 실행했습니다.
+
+시작·종료에 개인 원본 DB의 모든 저장 행, 설정, 스키마, 사진 바이트와 인증 보존을 비공개로 대조했습니다. 기본 개인 DB를 새 소스로 열지 않았습니다. 합성 시험 DB와 첨부본, QA 앱 DB/WAL/SHM 3개를 정리하고 네트워크 설정과 임시 소스54개의 원문/부재/해시를 복구했습니다. package/lock과 APK도 같으며 자체 8082/3002, Metro reverse, 에뮬레이터를 종료했습니다. HTTP reverse3002는 전 과정에서 없었습니다. 기존 백업, SDK, AVD와 중요한 근거는 보존했습니다.
+
+실제 네트워크 주기와 전후 상태는 로컬 Git 제외 `docs/test-results/android-os-network-20261021/`의 `network-cycle-summary.json`, `private-state-after-*.json`, `private-network-*.txt`, `validation-files.json`, `shutdown-status.json`과 합성 서버 DB에 남깁니다. 공통8b48ec8의 앞선 모바일479개와 native16개를 이번에 반복하거나 새 검사 수에 합산하지 않았습니다. 결과 요약만 기존 Android PR에 저장하고 CI를 확인한 뒤 중단하며 다음 재개는 사용자의 새 요청을 기다립니다.
+
+## 10월 21일 후속: 손상 다운로드 점검과 새 사본 복구
+
+공통 **`8b48ec8deb74c2402ddfb5f3762664e6e85bbb63`**를 고정해 새 v5 복구를 검증했습니다. Android 시작 기준은 `1231bae`입니다. 기존 Debug APK, API 37, 실제 비동기 SQLite 3.50.3, native 파일과 SHA-256, 실제 `expo/fetch` HTTP를 사용했습니다. 고유 QA DB와 SecureStore 이름만 바꿔 임시 적용했고 새 native 빌드, 설치, 의존성 변경은 없습니다.
+
+**native 통합 16개가 모두 PASS**입니다. 이전 v4의 15개와 v3의 24개를 반복하거나 이번 수에 합산하지 않습니다.
+
+| 확인 범위 | 수 | 실제 결과 |
+| --- | ---: | --- |
+| 이전 0바이트 사례의 v4→v5 | 1 | 보존한 합성 v4 DB와 두 사진을 새 DB 이름과 파일 경로에 복제. migration 전후 기존 모든 행과 이전 cursor 열 보존, applied 다운로드 두 개만 출처에 편입. 0바이트 사진만 새 경로에 검증 복사해 연결, 기존 0바이트와 정상 파일 보존. 재개방과 재점검 통과 |
+| v4 출처 편입 실패 | 1 | 실제 `restore_files` INSERT 뒤 오류를 주입. 새 테이블, 점검 열, 버전, 기존 행 전체 rollback과 재시도 통과 |
+| 0바이트, 누락, 같은 길이의 변조 | 3 | native 검사에서 각각 damaged/missing 판별. 새 파일의 크기와 SHA를 확인한 뒤 연결만 교체. 이전 바이트나 부재 상태 유지, 이전 출처 preserved, 새 출처 valid. 재개방 후 정상 파일 재다운로드 없음 |
+| 복구 연결 SQL 실패 | 1 | 실제 사진 URI UPDATE 뒤 오류. 사진 연결, 출처, 큐의 부분 커밋 없음. 미등록 새 파일 제거, 기존 손상 파일과 대기 보존, 재개방 뒤 복구 성공 |
+| 토큰, owner, URI 변경 | 3 | 새 파일 생성 뒤 토큰이나 계정 변경 시 등록 차단과 명시적 재시도. 점검 뒤 사진 URI가 사용자 첨부본으로 바뀌면 그 연결과 바이트를 보존하고 미등록 복구 사본만 제거 |
+| 미전송 자식 변경, 부모 삭제 | 2 | 자식 outbox payload와 attempts 그대로 유지하며 복구 차단. 다운로드 뒤 부모 삭제 시 다시 연결하지 않고 삭제 큐와 이전 파일 보존 |
+| 사용자 첨부본, 계정과 공유 경로 | 2 | restored 형태의 이름만 가진 사용자 사진은 출처 편입, 점검, 다운로드 대상이 아님. 실제 두 합성 계정의 같은 UUID에서 한 계정만 복구하고 다른 계정의 행, 출처, 바이트 유지. 공유 URI는 파일 읽기 전에 거절 |
+| 점검, 다운로드 제한과 재개 | 1 | 기존 합성 사진 22개를 손상시킨 뒤 한 번에 점검 최대 20개, 새 받기 최대 20개 확인. 점검 cursor 재개방 보존, 첫 20개와 다음 나머지 2개 복구. 순환 점검 중 기아 없음, 이전 손상 사본 모두 보존 |
+| 점검 storage, cursor 쓰기 실패 | 2 | 실제 native 정상 검사 뒤 주입한 storage 오류를 손상으로 오인하지 않음. 실제 점검 cursor SQL 뒤 오류에서는 cursor, 출처, 큐를 함께 rollback. 재개방과 재시도 통과 |
+
+이전 합성 자료의 원래 보존본은 수정하지 않았습니다. 복제본의 파일 URI만 새 전용 경로로 치환했고, migration 보존 비교는 그 복제본을 기준으로 수행했습니다. 일부 계정, SQL, storage 실패는 검사 하네스에서 시점을 제어한 합성 오류이며 실제 디스크 부족이나 전원 차단으로 표시하지 않습니다.
+
+### 실제 확인창과 사진 표시
+
+새 QA 앱 저장소에서 같은 합성 계정으로 로그인했습니다. 9초간 자동 조회 없음, 계정과 서버, 20개 점검, 새 사본 연결, 기존 파일과 사용자 사진 보존 안내가 있는 확인창, 취소 시 조회 없음이 PASS입니다. 확인 후 서버 방문과 사진 목록을 먼저 읽고 정상 사진 두 개를 받았습니다.
+
+그중 한 QA 파일만 의도적으로 0바이트로 만든 뒤 실제 화면에서 다시 확인하고 받았습니다. 이전 다운로드 두 개를 점검해 사진 한 개만 다시 받았고 **새 사본 복구 1개와 대기 0건 안내**가 표시됐습니다. 이전 0바이트 파일은 그대로 남았고 정상 사진의 경로는 유지됐습니다. 복구 후에도 새 확인창이 필요했고 취소 뒤 9초간 추가 점검이나 다운로드는 없었습니다. 지역 상세에서 두 합성 사진이 표시되는 것을 직접 확인했습니다.
+
+에뮬레이터는 계속 켜 둔 채 앱 프로세스만 `am force-stop` 후 재실행했습니다. 현재 두 사진과 이전 0바이트 파일의 바이트, SHA, 출처, URI가 그대로이며 새 업로드 outbox나 ACK metadata를 만들지 않았습니다. QA 로그아웃도 마쳤습니다. **이전 host exit139의 직접 원인은 여전히 미확정**이며 강제 host 종료를 재현하지 않았습니다. 이번 결과는 손상 파일의 탐지와 보존 복구를 확인한 것이며 전원 장애나 전체 중단 내구성의 완료 판정이 아닙니다.
+
+### 검사, 보존, 정리
+
+고정 QA 소스에서 Node 24.21.0의 `bash scripts/verify-cloud.sh`가 PASS였습니다. 타입, ESLint, 18개 파일의 모바일 **479개**, 기존 backend syntax와 native dependency load, Android/iOS production JS/Hermes export를 포함합니다. 공통 서버 61개와 공통의 임시 HTTP 검사는 이번에 반복하지 않았으며 이번 native HTTP 결과와 구분합니다.
+
+개인 원본의 모든 저장 행, 설정, 스키마, 사진 바이트와 인증 항목의 전후 보존 대조를 통과했습니다. 원래 개인 DB를 새 코드로 열지 않았습니다. 상세 값과 해시는 로컬에만 보관합니다. 16개 시험 DB와 해당 WAL/SHM 부재를 확인했고, QA 앱 DB/WAL/SHM 3개와 QA 사진 3개만 제거했습니다. 이전 0바이트 사례와 이번 복구의 DB 사본, 파일, 로그, 화면은 Git 제외 근거에 보존했습니다.
+
+앱과 자체 8082/3002를 먼저 멈춘 뒤 임시 파일 **54개(기존 14개, 새 40개)**를 원래 존재 여부와 해시대로 복구했습니다. package/lock과 보존 APK도 같고 자체 reverse와 에뮬레이터는 정상 종료했습니다. 생성 JS/Hermes 출력도 사용 종료 후 정리했으며 즉시 가용량 증가는 없었습니다. 원래 checkout, iOS 8081, iPhone, SDK, AVD, APK와 기존 백업은 보존했습니다.
+
+로컬 근거는 `docs/test-results/android-restore-repair-v5-20261021/`의 `validation-files.json`, `native-probe-result.json`, `private-archived-clone.json`, `ui-*-result.json`, `process-restart-summary.json`, `verification.log`, `shutdown-status.json`과 비공개 DB/파일 사본입니다. 이 폴더와 fixture 계정, 토큰, 원본 데이터는 커밋하지 않습니다. 실제 Android 휴대폰, Release, OS 네트워크 전환, 배터리, 시스템 백업과 전체 수용 기준은 계속 남겨 둡니다. Android PR에는 결과 문서만 저장합니다.
+
+## 10월 21일 수동 기록 복원 검증
+
+공통 동작 **`8ee29bd`**를 별도 합성 DB·인증 이름에서 실행했습니다. 기존 Debug APK와 API 37 에뮬레이터를 그대로 사용했으며 새 빌드·설치·의존성 변경은 없습니다. 실제 비동기 SQLite 3.50.3·파일·HTTP의 **15개를 모두 통과**했고 모바일 타입·린트·453개도 통과했습니다.
+
+방문 선행, v3→v4 자료 보존과 실제 SQL 롤백, 다운로드 응답 유실 뒤 DB 재개방·대기 재개, 첫 실행 20개/다음 실행 나머지 받기, JPEG·PNG 바이트·해시, 계정별 동일 UUID와 파일 분리, 미전송 변경·삭제 보존을 확인했습니다. 계정·화면 상태 변경과 파일/SQL 실패 뒤 미등록 파일 정리·대기 보존, 잘못된 길이·형식·해시 거절과 재시도도 포함합니다. 장애 시점의 일부는 합성 제어이며 실제 디스크 부족 시험은 아닙니다.
+
+화면에서는 대상 계정·서버·범위가 있는 확인창, 취소 시 요청 없음, 확인 후 복원과 완료 안내·재확인을 확인했습니다. 첫 복원 후 화면 확인 중 **에뮬레이터 프로세스가 비정상 종료(exit139)**됐고, 재실행 뒤 해당 합성 사진은 연결 정보가 남은 채 0바이트였습니다. 직접적인 원인은 확정하지 않았습니다. 이미 완료 상태인 파일을 다시 검사하거나 재다운로드하는 경로가 없어 수동 복원을 다시 눌러도 이 파일은 복구되지 않았습니다.
+
+이상 사례를 그대로 보존한 뒤 다른 합성 사진을 받았고 파일 길이·해시와 상세 화면 표시가 정상이었습니다. 이후 **에뮬레이터는 켠 채 앱 프로세스만 종료·재실행**했을 때 새 사진의 바이트와 해시가 유지됐습니다. 정상 앱 재실행과 에뮬레이터 자체 비정상 종료 결과를 구분하며 전체 중단 내구성은 완료로 표시하지 않습니다. 다음 보완은 [완료된 복원 파일의 재검증·복구 제안](ANDROID_PROPOSED_CHANGES.md)입니다.
+
+원래 개인 DB의 전체 저장 테이블·설정·스키마·사진 바이트와 인증을 읽기 대조해 보존했습니다. 기본 원본 DB를 새 코드로 열지 않았습니다. 임시 공통 파일53개를 원래 존재 여부·해시대로 복구하고 package/lock·APK도 보존했습니다. 시험 DB·합성 사진·시험 인증·자체 8082/3002·reverse 포트·에뮬레이터를 정리했습니다. 0바이트 사례와 정상 새 사진, DB 사본·로그·화면 근거는 Git 제외 `docs/test-results/android-restore-v4-20261021/`에 보관합니다. 개인 원본 행 수·내용·해시·인증 상태는 공개하지 않습니다.
+
+추가 읽기 검토에서 macOS 진단의 호스트 에뮬레이터 HangDetector/CrashReporter 종료 경로를 확인했으며, 직접 원인은 계속 미확정입니다. 정상 새 합성 파일의 앱 프로세스 종료 전후 파일 매핑·해시·수정 시각과 0바이트 사례의 DB 사본을 로컬에 보존했습니다. 후속 손상 파일 보완은 고정 SHA/API를 받은 뒤 별도 검사합니다. 검증 과정의 생성 JS/Hermes 출력 40개(논리 8,739,107 bytes)는 사용 종료 후 정리했으며 즉시 가용량 증가는 관측되지 않았습니다. SDK·AVD·APK·백업과 중요한 근거는 보존했습니다.
+
+이 결과는 Android 에뮬레이터의 Debug·Inspector 검사입니다. 실제 Android 휴대폰·Release·시스템 백업·배터리·OS 네트워크 전환·에뮬레이터 비정상 종료 원인과 손상 파일 자동 복구는 미확인입니다. 공통 제품 코드는 Android PR에 중복 포함하지 않으며 전체 수용 판정은 공통 체크리스트를 따릅니다.
+
+10월 20일 공통 **`2bae436`의 모바일 DB v3을 실제 Android 비동기 SQLite 파일 DB 24개에서 검증해 모두 PASS**였습니다. v1/v2의 모든 owner 행·설정·사진 URI/bytes·큐·metadata 보존·재개방, 같은 UUID의 계정 격리, 복합 FK와 가져오기 cascade·충돌·실제 SQL rollback을 확인했습니다. 개인 원본과 인증 항목의 보존 대조를 통과했습니다. 상세 값은 로컬 근거에만 보관합니다. 임시 소스 40개와 실행 환경은 복구·종료했습니다. 다운로드·복원 기능과 실제 Android 휴대폰 통과를 뜻하지 않습니다.
+
+10월 19일 공통 **`809efe0`의 수동 사진 백업을 Android에서 검증**했습니다. 앞선 native 파일 준비 1개·비동기 SQLite/실제 multipart 통합 9개와 빈 계정 확인창 결과에 이어, **방문 1건·PNG 1개가 있는 합성 계정의 실제 화면 전송도 PASS**입니다. 확인 전·취소 후 전송 없음, 확인 뒤 방문 먼저·사진 정확히 1회, 완료 표시·ACK·기기 첨부본 유지와 매 실행 재확인을 확인했습니다. 개인 원본과 인증 항목의 보존 대조를 통과했습니다. 상세 값은 로컬 근거에만 보관합니다.
+
+10월 18일 `51c96d2`에서 실행한 연결 복구 13가지 PASS와 이전 화면·전송·경쟁 조건 결과는 아래 이력으로 유지합니다. 이 결과를 `809efe0`의 사진 검증으로 합산하지 않습니다.
+
+현재 실제 Android 휴대폰은 없습니다. 결과는 Debug APK의 정적 검사와 API 37 에뮬레이터 시험이며, 실제 휴대폰이나 출시용 Release 검증으로 보지 않습니다. 전체 체크리스트와 완료 수는 공통 담당 채팅에서 관리합니다.
+
+## 10월 20일 모바일 DB v3 native 검증: 24개 PASS
+
+### 고정 소스와 안전한 적용
+
+Android 시작은 **`1f299fb5fb37757efb9f7c86e92fea3e08683fc3`**, 공통 고정 소스는 **`2bae436b9f128219d6e81593139071526749b28a`**입니다. 이전 37개 목록에 새 `src/storage/migrations.ts`, `tests/migrations.test.ts`, 고정 `tests/fixtures/schema-v2.sql`을 포함해 **40개**의 원문·부재·고정 소스·적용 해시를 보존했습니다. production 23개·테스트 15개·fixture 1개·Vitest 설정 1개입니다.
+
+database 이름 한 곳과 SecureStore key/service만 새 QA 이름으로 바꾸고 그 차이를 별도 기록했습니다. migration·schema·Repository와 고정 v2 fixture는 해당 SHA 그대로입니다. 원래 개인 v1 DB는 v3 앱으로 열지 않았습니다. 기존 Debug APK·API 37·CPU 4개·SwiftShader·전용 8082만 사용했고 새 native 빌드·설치·의존성 변경은 없었습니다.
+
+실제 앱에 로드된 Repository·migration을 native `expo-sqlite`의 네 async adapter 함수와 고유 파일 DB에서 실행했습니다. 각 DB 경로가 원본과 다름을 확인하고 WAL·busy timeout을 사용했습니다. Inspector 코드는 기존에 검증한 ES2015 generator 변환을 적용했습니다. 측정된 native SQLite는 **3.50.3**이며, Repository가 실행하는 각 `BEGIN IMMEDIATE` 직전에 `foreign_keys=1`을 확인했습니다. 초기 연결을 FK OFF로 열거나 재개방한 뒤에도 initialize가 BEGIN 전에 켜는 것을 확인했습니다.
+
+### 합성 자료와 실제 결과
+
+`migrations.test.ts`와 고정 v2 SQL의 24개 시나리오를 실제 비동기 native 파일 DB에 옮겨 실행했습니다. guest/A/B, 활성·삭제·개발 방문, 사진 URI, 소수점 시각, outbox payload/attempts, 후보·설정, 미완료/업로드 metadata와 실제 native PNG bytes를 사용했습니다. 준비된 사진 fingerprint와 ACK는 합성 값이며 HTTP 서버·실제 서버 계정은 만들지 않았습니다.
+
+| 묶음 | 수 | 실제 결과 |
+| --- | ---: | --- |
+| v1/v2→v3·재개방 | 2 | 세 owner의 기존 모든 테이블 행·설정·후보·URI·payload·attempts·소수점 시각 보존. v2의 미완료/완료 metadata·native PNG bytes 유지, 재개방·v3 재초기화 통과 |
+| migration/지역 초기화 실패 | 8 | 새 테이블 생성·사진/metadata 복사·기존 테이블 제거·이름 교체·버전 쓰기 SQL 뒤 오류 6가지, COMMIT 직전 오류 1가지, migration 뒤 지역 초기화 오류 1가지. 실제 rollback으로 행·스키마·이전 버전 보존, 재개방 후 재시도 통과 |
+| 불명확한 기존 저장 구조 | 4 | photos/metadata owner 불일치 2가지, 버전 -1/0/99 묶음, 예상 밖 중간 테이블. 소유권 추정·조용한 행 손실·버전 재표시 없이 기존 구조와 행 보존 |
+| 같은 연결의 동시 요청 | 1 | 두 initialize와 후속 개발 방문 쓰기를 함께 요청. 실제 async 연결에서 직렬 처리·방문 1건 유지, 중첩 transaction 오류 없음 |
+| 같은 UUID·fingerprint·ACK | 1 | A/B의 같은 방문·사진·작업 UUID 동시 저장. owner별 URI·다른 파일 해시·사진 준비·시도 횟수 독립. A ACK만 완료되고 B 큐·metadata·attempts 보존 |
+| FK·owner 한정 삭제 | 2 | 다른 owner의 방문/사진을 참조하는 자식·metadata SQL 거절. Repository 삭제가 다른 owner를 보존하며, 물리 DELETE의 사진→metadata cascade도 해당 owner에만 적용 |
+| guest GPS 가져오기 | 1 | outbox를 옮긴 뒤 부모 방문 owner 변경으로 사진·고정 metadata가 실제 ON UPDATE CASCADE. URI·frozen payload 유지, 개발 자료는 guest에 잔류, 같은 UUID의 B 자료 불변 |
+| 가져오기 충돌·SQL 실패 | 5 | 방문 ID·session·사진 ID·작업 ID 충돌 4가지에서 양쪽 모든 행 불변. outbox 실제 이동 뒤 부모 UPDATE trigger의 SQL ABORT 1가지에서 부모·자식·metadata·outbox 전체 rollback |
+
+행·스키마 비교는 실제 native SELECT 결과를 사용했습니다. 보존·재개방과 계정 관계 검사에서 `foreign_key_check` 빈 결과와 integrity `ok`를 확인했습니다. 일부 오류는 실제 SQL이 완료된 다음 adapter가 예외를 내도록 주입했고, 가져오기 실패는 native SQLite trigger의 ABORT입니다. 실제 디스크 장애·전원 차단이나 프로세스 중간 종료의 결과로 확대하지 않습니다. COMMIT 실패 경우는 **COMMIT 실행 전** 오류이며 이미 커밋한 내용을 rollback한 것으로 표시하지 않습니다.
+
+### 원본·인증·파일·소스 복구
+
+개인 원본과 인증 항목의 보존 대조를 통과했습니다. 상세 값은 로컬 근거에만 보관합니다. 이전 검증의 보존 근거와도 같았습니다. QA 외 인증 저장 항목 해시도 같고 QA 인증 항목·실제 세션은 끝까지 부재였습니다.
+
+24개 시험 DB는 각각 close/delete하고 DB·WAL·SHM 부재를 확인했습니다. 각 시험의 전용 native PNG 폴더도 제거돼 남은 폴더는 0개입니다. 앱용 QA DB는 v3·방문/사진/outbox/metadata 0건·integrity `ok`를 확인한 뒤 DB/WAL/SHM 3개만 정리했습니다.
+
+앱·자체 Metro를 먼저 멈춘 뒤 기존 파일 **14개**를 원문으로 복구하고 새 임시 파일 **26개**를 제거했습니다. 40개 전체 존재 여부·바이트와 package/lock·보존 APK hash가 같습니다. 자체 reverse 8082와 에뮬레이터도 종료했습니다. HTTP 서버·실제 서버 계정은 시작하지 않았습니다. 원래 checkout·iOS 8081·iPhone·SDK·AVD·기존 캐시·백업·증거는 조작하지 않았습니다.
+
+### 자동 검사와 남은 범위
+
+QA DB·인증 이름 오버라이드를 포함한 임시 소스의 `bash scripts/verify-cloud.sh`가 PASS입니다. Node 24.21.0의 모바일 타입·ESLint·**15개 파일/402개**, 기존 backend syntax/native dependency load, Android/iOS JS/Hermes export를 포함합니다. 기존 의존성을 읽기 전용 재사용했고 `setup-cloud.sh`나 새 의존성 설치는 로컬에서 반복하지 않았습니다. 공통 서버 61개·실제 임시 HTTP 검사는 이번에 반복하지 않았으며 위 24개는 실제 native 저장 검사로 구분합니다.
+
+제품 소스의 추가 수정 제안은 없습니다. 이번 결과는 저장 구조의 보존·격리 기반입니다. 사진 다운로드·복원·cursor/다운로드 대기·중단 재개 기능 완료, 실제 Android 휴대폰·Release·OS 백업/복원·실제 저장 공간 부족/전원 차단을 뜻하지 않습니다. 앞선 `809efe0`의 사진 native·UI 결과를 v3에서 반복한 것으로 합산하지 않으며 P3-10 전체·G1~G4 완료 수도 변경하지 않습니다.
+
+로컬 Git 제외 근거: `docs/test-results/android-storage-v3-20261020/`. 개인 DB·사진·인증·기기 원본 로그·QA 식별자는 공개 문서와 PR에 넣지 않습니다.
+
+| 근거 | 로컬 파일 |
+| --- | --- |
+| 고정 SHA·새 migration/fixture·복구 해시 | `validation-files.json`, `common-*.txt`, `original-*.txt`, `schema-v2.sql`, QA 이름 사본 |
+| 24개 실제 native case·engine 버전 | `native-probe-result.json`, `private-native-probe-result.json`, generator 변환 probe |
+| 원본 전체 테이블·설정·사진·인증 | `baseline-data.json`, `final-data.json`, `private-original-all-tables.json`, `*-credential.json` |
+| 시험 DB·PNG·실행 환경·APK 보존 | `native-cleanup-summary.json`, `shutdown-status.json`, `apk-preservation.json` |
+| 자동 검사·실행 로그 | `verification.log`, `metro.log`, `emulator.log` |
+
+## 10월 19일 후속: 사진이 있는 계정의 실제 UI 전송 PASS
+
+### 소스·DB·인증 격리
+
+Android 시작은 **`753438aa898cde37d22e221acc4bcdf166eb8241`**, 공통 동작은 **`809efe0e012622b2e454b422dc8ef120b6d0e3ea`**입니다. 공통 HEAD `fb8da94`까지의 차이는 문서이며 검증 대상 37개 파일은 고정 SHA와 같았습니다. 기존 APK·API 37·SwiftShader·자체 8082·새 합성 HTTP 서버를 사용했습니다. 앞선 파일 1개·통합 9개·빈 계정 UI·모바일 378개 검사는 반복하지 않았습니다.
+
+새 QA DB 파일명과 **QA 전용 SecureStore key/service**만 오버라이드했습니다. DB 이름 한 곳과 인증 상수 두 곳의 차이 및 적용 해시를 별도 기록했고 나머지 동작 소스는 고정 SHA 그대로입니다. 원본 v1 DB와 기존 인증 항목은 사용하지 않았습니다. 실제 계정 화면에서 새 합성 계정을 만들고, QA DB에 합성 GPS형 방문 1건·전송 대기를 원자적으로 준비한 뒤 Repository로 새 PNG 1개·사진 대기를 연결했습니다. 실제 위치나 개인 사진을 사용하지 않았고 게스트 가져오기도 하지 않았습니다. GPS 판정·센서 수용 시험의 결과에 포함하지 않습니다.
+
+첫 자료 준비에서 방문 확정 전 사진 연결이 거절됐습니다. 합성 방문·대기를 QA DB transaction으로 준비하는 방식으로 정리한 뒤 아래 UI 검증을 실행했습니다. 처음 준비한 미연결 합성 파일만 제거했고 실패 기록도 보존했습니다. 제품 소스 수정은 없습니다.
+
+### 실제 화면·서버·기기 파일 대조
+
+| 흐름 | 실제 결과 |
+| --- | --- |
+| 방문 1건·사진 1개 대기, 자동 방문 백업 꺼짐 | 화면에서 사진 대기 1건 표시. 9초 관찰 동안 방문·사진 POST 모두 0회, 서버도 0건 |
+| 사진 백업하기 → 첫 확인창 → 취소 | 대상 계정·서버·형식·크기·보관 범위 표시, 방문·사진 POST 0회 유지 |
+| 다시 열기 → 확인하고 전송 | 실제 화면 handler가 방문 sync 먼저·사진 multipart 다음으로 요청. 각각 정확히 1회, 서버 방문·사진·각 영수증도 1개 |
+| 완료 화면·ACK | “사진 1건을 전송했습니다”와 서버 저장 확인 1개 표시. 방문·사진 대기 0건, 방문 성공 시각 있음. metadata revision/업로드 시각 저장·outbox 0건 |
+| 기기 첨부본·서버 파일 | QA DB의 방문 1건·사진 행 1개와 native PNG의 기존 bytes·해시·크기 유지. 서버 첨부본의 bytes·해시·크기가 같고 썸네일은 별도 |
+| 완료 뒤 다시 열기 → 취소 | 새 확인창이 다시 나타남. 취소 후 9초 관찰에도 방문·사진 POST 총 1회씩 유지, 중복 저장 없음 |
+
+서버가 관측한 변경 요청 순서는 **`visit → photo`**였습니다. 사진은 실제 expo/fetch multipart 1회이며, 서버 사진·사진 영수증 각 1개와 integrity `ok`를 직접 대조했습니다. 전송·ACK·완료 문구는 실제 앱 화면 경로에서 확인했습니다. 관측한 9초 구간은 전체 장시간 자동 전송 수용 시험으로 확대하지 않습니다.
+
+### 원본 보존·인증·종료
+
+QA 인증 항목은 로그인 중 AES 암호화됐고 이메일·비밀번호는 평문으로 없었습니다. 로그아웃 뒤 QA 인증 항목은 삭제됐으며, 시작·로그인·로그아웃 모두 **QA 외 SecureStore 항목의 해시가 같았습니다**. 원본의 모든 owner visits/photos/outbox 전체 행·기존 사진 bytes도 시작·종료가 같습니다. 개인 원본과 인증 항목의 보존 대조를 통과했습니다. 상세 값은 로컬 근거에만 보관합니다.
+
+앱과 자체 Metro/HTTP를 먼저 멈췄습니다. QA UI DB v2의 전체 방문 1건·사진 1개·outbox 0건·업로드 metadata 1개·integrity `ok`, 기기 합성 PNG 유지와 해시를 확인·보존한 뒤 **이번 QA DB/WAL/SHM 3개와 합성 PNG 1개만** 정리했습니다. 원래 파일 14개 복원·새 임시 파일 23개 제거로 총 37개의 존재 여부·원문 해시를 대조했습니다. package/lock·보존 APK hash는 그대로이고 자체 reverse 8082·3002·에뮬레이터를 종료했습니다.
+
+새 빌드·설치·의존성 변경·캐시/Time Machine 정리는 없었습니다. 원래 checkout·iOS·iPhone·SDK·AVD와 기존 근거는 조작하지 않았습니다. 이번에는 새 UI 흐름과 보존 대조만 실행했고, 앞선 378개·native 9개 결과는 해당 단계의 근거로 유지합니다. 실제 OS 네트워크 전환·전송 중 앱 종료·자동 사진 전송·다운로드/복원·여러 기기 삭제 병합·실제 Android·Release는 남아 있으며 P3-10 전체와 G1~G4를 완료 처리하지 않습니다.
+
+근거는 Git 제외 `docs/test-results/android-photo-ui-nonempty-20261019/`에 보존합니다. 공개 문서에는 실제 계정·token·서버 주소·QA 이름·DB·사진·XML/PNG 원본·로그를 넣지 않습니다.
+
+| 근거 | 로컬 파일 |
+| --- | --- |
+| 고정 소스·QA 이름·복구 | `validation-files.json`, `qa-database-override.ts`, `qa-credentials-override.ts`, 원문/고정 사본 |
+| 실제 화면·요청 순서/횟수 | `ui-*-result.json`, `server-after-*.json`, `completed-state.json`, 로컬 XML/PNG |
+| ACK·기기/서버 첨부 bytes | `verify-result.json`, `server-data-verification.json`, `private-synthetic-attachment.png` |
+| 원본·인증·종료 | `baseline-data.json`, `final-data.json`, `*-credential.json`, `shutdown-status.json` |
+| 자료 준비와 초기 실패 | `seed-result.json`, `initial-fixture-failure-*.json` |
+
+## 10월 19일 재개: 수동 사진 백업 native·확인창 검증
+
+### 고정 소스와 원본 DB 분리
+
+Android 시작은 **`a456f18808777c7da76aa49aa56ba7f96a448878`**, 공통 동작은 **`809efe0e012622b2e454b422dc8ef120b6d0e3ea`**입니다. 원격 공통 HEAD `1739ed1`은 문서만 추가한 상태이며 검증 파일은 같은 내용임을 확인했습니다. 이전에 준비한 37개 원본·부재·고정 사본의 해시를 다시 대조하고 새 실행 근거 폴더로 보존했습니다.
+
+production 22개·테스트 14개·Vitest 설정 1개를 임시 적용했습니다. 실제 앱 UI에 쓰는 database 파일명 한 곳만 고유 QA DB로 바꾸고 별도 적용 해시를 기록했습니다. 사진 파일·repository·동기화 소스와 고정 backend 사본 12개는 공통 SHA 그대로입니다. 기존 원본 `trip-painting-v1.db`를 v2 앱으로 열거나 migration하지 않았습니다. native 통합 검사는 매번 별도 고유 파일 DB를 사용했습니다.
+
+기존 Debug APK·API 37·SwiftShader·CPU 4개, 전용 localhost 8082·임시 합성 HTTP만 사용했습니다. 새 native 빌드·설치·의존성 설치와 package/lock 변경은 없습니다. Node 24.21.0과 기존 backend 의존성은 읽기 전용으로 재사용했습니다. 원래 checkout·iOS 8081·iPhone은 조작하지 않았습니다.
+
+### native 파일 준비 1개 PASS
+
+합성 PNG를 `.jpg` 이름으로 저장한 뒤 실제 `preparePhotoFile`을 호출했습니다. native File 복사·SHA-256·바이트 수·내용 기반 PNG 판별과 `attachment.png` rename이 통과했습니다. 전송 body가 실제 `File`인 것도 확인했습니다. 합성 원본을 바꿔도 이미 준비한 전송 사본은 같은 바이트를 유지했고, 원래 바이트로 돌린 뒤 dispose가 전용 cache만 지우고 첨부본은 유지함을 확인했습니다. 이 변경은 합성 파일에만 수행했습니다.
+
+### 실제 비동기 SQLite·expo/fetch multipart 통합 9개 PASS
+
+실제 앱에 로드된 Repository·PhotoBackupCoordinator·PhotoSyncClient·VisitBackupCoordinator, native async SQLite adapter와 `preparePhotoFile`·`photoFetch`를 사용했습니다. 검증용 시점·계정 변화와 응답 유실은 명시적으로 주입했으며 DB 쓰기·rollback, 파일 API와 이후 HTTP는 실제 실행입니다.
+
+| 통합 경우 | 결과 |
+| --- | --- |
+| 별도 v1→v2 보존 갱신 | v1 합성 DB의 두 owner visits/photos/outbox 전체 행·사진 URI·payload·attempts·소수점 시각 유지, 빈 사진 metadata 테이블 추가, integrity `ok` |
+| PNG·JPEG 실제 multipart | 부모 방문 선행 전송, 사진 2건 ACK와 metadata 원자 저장. 기기 파일·서버 첨부 bytes·native 해시·크기·MIME 일치 |
+| 서버 200 뒤 응답 유실 모사·DB 재개방 | 큐·작업 UUID·고정 해시 유지. 첨부 bytes를 바꾼 합성 재시도는 HTTP 전에 차단. 원래 bytes 복구 후 같은 UUID 실제 재전송, 서버 사진·영수증 각 1개 |
+| 잘못된 사진 다음 정상 사진 | HEIC·누락·10MiB 초과·잘못된 헤더·서버가 해독하지 못하는 PNG의 대기 5건 보존. 다음 JPEG 1건 성공, 건너뛴 이유·수 정확 |
+| 오래된 동의·foreground 이탈 주입 | 파일 준비·사진 HTTP·metadata 쓰기 없이 거절, 대기 보존 |
+| 실제 HTTP 200 뒤 같은 owner token 변경 | 이전 세션 ACK 차단·큐와 미완료 metadata 보존. 현재 세션의 같은 UUID 재시도는 서버 중복 없음 |
+| ACK metadata 실제 쓰기 뒤 token 변경 | 실제 SQL rollback, 완료 metadata·큐 삭제 없음. 수동 재시도 성공·서버 중복 없음 |
+| ACK outbox 실제 DELETE 뒤 token 변경 | DELETE 1건 뒤 실제 rollback, payload·작업 UUID·미완료 metadata 복구. 수동 재시도 성공 |
+| ACK metadata 실제 쓰기 뒤 DB 오류 주입 | 실제 rollback, 큐·metadata·기기 첨부본 보존. 수동 재시도 성공·서버 중복 없음 |
+
+서버 관측 사진 POST는 **14회이며 모두 실제 multipart boundary**가 있었습니다. 이 중 해독 불가 합성 PNG 1회는 실제 400이고 나머지는 성공·멱등 재전송입니다. 최종 서버 사진·사진 영수증은 **각 8개**입니다. 별도 서버 DB v3와 저장 파일을 직접 대조해 8개 첨부본 모두 metadata의 해시·크기와 같고 썸네일이 별도 파일임을 확인했습니다. 서버 integrity는 `ok`입니다. 요청 횟수와 고유 저장 수를 합산하지 않습니다.
+
+첫 검사 도구는 Inspector에 직접 넣은 중첩 async 함수가 native Promise보다 먼저 반환해 DB 준비 단계에서 조기 실패했습니다. 사진 POST는 0회였으며 제품 결함으로 판단하지 않았습니다. 이전 native 검사와 같은 TypeScript ES2015 generator 변환을 적용한 뒤 위 9개를 다시 실행해 통과했습니다. 사전 도구가 남긴 자체 합성 파일 18개는 앱을 멈춘 뒤 정확한 전용 이름만 정리했고 실패 근거도 보존했습니다. 최종 native 시험 DB 9개는 close/delete 후 DB·WAL·SHM 부재를 확인했습니다.
+
+### 0건 합성 계정의 실제 확인창 PASS
+
+실제 계정 화면에서 새 합성 계정을 가입했습니다. 이 계정은 QA DB·서버 모두 방문·사진·전송 대기 0건이며 원본 게스트 가져오기를 실행하지 않았습니다.
+
+| 실제 화면 흐름 | 결과 |
+| --- | --- |
+| 사진 백업하기 → 전용 확인창 | 대상 계정·서버, JPEG/PNG·20개·10MiB·미지원/누락 대기·원본 보관·복원 미지원 표시 |
+| 첫 확인창 취소 | 창만 닫힘, 사진 POST 0회 |
+| 다시 열기 → 확인하고 전송 | 다시 명시적 확인 요구, “전송할 사진이 없습니다” 안내. 사진 대기·서버 저장 확인 0건, 방문 성공 시각 null 유지 |
+| 수동 실행 뒤 다시 열기 → 취소 | 세 번째도 확인창 표시, 앞선 동의를 재사용해 자동 전송하지 않음 |
+| 로그아웃 | QA guest·기록 꺼짐·0건, native 인증 항목 삭제 |
+
+로그인 중 인증 항목의 AES 암호화와 이메일·비밀번호 평문 부재를 확인했습니다. 이 단계의 UI 계정은 서버 방문·사진·사진 영수증이 끝까지 0건입니다. 사진이 있는 계정의 전체 UI는 위 후속 검증 결과로 구분합니다. 실제 사진 본문과 ACK·재시도는 이 단계의 독립 native 통합 검사 결과입니다.
+
+### 자동 검사·원본 보존·복구와 남은 범위
+
+QA 파일명 오버라이드를 포함한 임시 소스에서 `bash scripts/verify-cloud.sh`가 PASS였습니다. 모바일 타입·ESLint·**14개 파일/378개 테스트**, 기존 backend syntax·native dependency load와 Android/iOS 생산용 JS/Hermes export를 포함합니다. `setup-cloud.sh`를 다시 실행하거나 의존성을 재설치하지 않았습니다. 공통 서버 61개 검사는 이번에 반복하지 않았으며 별도 고정 서버의 실제 native HTTP·파일 대조와 구분합니다.
+
+시작·종료 읽기 전용 대조에서 원본 모든 owner visits/photos/outbox 전체 행·기존 사진 바이트가 같았습니다. 개인 원본과 인증 항목의 보존 대조를 통과했습니다. 상세 값은 로컬 근거에만 보관합니다. 독립 QA UI DB는 v2·전체 방문/사진/outbox/metadata 0건·integrity `ok`를 확인했습니다.
+
+앱·자체 Metro·HTTP를 먼저 멈춰 혼합 소스 재로딩을 차단한 뒤, 기존 14개 파일을 원문·해시로 복구하고 새 임시 파일 23개를 제거했습니다. 총 37개의 존재 여부·바이트를 다시 확인했으며 package/lock·보존 Debug APK hash도 그대로입니다. QA UI DB·WAL·SHM 3개만 제거했고, 합성 사진 첨부본과 전송 cache도 0개였습니다. 자체 reverse 8082·3002와 에뮬레이터를 종료했습니다. 서버 합성 DB·첨부본·fixture·원본 로그·화면·실패/성공 근거는 로컬 Git 제외 폴더에 남깁니다.
+
+새 캐시·Time Machine·SDK·AVD·원본 자료 정리는 하지 않았습니다. 종료 가용량은 57,331,204,096 bytes(약 53.39GiB)이며 이번 확보량으로 표시하지 않습니다. 전송 중 프로세스 종료·실제 OS 네트워크 전환·자동 사진 백업·다운로드/새 기기 복원·여러 기기 삭제 병합·Android 실기기·Release는 NOT RUN입니다. P3-10 전체와 G1~G4 완료를 뜻하지 않습니다.
+
+근거는 Git 제외 `docs/test-results/android-photo-backup-20261019/`에 있습니다. 계정·token·서버 주소·QA 이름·원본 DB·사진·화면·로그는 공개 PR에 포함하지 않습니다.
+
+| 근거 | 로컬 파일 |
+| --- | --- |
+| 고정 SHA·임시 적용·원문 복구 | `validation-files.json`, `common-*.txt`, `original-*.txt`, `qa-database-override.ts` |
+| native 파일·9개 통합과 서버 대조 | `native-file-snapshot-result.json`, `native-probe-result.json`, `server-summary.json`, `server-data-verification.json` |
+| 실제 화면·인증 | `ui-*-result.json`, `ui-*-state.json`, `signed-in-credential.json`, `logged-out-credential.json`, 로컬 XML/PNG |
+| 원본·종료·시험 파일·APK 보존 | `baseline-data.json`, `final-data.json`, `shutdown-status.json`, `native-file-cleanup-summary.json`, `apk-preservation.json` |
+| 자동 검사·도구 조기 실패 근거 | `verification.log`, `harness-raw-async-failure-*.json`, `harness-early-db-cleanup.json` |
+
+## 10월 19일 사진 백업 준비 저장·종료와 용량 정리
+
+### 고정 소스는 사본만 준비, 사진 검사는 NOT RUN
+
+Android 시작 HEAD는 `6d3777c`, 준비한 공통 기준은 **`809efe0e012622b2e454b422dc8ef120b6d0e3ea`**입니다. production JS/TS 22개, 테스트 14개, Vitest 설정 1개로 총 37개 파일의 기존 내용·부재와 고정 소스 사본을 보존했습니다. backend src·schema 사본 12개도 같은 SHA로 고정했습니다. 공통 database 소스의 DB 이름 한 곳만 고유 QA 파일명으로 바꾼 사본을 별도 준비했습니다.
+
+**37개 소스와 QA DB 이름 변경은 실제 작업 파일에 적용하지 않았습니다.** 10월 19일 현재 파일의 기존 존재 여부·원문 해시, 고정 사본·backend 사본의 Git 원본 해시, QA 사본의 이름 한 곳만 변경되었음을 모두 재확인했습니다. package/lock도 변함없습니다. 원본을 덮어쓴 적이 없으므로 복원한 파일 수는 0개이며, 37개를 복원했다고 표시하지 않습니다.
+
+사용자가 진행하던 범위까지만 저장하고 마무리하도록 요청해 사진 native·UI 시나리오를 시작하지 않았습니다. 10월 18일의 최종 종료 명령은 자동 승인 검토의 사용량 한도로 실행되지 않았고, 10월 19일 실제 상태를 확인한 뒤 종료를 완료했습니다. 새 서버·Metro·앱 실행, 새 에뮬레이터 시작, 설치·빌드·DB migration은 하지 않았습니다. 공통의 모바일·서버 자동 검사 결과도 이번 Android 실행으로 계산하지 않습니다.
+
+| 준비된 후속 검사 | 이번 실행 |
+| --- | --- |
+| native File의 cache 복사·MIME별 rename·파일 보존 | NOT RUN |
+| JPEG/PNG의 실제 expo/fetch multipart·서버 사진 저장 | NOT RUN |
+| 별도 QA DB의 v1→v2 migration·기존 행 보존 | NOT RUN |
+| 사진 ACK transaction·응답 유실·중복 재시도·계정 전환 guard | NOT RUN |
+| 0건 합성 계정의 수동 사진 백업·매 실행 동의·계정 범위 UI | NOT RUN |
+
+다시 검증할 때도 원본 v1 DB를 v2 소스로 열지 않습니다. 사본 해시를 재확인하고 고유 QA DB·합성 계정·합성 사진으로만 시작해야 합니다. 원본 게스트 가져오기와 사진 쓰기는 하지 않습니다.
+
+### 원본과 실제 종료 상태
+
+10월 18일 baseline과 10월 19일 종료 직전 읽기 전용 대조에서 모든 owner의 visits/photos/outbox 전체 행·기존 사진 바이트가 같았습니다. 개인 원본과 인증 항목의 보존 대조를 통과했습니다. 상세 값은 로컬 근거에만 보관합니다. 준비한 QA DB와 WAL·SHM은 기기에 없었습니다.
+
+이미 실행 중이던 전용 API 37 에뮬레이터만 종료했습니다. 종료 전 전용 8082·3002 리스너와 adb reverse는 없었습니다. 사진 준비에서 Metro·HTTP·Inspector를 시작한 적이 없으며, 다른 프로세스와 원래 checkout·iOS·iPhone은 조작하지 않았습니다. APK 두 개의 해시도 정리 전후 같습니다. 소스 사본·합성 fixture·원본 로그와 검증 자료는 Git 제외 경로에 보존합니다.
+
+### 사용하지 않는 캐시 정리와 실제 공간 측정
+
+사용자의 Mac 저장공간 정리 요청에 따라 Android Studio·Gradle 빌드가 실행 중이지 않은 상태에서 다음 네 경로만 삭제했습니다. SDK·NDK·JDK·Gradle 의존성 다운로드와 wrapper, AVD 전체·DB·사진·APK·서명·소스·기존 증거·백업·Android Studio LocalHistory는 보존했습니다. 원래 checkout과 iOS 캐시는 정리하지 않았습니다.
+
+| 삭제한 재생성 가능 캐시 | 삭제 전 할당 크기 |
+| --- | ---: |
+| `~/.gradle/caches/9.3.1/transforms` | 3,544,608,768 bytes |
+| `~/Library/Caches/Google/AndroidStudio2026.2.1/caches` | 530,694,144 bytes |
+| `~/Library/Caches/Google/AndroidStudio2026.2.1/index` | 911,638,528 bytes |
+| `~/.npm/_cacache` | 1,999,638,528 bytes |
+| 합계 | **6,986,579,968 bytes, 약 6.51GiB** |
+
+실제 파일시스템 가용량은 삭제 직전 **18,461,765,632 bytes(약 17.19GiB)**, 삭제 직후 **18,458,112,000 bytes(약 17.19GiB)**였습니다. **6.51GiB를 실제 확보했다고 주장하지 않습니다.** 시점 차이는 다른 프로세스의 쓰기·파일시스템 공간 회수도 포함합니다. 읽기 전용 조회에서 9월 28일·10월 12일의 purgeable Time Machine 로컬 스냅샷 두 개가 확인되어 삭제한 블록을 보유할 가능성이 있으나, 그 영향이나 개별 확보량은 측정하지 않았습니다. 이 단계에서는 로컬 백업을 보존했습니다. 다음 native 빌드·Studio 실행·패키지 설치 때 삭제한 캐시를 다시 생성하거나 내려받을 수 있습니다.
+
+### 별도 사용자 허용 후 Time Machine 로컬 백업 두 개 정리
+
+위 캐시 정리 이후 사용자가 **“두 로컬 백업 정리”**를 선택했습니다. 두 복원 시점이 사라진다는 안내에 대한 직접 허용을 확인한 뒤, Mac 데이터 볼륨에 있는 `2026-09-28-220816`과 `2026-10-12-210523`의 Time Machine 로컬 스냅샷만 정확한 식별자로 삭제했습니다. 두 삭제가 성공했고 승인한 스냅샷의 부재와 Time Machine 로컬 목록이 빈 상태임을 다시 확인했습니다. 외장·원격 백업, 프로젝트 `.snapshots/`, 현재 소스·앱 데이터·AVD·사진·APK·검증 자료는 삭제 대상으로 삼지 않았습니다. 새 앱 실행·native 검사·빌드는 시작하지 않았습니다.
+
+로컬 백업 정리 직전 가용량은 **18,640,543,744 bytes(17.36GiB)**였습니다. 삭제 직후에는 24,808,034,304 bytes였고, 공간 회수가 더 반영된 후속 측정에서는 **62,259,200,000 bytes(57.98GiB, 약 62.3GB)**였습니다. 정리 전후 관측 증가는 **43,618,656,256 bytes(40.62GiB, 약 43.6GB)**입니다. 이 증가량을 Android 캐시만의 확보량으로 계산하거나 캐시 삭제량과 다시 합산하지 않습니다. 정확한 측정 시각·삭제 성공·전후 바이트는 로컬 `time-machine-cleanup.json`에 보존합니다.
+
+원본 근거는 Git 제외인 `docs/test-results/android-photo-backup-20261018/`에 있습니다. 공개 문서·PR에는 실제 계정·비밀번호·token·서버 주소·QA 파일 식별자·기기 원본 DB·사진·로그를 넣지 않습니다.
+
+| 근거 | 로컬 파일 |
+| --- | --- |
+| 고정 사본·기존 파일과 QA 이름 | `validation-files.json`, `common-*.txt`, `original-*.txt`, `qa-database-override.ts`, `frozen-backend/` |
+| 원본 보존 대조 | `baseline-data.json`, `final-data.json`, `private-baseline-fingerprints.json` |
+| 미적용 확인·종료·미실행 범위 | `restoration-result.json`, `shutdown-status.json`, `stop-status.json` |
+| 삭제 경로·측정 바이트·APK 보존 | `disk-cleanup.json` |
+| 별도 허용한 로컬 백업 두 개 삭제·실제 가용량 | `time-machine-cleanup.json` |
+
+## 10월 18일 foreground 연결 복구
+
+### 고정 소스와 검증 환경
+
+Android 시작 기준은 `cf79090`, 공통 검증 소스는 **`51c96d249b2772517da3d9937cb03e568dc1b2d9`**입니다. 고정 SHA를 받기 전에는 원본 파일·해시·부재와 기존 DB/사진만 확인했고 새 소스를 적용하지 않았습니다. 원본 모든 owner 행·사진 바이트는 10월 17일 기준과 같았습니다. 이후 이전과 같은 필요한 JS/TS 14개만 임시 적용하고 backend의 src·schema도 이 SHA의 별도 읽기 전용 사본으로 고정했습니다.
+
+기존 API 37·SwiftShader AVD, 보존한 Debug APK와 자체 Metro 8082를 사용했습니다. 설치 APK의 hash가 보존한 APK와 같았으며 새 설치·native rebuild·의존성 변경은 없었습니다. 실제 사용자 DB에 합성 방문을 넣거나 게스트 가져오기·초기화하지 않았고, 원래 checkout·iOS 8081·iPhone은 조작하지 않았습니다.
+
+검사는 실제 앱에 로드된 Repository·Coordinator·VisitSyncClient와 `expo-sqlite`의 비동기 API를 사용했습니다. 각각 새 고유 파일 DB를 열어 원본과 다른 경로를 확인하고 WAL·busy timeout을 적용했습니다. 시험 계정·DB·서버 업로드 경로도 원본과 별도입니다. Inspector는 즉시 시작 응답을 받은 뒤 전역 완료 플래그를 polling했습니다.
+
+### 연결 복구 13가지 PASS
+
+전송 transport가 처음 두 번 `TypeError`를 내도록 제어했습니다. 이 두 실패는 실제 HTTP 요청이나 OS Wi-Fi 단절이 아닙니다. 이후 health·정상 ACK와 제어한 HTTP 오류 응답은 실제 임시 HTTP 서버를 사용했습니다. Coordinator의 시계만 주입해 진행했고, 실제 health abort에는 실시간 timer를 사용했습니다.
+
+| 경우 | 실제 결과 |
+| --- | --- |
+| 두 transport 실패 → DB 재개방 → 이른 복구 | 첫 실패 후 retry/check는 30초. 둘째 실패 후 retry는 60초·check는 30초로 저장되고 재개방 후 동일. check 직전 호출은 요청 0건, due 시 무인증 GET health 뒤 긴 retry 전에 같은 작업 UUID ACK |
+| health HTTP 503 | 방문 재전송 없이 connectionCheckAt만 진행. nextAttemptAt·큐·사진·완료 시각 보존 |
+| health 응답 처리 중 opt-out | 자동 꺼짐을 따르고 두 시각·큐·사진 보존, 후속 sync 없음 |
+| health 응답 처리 중 foreground 이탈 | 전송 pause, 두 시각·큐·사진 보존 |
+| health 응답 처리 중 같은 owner token 교체 | 전송 pause, 두 시각·큐·사진 보존 |
+| 연결 확인 CAS의 BEGIN 뒤 foreground 이탈 | 실제 transaction rollback. 일반 backoff로 기존 시각을 덮어쓰지 않음 |
+| CAS 첫 native metadata 쓰기 뒤 token 교체 | 실제 쓰기 뒤 rollback, 원래 두 시각·큐·사진 보존 |
+| CAS 첫 native 쓰기 뒤 DB 오류 주입 | 실제 쓰기 뒤 rollback. 일반 실패 backoff 대신 기존 시각 보존 안내·상태 유지 |
+| CAS 직전 retry/check가 다른 값으로 갱신됨 | 오래된 expected 값의 CAS를 거절하고 새 두 시각·큐 보존 |
+| 실제 HTTP 401 응답 | 인증 pause 저장, 자동 health·재전송 우회 없음 |
+| 실제 HTTP 409 응답 | 충돌 pause 저장, 자동 health·재전송 우회 없음 |
+| 실제 HTTP 500 두 번 | 일반 60초 retry 유지·connectionCheckAt null. 기한 전 health 우회 없음 |
+| 실제 지연 health HTTP·3초 abort | AbortSignal이 발생하고 false 반환. 1회 관측 3,022ms, Authorization 없음 |
+
+정상 복구에서는 방문 큐만 ACK되고 사진 큐·URI·연결·소수점 시각을 보존했습니다. 서버에서 실제 방문 1건·고유 방문 ID 1개·작업 영수증 1개를 직접 대조했습니다. 본 검사 health 요청은 서버 관측 10회였고 모두 GET·Authorization 없음이었습니다. client에서도 credentials omit을 확인했습니다. 준비 도구의 health 호출은 이 10회에 합산하지 않았습니다.
+
+health·CAS 경쟁 시점, DB 오류와 HTTP 401/409/500 응답은 검증용 adapter·transport·서버 제어로 만들었습니다. CAS 자체의 BEGIN·쓰기·ROLLBACK은 실제 비동기 native SQLite입니다. 모든 파일 DB의 integrity가 `ok`였고, 작업 ID·payload·생성 시각·attempts를 포함한 큐 보존을 대조했습니다. 3,022ms는 해당 Debug 에뮬레이터 1회 관측이며 성능 SLA나 실기기 수치가 아닙니다.
+
+실제 사용자 계정의 nonempty 큐·OS 네트워크 변경·전송 중 프로세스 종료·전체 앱 E2E는 별도입니다. 새 “백업 확인 중/다음 백업 확인” 문구의 실제 화면 검사는 하지 않았습니다. 이전 14개 전송 검사와 장시간 화면 꺼짐도 이번에 반복하거나 새 결과로 합산하지 않았습니다.
+
+### 사진 서버 기반과 모바일 범위
+
+고정 backend 사본은 별도 합성 DB를 version 3으로 초기화했습니다. 이번 Android 검사는 방문·health 경로만 사용했으며 새 사진 API를 호출하지 않았습니다. **모바일 사진 전송·동의·다운로드·다른 기기 복원은 여전히 연결 전**입니다. 사진 행·큐·URI 보존 결과를 사진 업로드 성공으로 표시하지 않습니다. 공통 서버 사진 검사 61개도 이 Android 실행 수에 넣지 않습니다.
+
+### 자동 검사·원본 보존·종료
+
+임시 소스에서 `npm --prefix travel_visit_tracker run check`의 타입 검사·ESLint·이 worktree의 기존 **90개 테스트가 PASS**였습니다. 공통 모바일 232개·서버 61개와 Android의 실제 13가지 native 검사는 별도 결과입니다.
+
+개인 원본과 인증 항목의 보존 대조를 통과했습니다. 상세 값은 로컬 근거에만 보관합니다. 모든 owner의 visits/photos/outbox 전체 행·기존 사진 바이트는 시작과 같습니다. 별도 시험 DB **12개와 WAL·SHM의 부재**, 원본 DB의 존재를 확인했습니다. timeout 경우에는 별도 DB를 만들지 않았습니다.
+
+자체 Metro·합성 HTTP 서버·Inspector helpers·에뮬레이터를 종료하고 전용 연결만 제거했습니다. 임시 파일 14개 중 기존 5개는 원문과 바이트 단위로 같게 복구하고 새 9개는 적용 해시 확인 후 제거했습니다. package/lock·APK·서명·SDK·AVD·백업·원본 로그·증거는 보존했습니다. 이번에는 새 native 빌드·캐시 삭제나 용량 정리를 하지 않았고 확보량은 0입니다. 시점별 가용량은 준비 18.46GiB·종료 16.73GiB이며 다른 작업·AVD의 사용량을 분리한 값은 아닙니다.
+
+원본은 Git 제외인 `docs/test-results/android-connection-recovery-20261018/`에 보존합니다. 공개 요약에는 계정·token·서버 주소·기기 값·원본 사진·DB·원본 로그를 넣지 않습니다.
+
+| 근거 | 로컬 파일 |
+| --- | --- |
+| 준비·고정 SHA·복구 | `preparation.json`, `validation-files.json`, `original-*.txt`, `common-*.txt`, `restoration-result.json` |
+| 원본·기존 APK 대조 | `prior-baseline-match.json`, `baseline-data.json`, `final-data.json`, `prepared-state.json`, `final-runtime-state.json` |
+| native 13가지·시점 제어 | `native-probe-result.json`, `native-probe-manifest.json`, 비공개 검증 표현식·새 fixture |
+| 실제 HTTP·DBv3·중복 없음 | `server-summary.json`, `server-verification.json` |
+| 시험 DB 제거·종료·자동 검사 | `temporary-databases-cleanup.json`, `shutdown-status.json`, `common-check.log`, `metro.log`, `server.log`, `emulator.log` |
+
+남은 수용 범위는 실제 Android·Release·배터리·OS 백업/복원, nonempty 실제 사용자 UI의 연결 복구·전송 중단, 모바일 사진 전송·새 기기 복원·여러 기기 삭제 병합입니다. 이번 결과로 전체 G1~G4를 완료 처리하지 않습니다.
+
+## 10월 17일 방문 백업 화면·Coordinator와 경쟁 조건
+
+### 소스 기준과 임시 적용
+
+Android 시작 기준은 `f05a3b3`입니다. 공통 **`c95d6caa209086431b371a68cd2ac0d2222aa48b`**에서 계정·설정·layout, 두 store, storage/database·repository·outbox, auth·credentials·session·visitSync·visitBackup의 필요한 JS/TS 파일 14개만 임시 적용했습니다. 원래 있던 5개 파일의 원문·해시와 새로 생기는 9개 파일의 부재를 먼저 보존했습니다. 공통 backend 소스도 같은 커밋의 읽기 전용 사본으로 고정하고 별도 루프백 서버·합성 DB·업로드 경로를 사용했습니다.
+
+첫 화면 검사와 native HTTP 검사 종료 후 공통 수정 **`202a2e250420b10056c518d8d26454035f548615`**의 다음 세 파일만 후속 적용했습니다. 기존 원상 복구 기준은 Android 시작 HEAD 그대로 유지하고 두 단계의 해시를 구분했습니다.
+
+- `travel_visit_tracker/src/storage/repository.ts`
+- `travel_visit_tracker/src/services/visitSync.ts`
+- `travel_visit_tracker/src/services/visitBackup.ts`
+
+두 커밋 사이 backend 내용은 같았습니다. 기존 설치 Debug APK·API 37·SwiftShader·Android 전용 8082만 사용했습니다. 설치 APK의 hash가 10월 15일 보존한 새 APK와 같음을 재확인했고, 새 설치·native rebuild·의존성 설치나 package/lock 변경은 없었습니다. iOS 8081·연결된 iPhone·원래 checkout·공유 진행표는 수정하지 않았습니다.
+
+### `c95d6ca` 실제 계정 화면
+
+화면에서 새 합성 계정을 가입했습니다. 이 계정은 기기·서버 모두 방문 0건이며 원본 게스트 가져오기를 실행하지 않았습니다.
+
+| 실제 화면 흐름 | 결과 |
+| --- | --- |
+| 가입 후 기본 설정 | signed-in·계정 방문/사진/대기 0건, 자동 방문 백업 꺼짐 |
+| 수동 빈 백업 | “전송할 방문이 없습니다.” 표시, 마지막 성공 시각을 만들지 않음 |
+| 자동 백업 동의창 | 대상 계정·서버, 화면이 열려 있을 때의 전송 범위, 사진 백업·다른 기기 복원 미지원 표시 |
+| 동의 취소 | 자동 백업 꺼짐 유지 |
+| 동의 후 켜기 | 자동 백업 켜짐·설명 표시, 기록 꺼짐 유지 |
+| 강제 종료·재실행 | 같은 합성 계정의 세션과 opt-in 복구, 실제 me 성공, 계정 자료 0건 유지 |
+| 자동 백업 끄기·로그아웃 | 꺼짐 확인 후 guest·토큰 없음·기록 꺼짐으로 복귀, native 인증 항목 삭제 |
+| 원본 대조 | 모든 owner의 visits/photos/outbox 전체 행·기존 사진 바이트 불변, integrity `ok` |
+
+로그인 중 native SecureStore 인증 항목의 AES 암호화 저장과 이메일·비밀번호 평문 부재도 확인했습니다. 화면 원본과 계정·서버 값은 로컬에만 보존합니다. **UI의 실제 비어 있지 않은 방문 전송이나 전송 중 프로세스 종료를 확인한 결과는 아닙니다.** `202a2e2`에서 이 가입·동의 UI 전체를 다시 실행하지 않았으며, 그 단계는 아래의 독립 저장·전송 검사와 마지막 guest 상태 확인으로 구분합니다.
+
+### 실제 비동기 native SQLite·HTTP 검사: 두 기준 모두 14개 PASS
+
+`c95d6ca`와 세 파일 수정 후 `202a2e2`에서 **각각 새 고유 파일 DB·새 합성 계정으로 동일한 14개 검사를 실행**했습니다. 실제 앱에 로드된 Repository·Coordinator·VisitSyncClient, `expo-sqlite` 비동기 API와 별도 실제 HTTP 서버를 사용했습니다. production과 같은 네 async adapter 함수, WAL·busy timeout을 사용하고 시험 DB 경로가 원본과 다름을 확인했습니다.
+
+| 확인한 항목 | 두 단계 결과 |
+| --- | --- |
+| 실제 async SQLite·실제 합성 HTTP | PASS |
+| 자동 백업 기본 꺼짐 | 자동 실행은 전송하지 않음 |
+| 수동 방문 ACK·성공 시각 | 방문 1건 ACK 후 성공 시각 저장 |
+| 사진 큐·URI·소수점 시각 | 사진 큐 1건·URI·연결과 소수점 시각 유지 |
+| 빈 큐 수동 실행 | 전송 호출·성공 시각 변경 없음 |
+| 서버 저장 뒤 응답 유실 모사 | 방문 큐·사진 큐 보존, 다음 재시도 시각 저장 |
+| DB 닫기·재개방·일찍 재시도 | 지연 시각 복구, 시각 전 실행은 전송하지 않음 |
+| 같은 작업 UUID 재전송 | ACK 후 방문 큐만 제거, 사진 큐는 유지 |
+| 서버 중복 방지·무결성 | 각 시험 계정의 방문은 고유 ID 2건, integrity `ok` |
+
+14개 세부 플래그는 단계별 결과 파일에 있습니다. 실제 서버의 성공한 sync 응답은 두 단계 합계 6회였고, 각 단계의 서버 방문 수·고유 ID 수는 2/2였습니다. UI 시험 계정의 서버 방문은 끝까지 0건입니다.
+
+응답 유실은 서버가 200 응답을 낸 뒤 client transport가 예외를 내도록 모사했습니다. 재시도 시각은 Coordinator의 주입 가능한 시계를 진행해 검증했습니다. 실제 OS 네트워크 단절·전송 중 앱 강제 종료나 실시간 30초 대기를 수행한 결과로 바꾸지 않습니다.
+
+### `202a2e2` 경쟁 조건: 실제 native DB·합성 ACK 네 가지 PASS
+
+각 경우를 별도 고유 DB에서 실행했습니다. 이 네 검사는 HTTP 대신 합성 ACK 응답을 사용하며, SQLite의 BEGIN·DELETE·COMMIT·ROLLBACK은 실제 비동기 native API입니다.
+
+| 경쟁 조건 | 실제 결과 |
+| --- | --- |
+| 빈 큐 snapshot 뒤 새 방문·삭제 작업 enqueue | 완료 저장 transaction이 false를 반환하고 성공 시각은 null 유지. Coordinator가 다음 배치까지 처리한 뒤에만 완료 저장 |
+| 같은 enqueue 뒤 자동 백업 opt-out | 첫 배치만 ACK, 새 두 작업을 큐에 남기고 성공 시각을 만들지 않음 |
+| ACK가 다른 transaction 뒤에서 대기 중 같은 owner의 token 교체 | captured guard 전달, ACK transaction rollback·Runner paused·ACK 0건, 큐 내용과 사진 URI 보존 |
+| 실제 outbox DELETE 직후 같은 owner의 token 교체 | 실제 삭제 1건 뒤 rollback, Runner paused·ACK 0건. 방문·사진·outbox ID/payload/시각 보존 |
+
+각 DB의 integrity는 `ok`였습니다. 경쟁 시점을 adapter의 제어 지점으로 만들었으며 실제 사용자 DB·세션·방문에는 주입하지 않았습니다. 새 기능 전체 E2E나 모든 동시 실행 조합의 통과로 확대하지 않습니다.
+
+### 자동 검사·보존·종료
+
+각 임시 소스 단계에서 `npm --prefix travel_visit_tracker run check`를 실행해 타입 검사·ESLint·이 worktree의 기존 **90개 테스트**가 PASS였습니다. 공통의 189개 모바일·36개 서버 검사 수를 Android 실행 결과로 바꾸지 않습니다. Android 커밋에는 공통 코드·테스트를 넣지 않습니다.
+
+개인 원본과 인증 항목의 보존 대조를 통과했습니다. 상세 값은 로컬 근거에만 보관합니다. 원본 DB에 합성 방문을 넣거나 게스트 가져오기·삭제·초기화하지 않았습니다. 독립 시험 DB **6개와 해당 WAL·SHM의 부재**, 원본 DB의 존재를 확인했습니다.
+
+Inspector helpers·자체 Metro 8082·별도 HTTP 서버·에뮬레이터를 종료하고 전용 연결만 제거했습니다. 원래 있던 5개 파일은 바이트 단위로 복구하고 새 QA 파일 9개는 적용 해시를 확인한 뒤 제거했습니다. package/lock은 그대로입니다. 기존 APK·서명·SDK·AVD·DB·사진·백업·로그·원본 증거도 보존했습니다.
+
+시작 가용량은 20.52GiB, 종료 때는 18.52GiB였습니다. 파일시스템의 해당 시점 값이며 AVD·다른 작업의 사용량을 분리한 결과는 아닙니다. 이번에는 새 native 빌드나 캐시·중간 바이너리 삭제를 하지 않았고, 용량 확보량도 0입니다. 이전 날짜의 정리 결과와 합산해 이번 확보량으로 표시하지 않습니다.
+
+원본 근거는 Git 제외인 `docs/test-results/android-backup-ui-20261017/`에 보존합니다. 공개 문서에는 상태·개수·검증 한계만 적으며 계정·토큰·서버 주소·사진·기기 값과 원본 로그는 올리지 않습니다.
+
+| 근거 | 로컬 파일 |
+| --- | --- |
+| 두 SHA·임시 파일·복구 | `validation-files.json`, `original-*.txt`, `common-*.txt`, `restoration-result.json` |
+| 화면·동의·재실행 | `ui-summary.json`, `consent-summary.json`, `after-*-state.json`, `restored-state.json`, 비공개 화면 XML·PNG |
+| native 인증 항목·원본 대조 | `*-credential.json`, `baseline-data.json`, `after-*-data.json`, `final-data.json`, 비공개 fingerprint 기준 |
+| c95 실제 HTTP 14개 | `c95-native-probe-result.json`, `c95-native-probe-manifest.json`, `c95-complete.json` |
+| 202a 실제 HTTP 14개 | `native-probe-result.json`, `native-probe-manifest.json` |
+| 202a DB 경쟁 조건 네 가지 | `race-probe-result.json`, `race-probe-manifest.json`, `race-probe-source.js` |
+| 서버·임시 DB 제거 | `server-summary.json`, `server-final-counts.json`, `temporary-databases-cleanup.json` |
+| 자동 검사·설치 APK·종료 | `common-check.log`, `common-202a-check.log`, `installed-apk-preserved.json`, `shutdown-status.json`, `metro*.log`, `server.log`, `emulator.log` |
+
+실제 Android 휴대폰·Release·OS 클라우드 백업/복원·배터리와 G1~G4 전체 조건은 남아 있습니다. 사진 업로드·새 기기 복원·여러 기기 삭제 병합과 비어 있지 않은 앱 UI의 전송 중단·복구도 별도입니다. 공통 수정의 Android 제안은 이번 네 조건에서 해결 확인했으며, 결과만 기존 PR #1에 저장합니다.
+
+## 10월 16일 설치 APK와 실제 비동기 SQLite
+
+### 기존 자료를 보존한 APK 업데이트
+
+Android 시작 기준은 `3bb9493`입니다. 10월 15일 빌드한 APK의 보존 hash·파일 크기, APK 서명 유효성, 현 설치 앱과의 서명·package·버전 호환성을 먼저 대조했습니다. 모든 조건과 원본 자료 대조를 통과한 뒤 **`adb install -r`을 한 번만** 실행했고 성공했습니다. 새 의존성, prebuild나 native rebuild는 없었으며 uninstall, wipe, 재시드와 원본 DB 삭제도 하지 않았습니다.
+
+설치 후 package 경로에서 읽은 APK의 SHA-256이 보존한 새 APK와 같았습니다. 따라서 그 바이너리의 최종 manifest와 컴파일된 XML을 대조해 fullBackupContent·dataExtractionRules 참조, full-backup·cloud-backup·device-transfer의 `sharedpref/SecureStore` 제외를 설치 앱 기준으로 확인했습니다. 초기 XML 검사식은 aapt의 속성 값과 Raw 표시를 중복 집계해 실패했으며, 속성 행만 세도록 바로잡고 읽기 전용으로 재확인했습니다. 재설치는 하지 않았습니다.
+
+| 설치 전후 검사 | 결과 |
+| --- | --- |
+| 보존 APK hash·서명·설치 호환성 | PASS |
+| 데이터 보존 업데이트 | `install -r` 1회 성공 |
+| 설치 APK와 검증 APK의 hash | 동일 |
+| 설치 앱의 백업 제외 규칙 | manifest 참조와 세 규칙 PASS |
+| 모든 owner의 visits·photos·outbox 전체 행 | 설치 전후 hash 동일 |
+| 기존 guest 행·사진 파일 바이트 | 10월 14일 원본 기준과 동일 |
+| 최종 기존 자료·상태 | 개인 원본 보존 대조 통과. 상세 값은 로컬 근거에만 보관 |
+
+이번에는 **실제 OS 클라우드 백업·복원·기기 전송을 시작하지 않았습니다.** 이 검사로 방문·사진의 OS 복원이나 실제 Android·Release 수용 조건을 완료 처리하지 않습니다.
+
+### production과 같은 비동기 adapter 검사
+
+공통 소스는 **`f4eb401cc58a7a03acc5fd38797f6c938b62b932`에 고정**했습니다. `repository.ts`, `schema.ts`, `dwell.ts`, `database.ts` 네 파일을 Git에서 읽어 원문·해시를 로컬에 보존했습니다. 작업 중인 공통 소스나 원래 checkout은 복사하지 않았고 Android 앱 소스에도 overlay하지 않았습니다.
+
+`database.ts`에서 production `SqlConnection` 객체의 본문을 그대로 추출했습니다. 네 함수는 `execAsync`, `runAsync`, `getFirstAsync`, `getAllAsync`를 직접 호출하며 sync API wrapper를 쓰지 않습니다. `getConnection()` 자체를 실행하면 원본 DB가 열리므로 실행하지 않았습니다. 대신 새 고유 이름의 합성 DB를 `openDatabaseAsync`로 열고 production과 같은 WAL·busy timeout을 설정한 뒤, 그 연결에 같은 adapter 본문과 Repository를 연결했습니다. `PRAGMA database_list`로 시험 파일 경로를 확인했습니다.
+
+Hermes Inspector 표현식은 즉시 반환하고 전역 finished 플래그를 별도 polling했습니다. 검증 코드는 지난번 확인한 ES2015 Promise 변환을 사용했습니다. 앱 시작 직후 Inspector가 아직 준비되지 않은 경우에만 제한된 대기를 추가했고, 실제 DB 시험은 한 번 실행해 PASS였습니다.
+
+| 합성 파일 DB의 비동기 API 검사 | 결과 |
+| --- | --- |
+| 합성 관측·방문·사진 행 생성 | async API로 성공. 실제 사진 파일은 만들지 않음 |
+| A/B 계정 분리 | A의 방문·사진을 B에서 볼 수 없음 |
+| 명시적 GPS 가져오기 | GPS 방문 1건·사진 행 1건 이동, 개발 방문은 guest에 남음 |
+| UUID·session·소수점 시각·사진 URI·연결 | 모두 동일 |
+| outbox 내용 보존 | owner 변경 외 ID·entity·operation·payload·생성 시각·attempts 동일 |
+| 비활성 owner import·attempt 쓰기·ACK | 모두 거절, outbox 불변 |
+| B의 ACK에 A 작업을 전달 | 삭제 0건, A의 대기 자료 보존 |
+| async close·reopen | 방문 UUID·소수점 시각·outbox 유지 |
+| 무결성·종료 | integrity `ok`, closeAsync·deleteDatabaseAsync 성공 |
+| 파일 제거·원본 재대조 | 해당 임시 DB·WAL·SHM 없음, 원본 전체 행·사진 바이트 불변 |
+
+10월 15일의 메모리 DB·sync native wrapper 결과와 구분합니다. 이번에는 production과 같은 **네 비동기 adapter 함수**를 실제 native SQLite에서 확인했지만, 앱의 연결 캐시·계정 화면 전환·서버 전송 UI의 E2E 전체를 검증한 것은 아닙니다. 준비 중인 공통 백업 버튼·자동 전송 소스도 이번 결과에 포함하지 않습니다.
+
+### 사용자 요청 용량 정리와 종료
+
+검증 후 자체 Metro 8082·에뮬레이터·Inspector를 종료하고 열린 파일을 대조했습니다. 최초 서버가 IPv6 localhost에만 떠서 IPv4 연결용 서버를 준비하는 동안 두 프로세스가 있었으며, 사용하지 않는 자체 IPv6 서버를 먼저 종료했습니다. 최종적으로 두 자체 서버 모두 종료됐습니다. 공통 iOS 8081과 연결된 iPhone은 조작하지 않았습니다.
+
+10월 15일 본인 prebuild가 만든 디렉터리 안의 남은 재생성 가능한 `.so`, `.pch`, `.class`, `.jar`, `.o`, `.a`, `.dex`, `.flat`, `.bc`만 정리했습니다. 디렉터리 생성 이력과 실제 worktree 경로를 기준으로 소유를 확인했습니다. 일부 복제 파일의 생성 시각은 원본 시각을 유지했으므로 파일 시각만으로 사전 존재 여부를 판단하지 않았습니다. 삭제 전 해당 파일의 열린 핸들이 없었고 APK·서명·로그·근거 해시는 삭제 후에도 같았습니다.
+
+| 정리 경로 | 해당 디렉터리 |
+| --- | --- |
+| 앱 | `travel_visit_tracker/android/app/build/intermediates`, `travel_visit_tracker/android/app/build/tmp` |
+| `travel_visit_tracker/node_modules/<package>/android/build/intermediates` | `expo-modules-core`, `react-native-gesture-handler`, `react-native-reanimated`, `react-native-screens`, `react-native-worklets` |
+| `travel_visit_tracker/node_modules/<package>/android/.cxx` | `expo-modules-core`, `react-native-reanimated`, `react-native-worklets` |
+| `travel_visit_tracker/node_modules/<package>/android/build/tmp` | `expo`, `expo-constants`, `expo-dev-launcher`, `expo-dev-menu`, `expo-json-utils`, `expo-manifests`, `expo-modules-core`, `expo-updates-interface`, `react-native-gesture-handler`, `react-native-reanimated`, `react-native-safe-area-context`, `react-native-screens`, `react-native-worklets`, `@expo/log-box`, `@maplibre/maplibre-react-native` |
+
+파일 **3,265개, 논리 크기 2,189,723,038 bytes(2.04GiB)**를 제거했습니다. 실제 파일시스템 가용량은 정리 직전 24,603,115,520 bytes에서 직후 24,764,792,832 bytes로 **161,677,312 bytes(154.19MiB) 증가**했습니다. 파일 크기 합계를 실제 확보량으로 바꾸지 않습니다. 복제 블록 공유나 다른 작업의 디스크 사용량을 분리 측정한 결과도 아닙니다.
+
+최종·기존 APK와 설치 전 APK 복사본, signing 파일, 모든 로그·XML·JSON·원본 근거, AVD·DB·사진·outbox·백업은 유지했습니다. 중복된 최종 APK를 삭제하지 않았고 원래 checkout·전역 캐시·SDK 정리는 이 Android 작업에서 하지 않았습니다. 공통 코드와 package/lock은 변경하지 않았으므로 복구할 임시 overlay도 없습니다. 삭제한 중간 바이너리는 필요할 때 다시 빌드해야 합니다.
+
+이번 원본은 Git 제외인 `docs/test-results/android-update-async-20261016/`에 있습니다. 공개하는 내용은 이 결과 요약이며 원본 DB·사진·서명·기기 경로와 APK는 커밋하지 않습니다.
+
+| 근거 | 로컬 파일 |
+| --- | --- |
+| 소스 고정·adapter 추출 | `source-manifest.json`, `*-source.ts`, `production-async-adapter.txt`, `async-probe-manifest.json` |
+| 설치 전 확인·설치·최종 바이너리 | `apk-preflight.json`, `install-r.log`, `installed-apk-result.json`, `installed-manifest.txt`, `secure_store_*-installed-compiled.txt` |
+| 실제 비동기 시험·임시 DB 정리 | `async-native-probe.js`, `async-native-start.json`, `async-native-result.json`, `temporary-database-cleanup.json` |
+| 원본 전후 비교 | `before-install-data.json`, `after-install-data.json`, `after-async-data.json`, 비공개 행·사진 fingerprint 기준 |
+| 용량·종료 | `cleanup-inspection.json`, `cleanup-removed-files.json`, `cleanup-summary.json`, `shutdown-status.json`, `metro*.log`, `emulator.log` |
+
+## 10월 15일 SecureStore 백업 제외와 native SQLite
+
+### 최종 APK의 백업 선언 확인
+
+Android 시작 기준은 `b32afc6`, 공통 소스 기준은 `d51a8fefc8603327ad13bf2dba67045372eefa0a`입니다. 공통 `app.config.ts` 한 파일만 정확한 커밋 내용으로 임시 적용했습니다. 차이는 `expo-secure-store` 플러그인의 `configureAndroidBackup: true`, `faceIDPermission: false` 선언입니다. 원문과 양쪽 해시를 보존했고, 검증 후 원래 Android HEAD와 바이트 단위로 같게 복구했습니다. package/lock과 의존성은 바꾸지 않았습니다.
+
+Node 24.21.0, JDK 17, 기존 Android SDK로 Android만 prebuild하고 아래 빌드를 실행했습니다. Expo는 offline, dotenv 비활성 조건이었습니다.
+
+```sh
+# travel_visit_tracker/에서
+EXPO_OFFLINE=1 EXPO_NO_DOTENV=1 EXPO_NO_TELEMETRY=1 CI=1 npx expo prebuild --platform android --no-install
+# travel_visit_tracker/android/에서, 기존 JDK/SDK 환경 사용
+./gradlew :app:assembleDebug -PreactNativeArchitectures=arm64-v8a --offline --max-workers=2 --no-daemon --console=plain
+```
+
+빌드는 **2분 42초, 497개 task로 성공**했습니다. 기존 APK의 최종 manifest에는 아래 두 참조가 없었습니다. 새 `travel_visit_tracker/android/app/build/outputs/apk/debug/app-debug.apk`에서는 SDK의 `aapt`로 참조 ID와 컴파일된 XML을 대조했습니다.
+
+| 최종 APK 검사 | 결과 |
+| --- | --- |
+| `android:fullBackupContent` | `@xml/secure_store_backup_rules` 리소스로 연결됨 |
+| `android:dataExtractionRules` | `@xml/secure_store_data_extraction_rules` 리소스로 연결됨 |
+| 기존 full-backup 규칙 | `sharedpref` 도메인의 `SecureStore` 제외 |
+| cloud-backup 규칙 | `sharedpref` 도메인의 `SecureStore` 제외 |
+| device-transfer 규칙 | `sharedpref` 도메인의 `SecureStore` 제외 |
+| APK 서명 검증, 기존 APK와 서명·package 비교 | 모두 PASS |
+
+새 APK는 109,406,499 bytes이며 로컬에 보존합니다. **설치하지 않았으므로 에뮬레이터에 남은 기존 APK의 백업 정책이 바뀐 것은 아닙니다.** 이번 PASS는 최종 Debug 바이너리에 제외 규칙이 들어간다는 근거입니다. OS 백업·복원·기기 전송 실행, 방문 DB·사진의 OS 백업 보존, Release나 실제 휴대폰 시험은 수행하지 않았습니다. `faceIDPermission: false`의 iOS native 결과도 이번 Android 검사 범위가 아닙니다.
+
+### 원본과 분리한 저장 계층 시험
+
+기존 설치 Debug APK의 Hermes와 `expo-sqlite` native 함수를 사용했습니다. 공통 `d51a8fe`의 repository/schema/dwell 원문과 해시를 별도로 보존하고, 저장소 파일을 덮어쓰지 않은 채 Inspector의 격리된 함수로 불러왔습니다. 새 연결의 **`:memory:` DB**만 사용했으며 `PRAGMA database_list`의 빈 파일 경로를 확인했습니다. 기존 앱의 DB 연결과 구분되며 종료 시 `closeSync()`로 모든 시험 자료를 해제했습니다.
+
+| 합성 native SQLite 검사 | 결과 |
+| --- | --- |
+| A/B 계정 조회 분리 | A가 가져온 방문·사진을 B가 볼 수 없음 |
+| 명시적 게스트 가져오기 | GPS 방문 1건과 연결 사진 행 1건만 이동, 개발 방문은 guest에 남음 |
+| 비활성 계정 가져오기 | 현재 계정과 다르면 거절됨 |
+| 식별자·시각·사진 연결 | 방문 UUID, session ID, 소수점 시각, 사진 URI와 visit 연결 보존 |
+| 전송 대기 자료 | owner 변경 외 ID, entity, operation, payload, 생성 시각, attempts 보존 |
+| 계정 전환 후 전송 보호 | 비활성 A의 attempt 갱신 거절, B의 ACK로 A의 대기 자료가 삭제되지 않음 |
+| 무결성·종료 | integrity `ok`, 메모리 DB 닫힘 |
+| 원본 앱 대조 | 개인 원본 보존 대조 통과. 상세 값은 로컬 근거에만 보관 |
+
+사진은 합성 URI 문자열과 연결 행만 만들었고 실제 사진 파일을 만들지 않았습니다. 위치 관측 결과를 합성한 저장 계층 시험이므로 GPS 수신·체류 판정이나 앱 UI, 서버 전송 E2E의 통과 근거로 사용하지 않습니다. 동기식 native SQLite 호출을 Repository 연결 형태로 감싸 실행했으며 production의 비동기 adapter 전체를 검증한 결과도 아닙니다.
+
+초기 Inspector 시험은 native async/await로 변환한 검증 코드에서 방문 생성 후속 단계가 실패했습니다. 같은 공통 원문을 TypeScript ES2015 Promise 흐름으로 변환한 뒤 전체 항목이 PASS였습니다. 제품 소스는 수정하지 않았고, 초기 실패와 최종 결과를 함께 보존합니다. 이전 credentials 직접 probe의 미완료 상태를 이번 결과로 소급 변경하지 않습니다.
+
+### 용량 정리와 종료
+
+빌드와 Inspector, 자체 Metro 8082, 에뮬레이터 종료를 확인한 뒤 이번 빌드에서 새로 생성한 중간 바이너리만 정리했습니다. 각 디렉터리·파일 생성 시각, 이 worktree 안의 실제 경로, 열린 파일 부재를 확인했습니다. `.so`, `.o`, `.a`, `.dex`, `.class`, `.jar`, `.flat`, `.bc` 파일 **1,236개, 논리 크기 2,570,324,503 bytes**를 제거했습니다. 디렉터리와 로그·리포트·XML·JSON은 유지했습니다.
+
+정리 직전 가용량은 23,472,234,496 bytes(21.86GiB), 직후는 25,807,925,248 bytes(24.04GiB)였습니다. **즉시 측정한 확보량은 2,335,690,752 bytes(2.18GiB)**입니다. 빌드 전 기록값은 29,941,760,000 bytes(27.88GiB), 빌드 직후는 25,053,179,904 bytes(23.33GiB)였습니다. 각 시점의 파일시스템 가용량이며 다른 프로세스 사용량을 분리한 값은 아닙니다.
+
+정리한 경로는 다음과 같습니다. 아래 package 이름은 각 행의 접두·접미 경로에 그대로 대응합니다.
+
+| 경로 | 해당 디렉터리 |
+| --- | --- |
+| 앱 | `travel_visit_tracker/android/app/build/intermediates`, `travel_visit_tracker/android/app/.cxx` |
+| `travel_visit_tracker/node_modules/<package>/android/build/intermediates` | `expo`, `expo-constants`, `expo-dev-client`, `expo-dev-launcher`, `expo-dev-menu`, `expo-dev-menu-interface`, `expo-json-utils`, `expo-manifests`, `expo-modules-core`, `expo-updates-interface`, `react-native-gesture-handler`, `react-native-reanimated`, `react-native-safe-area-context`, `react-native-screens`, `react-native-svg`, `react-native-worklets`, `@expo/log-box`, `@maplibre/maplibre-react-native`, `@react-native-masked-view/masked-view` |
+| `travel_visit_tracker/node_modules/<package>/android/.cxx` | `expo-modules-core`, `react-native-gesture-handler`, `react-native-reanimated`, `react-native-screens`, `react-native-worklets` |
+
+기존·신규 APK와 debug signing 파일은 정리 전후 해시가 같습니다. 원본 checkout, 전역 Gradle 캐시, SDK, AVD, DB·사진·outbox, 기존 증거·백업·로그는 유지했습니다. 공통 임시 설정은 복구했고 iOS 8081 프로세스는 그대로입니다. 자체 8082 연결만 제거했으며 다음 빌드 때 삭제한 중간 바이너리는 다시 생성해야 합니다.
+
+이번 원본은 Git 제외인 `docs/test-results/android-backup-20261015/`에 보존합니다. 공유 가능한 결과는 이 문서에 기록하며 APK, 원본 로그, 서명 값, DB와 기기 식별자는 공개하지 않습니다.
+
+| 근거 | 로컬 파일 |
+| --- | --- |
+| 기준 소스·복구 | `validation-files.json`, `original-*.txt`, `restoration-result.json`, `synthetic-source-manifest.json`, `*-source.ts` |
+| 빌드·APK 검사 | `prebuild.log`, `assemble-debug.log`, `old-apk-summary.json`, `apk-backup-result.json`, `new-apk-manifest.txt`, `secure_store_*-compiled.txt` |
+| 격리 SQLite와 원본 대조 | `synthetic-native-probe.js`, `make-sqlite-probe.cjs`, `run-sqlite-probe.mjs`, `synthetic-native-attempt*.json`, `synthetic-native-result.json`, `synthetic-native-summary.json`, `app-before-synthetic.json`, `app-after-synthetic.json` |
+| 정리·종료 | `cleanup-candidate-inspection.json`, `cleanup-removed-files.json`, `cleanup-summary.json`, `shutdown-status.json`, `metro.log`, `emulator.log` |
+
+이번 변경은 Android 결과 문서만 포함합니다. 공통 진행표·체크리스트는 수정하지 않았고 실제 기기·Release·배터리 수용 조건도 완료로 올리지 않았습니다.
+
+## 10월 14일 P3-07 Android 로그인 QA 결과
+
+**이번 native 흐름은 PASS입니다.** 실제 backend의 `createBackend`를 읽기 전용으로 재사용하되 별도 루프백 서버, 임시 DB·업로드 폴더와 합성 계정만 사용했습니다. 실제 backend의 data/uploads나 환경 비밀값은 사용하지 않았습니다. 공개 문서에는 합성 계정 값, 토큰, 서버 주소와 원본 JSON을 적지 않습니다.
+
+| 시험 | 실제 결과 |
+| --- | --- |
+| 가입 | 실제 가입 API 성공 후 계정 뷰로 전환. 계정 로컬 자료는 0건, 게스트 자료는 별도로 유지 |
+| 저장·강제 재실행 복구 | native SecureStore에 AES 암호화 항목 저장 확인. 앱 강제 종료·재실행 후 세션 복구와 실제 me 확인 성공 |
+| 서버 오프라인 | offline 상태로 바뀌어도 토큰과 같은 계정의 로컬 뷰 유지. 게스트로 임의 전환하지 않음 |
+| JWT 비밀값 교체 | 실제 me 요청이 401로 거절된 뒤 expired·토큰 없음으로 변경. 같은 계정 뷰와 게스트 자료 유지 |
+| 재로그인 | 같은 합성 계정으로 실제 로그인 API 성공, signed-in·토큰 있음으로 복귀 |
+| 게스트 가져오기 | 확인창을 열었다 취소하는 것만 확인. 기록 이동이나 가져오기 실행 없음 |
+| 로그아웃 | guest·세션 없음·토큰 없음·기록 꺼짐으로 복귀. 해당 native SecureStore 인증 항목도 삭제됨 |
+| 원본 보존 | 개인 원본 보존 대조 통과. 상세 값은 로컬 근거에만 보관 |
+
+계정 뷰 유지 시험은 **로컬 계정 자료가 0건인 조건**입니다. 계정 소유자가 유지되고 게스트 기록이 노출·이동되지 않는 것을 확인했으며, 비어 있지 않은 계정의 방문·사진 복원까지 검증했다는 뜻은 아닙니다. 가져오기 원자성은 공통 담당의 임시 SQL 검사 결과이고 이번 native 시험에서는 실제 가져오기를 하지 않았습니다.
+
+### 기준 소스와 검사 범위
+
+Android 시작 기준은 `0bc330d`, 공통 검증 소스는 **`aa09aa0`**입니다. 계정 화면, 설정 화면, authClient/sessionManager/credentials 두 플랫폼 파일, database/repository, useAuthStore/useAppStore의 승인된 10개 파일만 임시 적용했습니다. 파일 해시로 `aa09aa0`와의 일치를 확인했고 시험 중 다시 동기화하지 않았습니다. 이후 공통 전송 서비스 개발은 이번 native 결과에 포함하지 않습니다.
+
+새 의존성 설치, APK 재설치, native rebuild나 장시간 시험은 하지 않았습니다. 기존 APK의 SecureStore 클래스·등록 참조와 설치 파일 일치는 준비 단계에서 읽기 전용으로 확인했습니다. 임시 UI 상태의 Android 타입 검사, ESLint와 기존 **90개 테스트**가 PASS였습니다. 공통 채팅의 112개 또는 이후 검사 수를 이 worktree의 실행 결과로 바꾸지 않습니다.
+
+독립 비동기 Inspector의 credentials.read 진단은 완료 응답을 얻지 못해 직접 API probe의 PASS로 표시하지 않습니다. 실제 흐름 확인은 가입·로그인 UI, 강제 재실행과 me 성공, 동기식 앱 상태 읽기, native 암호화 항목의 존재·로그아웃 후 삭제와 DB·사진 원본 대조로 수행했습니다. 초기 연결·화면 자동 입력 문제는 인증 실패로 분류하지 않으며, 원본 예외도 로컬에 보존했습니다.
+
+10월 14일에는 새 app.config의 SecureStore backup 제외 선언을 동기화하지 않았습니다. 10월 15일 새 Debug APK에서 native 제외 규칙을 확인한 결과는 위에 별도로 기록합니다. 기존 설치 APK는 그대로이며 OS 백업·복원, 실제 Android 휴대폰·Release와 iOS 실제 계정 UI/DB 전환은 이 로그인 QA의 완료 범위가 아닙니다.
+
+### 근거와 종료 상태
+
+원본 근거는 Git 제외인 `docs/test-results/android-auth-20261014/`에 보존했습니다. 아래 파일에는 상태·개수 중심의 요약 또는 비공개 원본이 있으므로 공개 PR에는 이 설명만 공유합니다.
+
+| 근거 | 로컬 파일 |
+| --- | --- |
+| 승인 소스 일치·원상 복원 | `validation-files.json`, 원래 존재한 파일의 `original-*.txt` |
+| 검사 결과 | `common-auth-check.log` |
+| 단계별 앱·DB 상태 | `after-signup`, `restored-online`, `server-offline`, `invalid-token`, `after-relogin`, `final-guest` 이름의 `*-session.json`, `*-db.json` |
+| native 인증 저장 항목 | 단계별 `*-credential.json` (존재·암호화 여부만 기록) |
+| 확인창 취소 | `guest-import-confirmation.*`, `guest-import-cancelled.*` |
+| 실제 임시 서버 응답·최종 요약 | `server-summary.json`, `summary.json` |
+| 종료 확인 | `shutdown-status.json`, `loopback-remove.log` |
+
+개인 원본과 인증 항목의 보존 대조를 통과했습니다. 상세 값은 로컬 근거에만 보관합니다. 임시 서버와 전용 연결, 자체 Metro와 에뮬레이터를 종료했습니다. 공통 overlay 10개는 원래 Android HEAD로 복원했고, 이번에만 생긴 공통 파일은 해시를 확인한 뒤 제거했습니다. 원래 common checkout, iOS와 기록·사진·증거·백업은 보존했습니다. 이번 종료 커밋은 Android 결과 문서만 포함합니다.
+
+### 다음 native 시험의 연결 도구
+
+준비 단계에서 추가한 `android-auth-loopback.sh`는 임시 서버의 health 응답을 확인한 뒤 인증 전용 포트를 에뮬레이터에 연결합니다. 공통 서버·Metro 포트와 실제 휴대폰을 거절하고 `--remove`는 해당 연결만 제거합니다. 서버·계정·앱을 만드는 도구는 아니며 임시 DB·합성 계정 격리는 실제 서버 설정에서 별도로 확인해야 합니다. 가짜 adb/curl로 검사한 `test-android-auth-loopback.py`는 PASS입니다.
+
+```
+bash travel_visit_tracker/scripts/android-auth-loopback.sh
+bash travel_visit_tracker/scripts/android-auth-loopback.sh --remove
+```
+
+설치 APK 준비 근거는 `docs/test-results/android-auth-prep-20261014/`에 따로 보존했습니다. 원본 APK·기기 경로, bytecode, 계정·토큰과 키 값은 GitHub에 올리지 않습니다.
+
+## 10월 14일에 확인한 내용
+
+이번 작업은 P2-07의 배터리 안내, 초기 지도 범위, P4-06의 Android 뒤로 가기 일부를 확인하는 작업입니다.
+
+| 확인한 흐름 | 결과 | 실제로 확인한 내용 |
+| --- | --- | --- |
+| 배터리 안내 | PASS | 정상 전원과 합성 절전 상태에서 위치 수신 지연, 2분 공백, 저장한 방문·사진 보존 설명이 표시됨 |
+| 휴대폰 앱 설정 열기 | PASS | Android 앱 정보 화면이 열리고, 뒤로 가면 앱 설정 화면으로 돌아옴 |
+| 초기 지도 | PASS | 지도를 움직이기 전과 앱 프로세스 재실행 후에도 제주 전체가 지도 영역 안에 표시됨 |
+| 설정 탭의 뒤로 가기 | PASS | 내 지도로 돌아옴 |
+| 지역 검색의 뒤로 가기 | PASS | 검색 모달이 닫히고 지도에 복귀함 |
+| 지역 상세의 뒤로 가기 | PASS | 선택했던 지역이 있는 지도 화면으로 복귀함 |
+| 지도 선택 카드의 뒤로 가기 | PASS (후속 수정 확인) | 첫 번째 뒤로 가기는 카드만 닫고 지도 유지. 두 번째는 기존 OS 흐름으로 앱이 화면 밖으로 나감 |
+| 선택이 남아 있는 다른 화면의 뒤로 가기 | PASS | 상세·설정 탭·검색 모달에서 뒤로 가면 선택이 유지된 지도에 복귀. 그다음 지도에서 뒤로 가면 카드 닫힘 |
+| 기존 자료 보존 | PASS | 개인 원본 보존 대조 통과. 상세 값은 로컬 근거에만 보관 |
+| 새 crash와 ANR | 없음 | 시험 전후 진단 내용에 변화 없음 |
+| 실제 기기, Release, 배터리 사용 시간 | BLOCKED / 미실행 | 실제 Android 휴대폰 없음. 이번 안내 확인으로 배터리 시험을 완료하지 않음 |
+
+### 어떤 소스로 시험했는지
+
+첫 배터리·지도 검증의 Android 기준은 `7db23ae`입니다. 사용자가 지정한 공통 브랜치 `codex/common-ios`의 `712dc04`에서 아래 두 파일만 임시 적용했습니다. 두 파일은 동작 소스 `70805c4`의 내용과 같았습니다.
+
+- `travel_visit_tracker/app/(tabs)/settings.tsx`: 새 배터리 안내.
+- `travel_visit_tracker/src/ui/RegionMap.native.tsx`: 전체 경계 bounds에 맞춘 초기 지도.
+
+지도 선택 카드의 뒤로 가기 개선 후보를 전달한 뒤, 공통 담당이 `travel_visit_tracker/app/(tabs)/index.tsx`에 Android의 포커스된 지도에서만 선택을 해제하는 처리를 추가했습니다. 후속 검증은 Android 기준 `cdb023a`에 이 새 지도 화면과 위 두 파일, 총 세 파일만 임시 적용했습니다. 공통 checkout HEAD는 `712dc04`였고 새 `index.tsx`는 아직 미커밋 검증본이었습니다. 해당 파일 SHA-256은 `087b8c738c873716b376d585fdb24be0cf9eea38c670947ce78e94ab40ecc36d`입니다. 나머지 두 파일은 기존 공통 커밋의 내용과 같았습니다.
+
+공통 브랜치 전체를 합친 시험은 아닙니다. 검증 전 Android 파일의 원문과 해시를 로컬에 보존했고, 각 검증 후 임시 공통 파일을 원래 Android HEAD와 바이트 단위로 같게 복원했습니다. 이 공통 파일들은 Android 커밋에 넣지 않습니다. 루트, 모바일, backend README와 공통 진행 문서도 수정하지 않았습니다.
+
+Emulator 37.2.12, API 37, CPU 4개, SwiftShader와 기존 APK를 사용했습니다. 앱을 재설치하지 않았고 새 native 의존성이나 빌드를 추가하지 않았습니다. Android 개발 서버는 localhost 8082만 사용했습니다.
+
+합성 절전은 전원을 연결하지 않은 상태와 배터리 15%, low_power=1로 만들었습니다. 안내와 앱 설정 연결을 확인한 뒤 low_power=0, AC 전원 연결, 배터리 100%로 복구했습니다. 자동 기록은 시험 내내 꺼져 있었으며 새 위치나 방문을 만들지 않았습니다.
+
+### 이번 검증의 근거
+
+검증용 UI 상태에서 `npm --prefix travel_visit_tracker run check`를 실행해 타입 검사, ESLint, 90개 테스트가 통과했습니다. 이후 앱 재실행 전후의 저장 요약을 대조했고 방문, 사진 파일과 연결, 전송 대기 수가 모두 일치했습니다.
+
+원본 근거는 로컬 `docs/test-results/android-ui-20261014/`에 보존합니다. GitHub에는 이 설명만 공유하며 원본 화면, 사진, DB, 기기 로그와 식별자는 올리지 않습니다.
+
+| 근거 | 로컬 파일 |
+| --- | --- |
+| 소스 적용·복원 확인 | `validation-files.json`, `original-0.txt`, `original-1.txt` |
+| 자동 검사 | `common-ui-check.log` |
+| 배터리 안내·앱 설정 복귀 | `battery-guidance-saver.*`, `android-app-settings.*`, `app-settings-back.*` |
+| 제주 포함 지도 | `settings-tab-back.png`, `cold-map-jeju.png` |
+| 뒤로 가기 | `search-before-back.*`, `search-after-back.*`, `region-detail.*`, `region-detail-back.*`, `map-selected-back.*` |
+| 저장 보존·진단 요약 | `baseline.json`, `after-back-flows.json`, `final-state.json`, `summary.json` |
+
+`*`는 같은 이름의 PNG와 화면 구조 XML입니다. 첫 로딩 캡처도 보존했지만 지도 통과 근거로 쓰지 않았습니다. 실제 지도 확인은 위의 로딩 완료 화면을 사용했습니다. 앱 설정의 배터리 제한을 변경하거나 위치·알림 권한을 회수하지 않았습니다.
+
+### 지도 뒤로 가기 수정의 후속 근거
+
+후속 원본은 `docs/test-results/android-back-20261014/`에 보존합니다. 첫 카드 닫기와 두 번째 OS 복귀, 상세에서 지도 복귀, 선택이 남아 있는 설정 탭·검색 모달 복귀, 마지막 카드 닫기까지 모두 PASS였습니다. 다른 화면에 머무는 동안 지도 전용 뒤로 가기가 동작을 가로채지 않았습니다. 이 결과로 앞서 발견한 선택 카드의 개선 후보를 해결 확인 이력으로 갱신합니다.
+
+| 근거 | 로컬 파일 |
+| --- | --- |
+| 세 파일 임시 적용·복원 | `validation-files.json`, `original-0.txt`~`original-2.txt` |
+| 타입 검사·lint·90개 테스트 PASS | `common-back-check.log` |
+| 첫 카드 닫기·두 번째 OS 복귀 | `selected-before-back.*`, `first-back-closes-card.*`, `second-back-default-os.*` |
+| 상세·설정·검색의 포커스 회귀 | `detail-back-keeps-selection.*`, `settings-back-keeps-selection.*`, `search-back-keeps-selection.*`, `final-back-closes-card.*` |
+| 단계별 대조·저장·진단 | `back-steps.json`, `baseline.json`, `final-state.json`, `summary.json` |
+
+개인 원본과 인증 항목의 보존 대조를 통과했습니다. 상세 값은 로컬 근거에만 보관합니다. 새 장시간 시험, 위치 주입, APK 재설치나 native rebuild는 하지 않았습니다. P4-06의 Android 뒤로 가기 부분 확인이며 작은 화면, 큰 글자, 스크린리더와 양쪽 실제 기기 검증은 계속 남아 있습니다.
+
+## 10월 12일에 완료한 위치 기록 시험
+
+이 시험은 Android 소스의 최초 기준 `0cf402a`에서 진행했습니다. 기존 AVD 데이터를 유지하면서 SwiftShader로 부팅을 복구했고, 최신 JS를 8082 개발 서버에 연결했습니다. 당시 부팅은 약 14.6초였고 기존 APK의 데이터 보존 업데이트 설치가 성공했습니다.
+
+| 시험 | 결과와 의미 |
+| --- | --- |
+| 위치 권한 회수 | 앱 재개 후 기록 중단과 권한 확인 안내. 화면 잠금 권한만 회수하면 foreground 수집으로 전환 |
+| GPS 끄기 | 활성 화면에서 기록 중단과 위치 서비스 확인 안내 |
+| 알림 거부 | 알림을 거부해도 위치 foreground 서비스 시작과 후보 진행 확인 |
+| 긴 위치 공백 | 권한·위치 서비스는 켜둔 채 새 위치를 멈춤. 마지막 관측 후 123.160초에 후보 만료, 저장한 방문 유지 |
+| 짧은 절전 시험 | 합성 배터리 15%와 절전 상태에서 약 15초 관측 지속. 실제 배터리 절감 결과는 아님 |
+| 기록 중지·재시작 | 중지 버튼으로 위치 서비스 종료, 재시작 후 정상 수신 |
+| 30분 화면 꺼짐 | 1800.589초 동안 31회 읽기. 총 301.100초 체류에서 한 번 확정, GPS 방문·전송 대기 2→3건. 추가 확정 없음 |
+| 화면 복귀·중지·앱 재실행 | 개인 원본 보존 대조 통과. 상세 값은 로컬 근거에만 보관 |
+
+30분 시험의 시작 직후 화면 상태는 Dozing, 60초부터 끝까지 매분 Asleep이었습니다. 보안 키가드는 표시되지 않았습니다. 고정된 합성 GPS, AC 전원, Debug 앱, Metro와 매분 adb 진단이 있는 조건이므로 깊은 절전, 제조사별 제한, 보안 잠금이나 실제 배터리 검증으로 해석하지 않습니다. 매분 관측한 마지막 위치의 나이는 최대 10.098초였으며, 모든 이벤트 간격을 연속 측정한 값은 아닙니다.
+
+당시 배터리 제한 안내는 없었지만, 위의 10월 14일 공통 UI 시험에서 안내 표시와 설정 연결을 확인했습니다. 누락 발견 이력은 남기되 현재 미해결 안내 문제로 취급하지 않습니다.
+
+10월 12일 원본 근거는 `docs/test-results/android-native-20261012/`에 있습니다. `long-lock-monitor.json`, `long-lock-00.json`~`long-lock-30.json`, `after-screen-return.*`, `after-long-stop.json`, `after-long-restart.*`, `restored-permissions.txt`, `crash-final.log`, `lastanr-final.txt`를 보존합니다. 저장된 증거를 대조하는 아래 명령의 세 묶음은 모두 PASS였습니다.
+
+```sh
+python3 scripts/check-android-native-evidence.py docs/test-results/android-native-20261012
+```
+
+타입 검사, ESLint와 90개 테스트, Android 실행 스크립트의 격리 검사, shell/Python 문법 검사도 통과했습니다. [최종 인계 커밋의 Linux Cloud 검사](https://github.com/OhHyunSeo/travel-visit-tracker/actions/runs/38489319781)도 성공했습니다. 이 Mac에서는 backend 의존성이나 iOS Pods를 설치하지 않았습니다.
+
+## 지도 성능은 별도로 남아 있습니다
+
+아래는 **10월 12일, 초기 지도 수정 전** Debug·SwiftShader 측정입니다. 10월 14일 제주 표시 개선을 성능 개선 수치로 바꾸지 않습니다. 경계 팩은 geoBoundaries의 2020년 개발 자료 228개이며 최신 공식 경계가 아닙니다.
+
+| 측정 항목 | 1회 | 2회 | 3회 |
+| --- | --- | --- | --- |
+| Android activity 시작 시간 | 2.526초 | 2.419초 | 2.469초 |
+| 시작 요청에서 지도 화면 구조 확인까지의 상한 | 14.665초 | 12.152초 | 12.897초 |
+| 전체 앱 PSS 메모리 | 397.32MiB | 397.04MiB | 396.12MiB |
+| Native Heap PSS | 204.23MiB | 203.84MiB | 202.81MiB |
+
+화면 구조 확인 시간에는 adb와 UI dump 지연이 포함되며 도형 그리기 완료 시각을 직접 측정한 값은 아닙니다. 전체 앱 메모리에서 지도만의 사용량을 분리할 수 없습니다. 지도 이동, 검색, 선택 후 전체 PSS는 427.45MiB였습니다.
+
+Android HWUI 누적 지표는 시작 직후 102프레임 중 janky 67(65.69%), p50 40ms/p90 65ms/p95 101ms였습니다. 조작 후에는 239프레임 중 janky 204(85.36%), p50 34ms/p90 133ms/p95 200ms였습니다. legacy janky는 각각 94/102와 138/239였습니다. 지연이 높으므로 실제 Android Release와 같은 조건의 GPU 비교 전에는 성능 완료로 표시하지 않습니다. 이 값은 MapLibre GL의 독립 FPS나 검색 응답 시간도 아닙니다. 당시 새 crash와 ANR은 없었습니다.
+
+근거: 10월 12일 증거 폴더의 `map-profile.json`, `map-start-{0,1,2}.txt`, `map-memory-{0,1,2}.txt`, `map-full.png`, `map-panned.png`, `map-selected.png`, `gfx-before.txt`, `gfx-after.txt`.
+
+## 작업 범위와 통합
+
+Android 채팅은 Android 실행·진단 스크립트, 전용 검사와 이 문서를 담당합니다. 공통 화면, 기록 판정·저장, app config, package/lock, backend와 전체 체크리스트는 공통 담당이 관리합니다. 남은 제안은 [공통 변경 제안](ANDROID_PROPOSED_CHANGES.md)에 정리합니다.
+
+작업 브랜치는 `codex/android-native`, 통합 대상은 master의 [초안 PR #1](https://github.com/OhHyunSeo/travel-visit-tracker/pull/1)입니다. 병합이나 원래 checkout 수정은 하지 않았습니다.
+
+| 커밋 | 내용 |
+| --- | --- |
+| `0cf402a` | 최초 공통 소스·역할 문서 기준. 당시 origin/master는 `a0a4e52` |
+| `75b9d2f` | Android 실행 격리, 데이터 보존 emulator 실행, 사진 파일·연결 진단과 검사 |
+| `55ed305` | 30분 증거 대조 스크립트와 최종 결과 |
+| `7db23ae` | 10월 14일 인계 기록. 첫 배터리·지도 UI 검증의 Android 시작 기준 |
+| `cdb023a` | 배터리 안내·제주 포함 지도·뒤로 가기 첫 검증과 읽기 쉬운 설명. 선택 카드 수정 검증의 Android 시작 기준 |
+| `6b0c042` | 포커스된 지도 선택 카드의 Android 뒤로 가기 후속 검증 |
+| `0bc330d` | 합성 인증 서버용 Android 루프백 연결과 SecureStore 검사 준비 |
+| `b32afc6` | 10월 14일 native 로그인 QA·원본 보존·종료 결과. 10월 15일 백업 설정 빌드의 Android 시작 기준 |
+
+10월 12일 최종 공개 단계가 사용량 한도로 중단돼 10월 14일에 기존 자료를 확인하고 커밋·푸시와 PR 설명 갱신을 마쳤습니다. 이번 후속 검증에서도 공통 UI는 임시로만 사용했으며 Android PR에 중복 포함하지 않습니다.
+
+### 재개할 때 쓰는 명령
+
+Node 24.21.0을 사용합니다. 외부 설치를 읽기 전용 재사용할 때는 `TRIP_NODE_BIN`에 해당 bin 경로를 지정합니다.
+
+```sh
+bash travel_visit_tracker/scripts/android-emulator.sh
+TRIP_NODE_BIN="<Node 24.21.0 bin>" bash travel_visit_tracker/scripts/android-local.sh
+python3 scripts/test-android-local.py
+python3 scripts/test-android-emulator.py
+```
+
+기본 GPU는 설치 도움말과 실제 부팅에서 확인한 SwiftShader입니다. auto, host, software, lavapipe, swiftshader, swangle 지원을 확인했지만 다른 모드의 성능 비교까지 마친 것은 아닙니다. 이전 host 재시작 실패 이력이 있어 이번 조건을 유지했습니다. 스크립트는 기존 AVD와 설치 도구를 사용하며 데이터를 wipe하거나 스냅샷을 삭제하지 않습니다. Android Metro 기본 포트는 8082이고 iOS용 8081은 거절합니다.
+
+## 자료와 실행 환경 보존
+
+기존 DB, 방문, 사진, 전송 대기 자료, APK, 소스와 스냅샷은 삭제하지 않았습니다. 10월 12일 시작 가용량은 약 48GiB, 10월 14일 후속 시작 시 약 37GiB였습니다. 10월 14일까지는 캐시 정리나 자료 삭제를 하지 않았고 확보량은 0이었습니다. 10월 15일의 새 중간 바이너리 정리 경로와 확보량은 위의 별도 기록을 따릅니다.
+
+10월 12일에는 위치 권한 3개와 알림을 원래 허용 상태로 돌리고 알림의 user-fixed 플래그를 제거했습니다. 위치 공백용 test provider도 제거하고 mock_location을 원래 default deny로 복구했습니다. 이번에는 권한을 바꾸지 않았고 합성 전원만 복구했습니다.
+
+각 검증의 에뮬레이터와 자체 8082 서버는 종료했습니다. 임시 적용한 공통 파일은 첫 검증 두 개, 뒤로 가기 수정 검증 세 개 모두 원래 내용으로 복원했습니다. iOS 8081과 원래 checkout은 조작하지 않았습니다. 근거는 각 로컬 증거 폴더의 `shutdown-status.json`과 `validation-files.json`에 남겼습니다. 공유 문서에는 개인 위치, 기기 식별자, 환경·서명 값을 넣지 않습니다.
