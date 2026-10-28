@@ -12,7 +12,11 @@
 
 아이폰의 원래 모든 DB행, 스키마, 설정, 사진과 새 native 인증 기준의 최종 일치를 확인했습니다. 시험 DB, 사진 두 개와 남은 사본 25개를 보관 대조한 뒤 이번 소유 자료만 정리했습니다. 파일 관찰 도구, 화면 유지 태그와 임시 이름 3개, 소스와 설정을 포함한 해시 6개를 복구했고 시험 앱과 자체 서버도 종료했습니다. 이번에 만든 JS 검증 출력 40개, 8,825,585바이트만 확인 후 정리했으며 이전 캐시, SDK, AVD, 빌드, 백업은 유지했습니다.
 
-Android 채팅에는 같은 다섯 사례만 이어서 검사하도록 전달했으며 현재 별도 작업 폴더에서 진행 중입니다. 결과를 확인한 뒤 이 항목을 갱신합니다. 원본 기기 자료와 세부 근거는 로컬 Git 제외 `snapshot-storage-errors-20261028/`와 `ios-snapshot-storage-ef799c4-20261028/`에 보관합니다. 전체 23/54와 G1~G4 미완료는 유지합니다.
+Android API37 Debug 에뮬레이터의 같은 다섯 사례도 통과했습니다. 삭제 실패 때 실제 SQLite의 `ROLLBACK`, 회복 뒤 `COMMIT`과 원본, 대기, 사본의 보존을 관측했습니다. 보존 대상 25개와 새 사본 36개의 반복 진행도 같았습니다. 원래 모든 자료, 인증, APK, 네트워크와 임시 소스 63개를 복구했고 소유 시험 환경과 에뮬레이터를 종료했습니다. 원본 보존과 정리 영수증을 확인했고 [PR #1](https://github.com/OhHyunSeo/travel-visit-tracker/pull/1)의 `90318b4`와 [Android 브랜치 CI](https://github.com/OhHyunSeo/travel-visit-tracker/actions/runs/40685125473) 성공까지 확인했습니다. 복구한 Android 브랜치 CI와 고정 제품 소스의 native 결과는 별도 기준입니다.
+
+공통 검사와 iPhone 결과는 `d3404da`에 저장했고 [해당 CI](https://github.com/OhHyunSeo/travel-visit-tracker/actions/runs/40683262457)도 성공했습니다. 세부 근거는 로컬 Git 제외 `snapshot-storage-errors-20261028/`, `ios-snapshot-storage-ef799c4-20261028/`와 Android 별도 작업 폴더의 `android-snapshot-storage-ef799c4-20261028/`에 보관합니다. 전체 23/54와 G1~G4 미완료는 유지합니다.
+
+이번 오류 처리와 짧은 반복 묶음은 완료해 저장합니다. 실제 OS 공간 부족과 여러 날의 사용은 별도 수용 범위로 남기고, 다음 재개에서는 미착수 P3-01인 배경지도 공급원과 오프라인 사용 범위부터 검토합니다. 이번 통제 검사를 새 목적 없이 반복하거나 새 묶음을 자동으로 시작하지 않습니다.
 
 ## 10월 28일 iPhone 임시 사본 정리 한도 확인
 
