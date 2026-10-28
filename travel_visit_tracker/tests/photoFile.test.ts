@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   directories: new Set<string>(),
   sizes: new Map<string, number>(),
   copy: vi.fn(),
+  create: vi.fn(),
+  write: vi.fn(),
+  list: vi.fn(),
   remove: vi.fn(),
   read: vi.fn(),
   digest: vi.fn(),
@@ -44,6 +47,7 @@ vi.mock('expo-file-system', () => {
       mocks.files.set(this.uri, new Uint8Array());
     }
     write(value: string | Uint8Array) {
+      mocks.write(this.uri);
       mocks.files.set(
         this.uri,
         typeof value === 'string' ? new TextEncoder().encode(value) : Uint8Array.from(value),
@@ -113,10 +117,12 @@ vi.mock('expo-file-system', () => {
       return this.uri.split('/').at(-1)!;
     }
     create(options?: { idempotent?: boolean }) {
+      mocks.create(this.uri);
       if (this.exists && !options?.idempotent) throw new Error('private existing directory');
       mocks.directories.add(this.uri);
     }
     list() {
+      mocks.list(this.uri);
       const prefix = this.uri + '/';
       return [...new Set([...mocks.directories, ...mocks.files.keys()])]
         .filter((p) => p.startsWith(prefix) && !p.slice(prefix.length).includes('/'))
@@ -145,6 +151,14 @@ beforeEach(() => {
   mocks.paths.document = 'file:///one/Documents';
   mocks.paths.cache = 'file:///one/Cache';
   mocks.constants.sessionId = '00000000-0000-4000-8000-000000000001';
+  const runtime = (
+    globalThis as typeof globalThis & {
+      __tripPaintingPhotoSnapshotsV1: { active: Set<string>; cleaning: boolean; after: string };
+    }
+  ).__tripPaintingPhotoSnapshotsV1;
+  runtime.active.clear();
+  runtime.cleaning = false;
+  runtime.after = '';
   mocks.files.set(source(), Uint8Array.from(png));
   mocks.random.mockReturnValue('synthetic-attempt');
   mocks.digest.mockImplementation(
@@ -300,9 +314,148 @@ describe('acknowledged previous-session upload cache cleanup', () => {
     });
     expect(hash(mocks.files.get(source())!)).toBe(hash(large));
   });
+  it.each(['root-list', 'copy-read', 'source-read', 'copy-delete'])(
+    'preserves a duplicate through a %s storage error and resumes cleanup after recovery',
+    async (failure) => {
+      const item = seedSnapshot();
+      const before = new Map(mocks.files);
+      const fail = (path: string) => {
+        const blocked = {
+          'root-list': `${mocks.paths.cache}/${snapshotRoot}`,
+          'copy-read': item.copy,
+          'source-read': source(),
+          'copy-delete': item.copy,
+        }[failure]!;
+        if (path === blocked) throw Error('synthetic EACCES, private path');
+      };
+      if (failure === 'root-list') mocks.list.mockImplementation(fail);
+      else if (failure === 'copy-delete') mocks.remove.mockImplementation(fail);
+      else mocks.read.mockImplementation(fail);
+      await expect(cleanupPreparedPhotoFiles(maintenance())).resolves.toMatchObject({
+        removed: 0,
+        bytesRemoved: 0,
+      });
+      expect(mocks.files).toEqual(before);
+      mocks.list.mockReset();
+      mocks.remove.mockReset();
+      mocks.read.mockReset();
+      expect(await cleanupPreparedPhotoFiles(maintenance())).toMatchObject({
+        examined: 1,
+        removed: 1,
+      });
+      expect(mocks.files.get(source())).toEqual(png);
+      expect(mocks.files.has(item.copy)).toBe(false);
+    },
+  );
+  it('continues past one unreadable duplicate and retries it on a later pass', async () => {
+    const blocked = seedSnapshot(100),
+      healthy = seedSnapshot(101);
+    mocks.read.mockImplementation((path: string) => {
+      if (path === blocked.copy) throw Error('synthetic EIO');
+    });
+    const options = maintenance();
+    expect(await cleanupPreparedPhotoFiles(options)).toMatchObject({ examined: 2, removed: 1 });
+    expect(options.removeAcknowledged).toHaveBeenCalledTimes(1);
+    expect(mocks.files.get(blocked.copy)).toEqual(png);
+    expect(mocks.files.has(healthy.copy)).toBe(false);
+    mocks.read.mockReset();
+    expect(await cleanupPreparedPhotoFiles(maintenance())).toMatchObject({ removed: 1 });
+    expect(mocks.files.get(source())).toEqual(png);
+  });
+  it('retains tiny metadata when its deletion fails without undoing a proven body removal', async () => {
+    const item = seedSnapshot();
+    const marker = Uint8Array.from(mocks.files.get(item.marker)!);
+    mocks.remove.mockImplementation((path: string) => {
+      if (path === item.marker) throw Error('synthetic EACCES');
+    });
+    expect(await cleanupPreparedPhotoFiles(maintenance())).toMatchObject({
+      removed: 1,
+      bytesRemoved: png.length,
+    });
+    expect(mocks.files.has(item.copy)).toBe(false);
+    expect(mocks.files.get(item.marker)).toEqual(marker);
+    mocks.remove.mockReset();
+    const options = maintenance();
+    expect(await cleanupPreparedPhotoFiles(options)).toMatchObject({ removed: 0 });
+    expect(options.removeAcknowledged).not.toHaveBeenCalled();
+    expect(mocks.remove).not.toHaveBeenCalled();
+    expect(mocks.files.get(source())).toEqual(png);
+  });
+  it('makes bounded progress through repeated additions while preserving a mixed retained backlog', async () => {
+    const retained = new Set<string>();
+    for (let n = 100; n < 165; n++) {
+      const item = seedSnapshot(n);
+      if (n % 3 === 0) mocks.files.delete(item.marker);
+      else if (n % 3 === 1) {
+        item.manifest.ownerId += ':other';
+        item.save();
+      } else {
+        item.manifest.operationId = uuid(5000 + n);
+        retained.add(item.manifest.operationId);
+        item.save();
+      }
+    }
+    const preserved = new Map(mocks.files);
+    const options = maintenance();
+    options.removeAcknowledged.mockImplementation(async (manifest, remove) =>
+      retained.has(manifest.operationId) ? false : remove(),
+    );
+    let removed = 0;
+    for (let cycle = 0; cycle < 10; cycle++) {
+      const items = Array.from({ length: 12 }, (_, n) => seedSnapshot(1000 + cycle * 12 + n));
+      for (let pass = 0; pass < 8 && items.some((item) => mocks.files.has(item.copy)); pass++) {
+        const result = await cleanupPreparedPhotoFiles(options);
+        expect(result.examined).toBeLessThanOrEqual(20);
+        removed += result.removed;
+      }
+      expect(items.every((item) => !mocks.files.has(item.copy))).toBe(true);
+      expect(mocks.files).toEqual(preserved);
+    }
+    expect(removed).toBe(120);
+    expect(mocks.files.get(source())).toEqual(png);
+  });
 });
 
 describe('photo attachment upload snapshots', () => {
+  it.each(['directory-create', 'marker-write'])(
+    'preserves the attachment and supports a fresh retry after %s runs out of space',
+    async (failure) => {
+      mocks.random.mockReturnValueOnce(uuid(50)).mockReturnValueOnce(uuid(51));
+      const unavailable = () => {
+        throw Error('synthetic ENOSPC, private path');
+      };
+      if (failure === 'directory-create') mocks.create.mockImplementationOnce(unavailable);
+      else mocks.write.mockImplementationOnce(unavailable);
+      await expect(preparePhotoFile(relative, context)).rejects.toMatchObject({
+        reason: 'invalid',
+      });
+      expect(mocks.files).toEqual(new Map([[source(), png]]));
+      const next = await preparePhotoFile(relative, context);
+      expect(next.fingerprint.sha256).toBe(hash(png));
+      await next.dispose();
+      expect(mocks.files).toEqual(new Map([[source(), png]]));
+    },
+  );
+  it('preserves an unmarked partial copy if both writing and disposing fail, without blocking a fresh attempt', async () => {
+    mocks.random.mockReturnValueOnce(uuid(50)).mockReturnValueOnce(uuid(51));
+    const directory = `${mocks.paths.cache}/${snapshotRoot}/${uuid(50)}`;
+    const partial = `${directory}/attachment`;
+    mocks.copy.mockImplementationOnce((_source, target) => {
+      mocks.files.set(target, new Uint8Array([7]));
+      throw Error('synthetic ENOSPC');
+    });
+    mocks.remove.mockImplementationOnce(() => {
+      throw Error('synthetic EACCES');
+    });
+    await expect(preparePhotoFile(relative, context)).rejects.toMatchObject({ reason: 'invalid' });
+    const preserved = new Map(mocks.files);
+    expect(mocks.files.get(partial)).toEqual(new Uint8Array([7]));
+    const next = await preparePhotoFile(relative, context);
+    await next.dispose();
+    expect(await cleanupPreparedPhotoFiles(maintenance())).toMatchObject({ removed: 0 });
+    expect(mocks.files).toEqual(preserved);
+    expect(mocks.files.get(source())).toEqual(png);
+  });
   it('hashes and uploads the snapshot while keeping a concurrently changed original', async () => {
     mocks.copy.mockImplementation(() => mocks.files.set(source(), new Uint8Array([9, 9, 9])));
     const prepared = await preparePhotoFile(relative);
