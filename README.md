@@ -38,6 +38,8 @@
 
 배경 도로지도는 OpenFreeMap의 Liberty 스타일을 사용하기로 정했습니다. 지역 하나의 저장 범위를 미리 계산하고 버전을 대조하는 코드를 추가했습니다. 현재 앱에는 경계 지도가 표시되며, 실제 저장 기능은 요청 제한을 검증한 뒤 연결합니다. 무료 사용 범위는 [배경지도 방향](docs/OFFLINE_MAP_PLAN.md), 양쪽 운영체제에서 남은 확인은 [요청 제어 검토](docs/OFFLINE_MAP_TRANSPORT.md)에 정리했습니다.
 
+전송 방식을 확인하는 작은 시험 앱도 별도로 준비했습니다. 현재 확인한 범위와 미해결 문제, 다음 순서는 [시험 준비 상태](qa/map-transport/README.md)에서 볼 수 있습니다.
+
 ## 개발 환경에서 실행하기
 
 Node **24.21.0**을 사용합니다. 저장소를 받은 뒤 루트 폴더에서 실행하세요.
@@ -63,6 +65,7 @@ bash scripts/verify-cloud.sh
 | `backend/` | Express, SQLite 기반의 백업 서버 |
 | `docs/` | 방문 판정 기준, 검사 기록, 개발 안내 |
 | `scripts/` | 공통 설치와 검사 도구 |
+| `qa/map-transport/` | 기존 앱과 분리한 지도 전송 시험 도구 |
 | `prototype_reference/`, `travel_visit_tracker_flutter_backup/` | 이전 구현을 참고하기 위해 보관한 소스 |
 
 현재 앱은 MapLibre로 지도를 그리고, SQLite에 기록을 보관합니다. 자세한 개발 순서는 [개발 계획](PROJECT_PLAN.md), 방문 확정 기준은 [방문 정책](docs/VISIT_POLICY.md)에 있습니다.

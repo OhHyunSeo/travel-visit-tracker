@@ -1,5 +1,19 @@
 # 여기서 이어서 개발하기
 
+## 10월 29일 사용자 요청으로 지도 전송 시험 저장, 중단
+
+현재 부분까지만 저장하라는 요청을 받았습니다. **새 사용자 재개 전에는 개발, 빌드나 기기 검사를 시작하지 않습니다.** 소스는 `qa/map-transport/`에 있으며 제품 앱에는 연결하지 않았습니다. 이전 `145a6dd`의 CI40878323688 성공을 확인했고 이번 전체 verifier도 종료값 0입니다. 모바일 609개, 서버 61개, 새 합성 서버 11개와 임시 HTTP/SQLite, 파일 검사, Android/iOS production JS/Hermes가 통과했습니다.
+
+다음 재개는 아래 순서로 진행합니다.
+
+1. **iPhone 시작 오류부터 수정:** 서명 빌드는 통과했지만 legacy AppDelegate 시험 앱이 UIKit `___UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption_block_invoke`에서 종료됐습니다. `qa/map-transport/ios/main.m`과 `Info.plist`에 UIScene/SceneDelegate 화면 시작을 적용하고 새 소스 해시를 남깁니다. 이번 대상 통신 사례는 전부 NOT RUN이며 기존 실패 앱을 새 통과로 세지 않습니다. 실패 앱은 로컬 `.build/pinned-startup-failed/`에 남겼습니다.
+2. **Android 보존 차이를 안전하게 확인:** 별도 API37 Debug 전송 검사 여섯 묶음은 통과했습니다. 원래 앱의 추적 파일 11개, APK, UID, 네트워크와 화면 설정은 같지만 기존 `userdata-qemu.img.qcow2`는 같은 크기에서 해시가 달랐습니다. base userdata와 `config.ini`는 같습니다. 원인은 미확정이며 원본을 덮어쓰거나 삭제해 맞추지 않습니다. 새 실행에는 다른 시험용 AVD를 만들고 실행 도구도 이를 확인하도록 먼저 보완합니다. 전체 AVD 보존을 PASS라고 쓰지 않습니다.
+3. **그 뒤에만 native 전송 검사를 재개:** 이번은 MapLibre 없는 별도 전송 도구입니다. iOS 내부 재시도의 교환별 집계, 실제 SDK 경로와 초기화, 지도 저장소 격리와 OS 수신량 보장은 남아 있습니다. 전달 task나 받아들인 본문 바이트를 실제 네트워크 교환 수나 수신량 상한으로 바꾸어 보고하지 않습니다.
+
+iPhone에서는 새 앱만 제거했고 원래 앱의 설치 정보가 같습니다. 개인 DB, 사진과 인증을 열지 않았으므로 이번 원래 자료의 해시나 native 인증 대조는 NOT RUN입니다. Android도 별도 패키지를 제거했고 소유 fixture, 에뮬레이터와 ADB를 종료했습니다. 기존 Android 채팅과 제품 작업 폴더는 새로 실행하지 않았습니다.
+
+서명 앱, 최종 APK, 소스 해시와 원시 진단은 로컬 Git 제외 `.build/`와 `docs/test-results/map-transport-qa-20261029/`에 보관합니다. 이번 생성한 중간 출력만 1,862개, 62,960,704바이트 정리했고 기존 캐시, SDK, AVD 이미지, 빌드와 백업은 삭제하지 않았습니다. 자세한 결과는 [시험 안내](../qa/map-transport/README.md)에 있습니다. **24/54**, P3-02 부분 완료와 G1~G4 미완료를 유지합니다.
+
 ## 10월 29일 P3-02 사전 계산과 네이티브 경로 검토
 
 지역 하나, 줌 8~12와 경계, 스타일, 타일 버전을 묶는 공통 사전 계산을 추가했습니다. `src/domain/backgroundMapPlan.ts`의 저장 내용 대조는 현재 경계 자료로 범위와 수량을 다시 계산합니다. 새 50개를 포함한 모바일 609개, 서버 61개와 전체 verifier, 양쪽 production JS/Hermes가 종료값 0으로 통과했습니다. 아직 UI, 영속 팩 저장이나 SDK 다운로드에 연결하지 않았습니다.

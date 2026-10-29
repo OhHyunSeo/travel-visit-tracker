@@ -5,6 +5,7 @@ cd "$ROOT"
 export CI=1 EXPO_NO_TELEMETRY=1 EXPO_OFFLINE=1
 
 npm --prefix travel_visit_tracker run check
+node --test qa/map-transport/fixture/server.test.mjs
 node --check backend/server.js
 npm --prefix backend test
 (
