@@ -1,0 +1,59 @@
+# 오프라인 지도 요청 제어 검토
+
+확인일: 2026-10-29. 설치된 MapLibre RN 11.5.0, 선언된 iOS 6.31.0, Android 13.6.1과 OkHttp 4.12.0 기준입니다.
+
+P3-02를 시작하며 양쪽 네이티브 확장 경로와 공통 사전 계산을 검토했습니다. **확장 후보는 있지만 실제 통신 제한은 아직 구현하거나 검증하지 않았습니다.** 현재 지도는 기존 경계 지도를 유지하며 공급원 다운로드를 시작하지 않습니다. [공급원 선정과 예산](OFFLINE_MAP_PLAN.md)의 조건도 유지합니다.
+
+## 이번에 추가한 공통 코드
+
+`src/domain/backgroundMapPlan.ts`는 앱에 포함된 지역 하나를 받아 줌 8~12 안에서 배경지도 계획을 만듭니다. 경계 팩의 ID와 버전, 지역과 경계 상자, 스타일 SHA-256과 타일 버전 문자열을 함께 남깁니다. 사방에 타일 하나씩 여유를 둔 좌표 범위와 낮은 줌의 래스터 여유분을 계산하며, 계획 견적이 2,500개를 넘으면 거절합니다.
+
+저장 형태의 JSON을 다시 읽을 때는 현재 경계 자료로 계산을 되풀이해 범위, 수량과 버전을 대조합니다. 잘못된 값, 미지원 형식, 오래된 경계나 정책 버전, 추가 필드를 그대로 받아들이지 않습니다. 결과는 복사해 변경을 막으며 개인 DB, 사진이나 인증을 열지 않습니다.
+
+이 코드는 순수한 사전 계산입니다. 아직 화면, SQLite 저장, 다운로드나 SDK 팩 생성에 연결하지 않았습니다. 스타일 해시와 타일 버전은 입력 형식을 검사할 뿐 실제 받은 파일의 해시를 검증한 결과가 아닙니다. 타일 견적도 SDK의 추가 요청이나 재시도를 막는 장치가 아니며, 요청 수와 전송량의 강제 제한으로 표시하지 않습니다.
+
+## iOS 후보
+
+MapLibre 전용 `NSURLSessionConfiguration.protocolClasses`에 공급원 주소만 처리하는 `NSURLProtocol`을 넣는 경로를 우선 시험할 수 있습니다. 설정은 지도와 `MLNOfflineStorage` 생성 전이어야 합니다. 설치된 RN `MLRNTransformRequest.m:144–150`이 사용하는 기존 요청 변환 delegate는 보존합니다.
+
+[MLNNetworkConfiguration.h](https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/platform/darwin/src/MLNNetworkConfiguration.h)는 외부 세션의 `NSURLSessionDataDelegate`를 지원하지 않는다고 명시합니다. 또한 [기본 HTTP 구현](https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/platform/darwin/core/http_file_source.mm#L295)은 전체 본문을 받은 completion 뒤 delegate에 응답을 전달하므로, 기존 응답 delegate에서 본문 수신을 실시간 제한할 수 없습니다.
+
+후보 protocol은 별도 전달 세션으로 요청하고, 전역 대기열이 완료나 취소까지 자리를 유지하도록 해야 합니다. 세션별 연결 수 설정만으로 전역 동시 요청 4개를 보장하지 않습니다. 전달 세션에는 같은 protocol을 넣지 않아 재귀를 막고, 쿠키와 계정 인증 저장소를 사용하지 않으며 redirect는 자동 추적하지 않거나 매 경유지를 다시 검사해야 합니다. 이 방식의 SDK 호환성은 미검증입니다.
+
+## Android 후보
+
+[ModuleProvider.createHttpRequest](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/ModuleProvider.java)에서 자체 `HttpRequest`를 제공하고 전용 client를 소유하는 공개 확장 경로가 있습니다. [NativeHttpRequest](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/http/NativeHttpRequest.java#L13)는 이 구현을 만들고 `offlineUsage`를 전달합니다.
+
+이 경로는 RN의 첫 헤더 등록이 공용 HTTP client를 교체하는 문제를 피하는 후보입니다. 기존 library loader에 위임하고 초기화 순서를 지켜야 하며, RN의 `TransformRequestInterceptor`도 유지해야 합니다. SDK 내부 클래스에 결합하므로 버전이 바뀌면 다시 확인합니다.
+
+전용 OkHttp의 전역과 호스트별 dispatcher를 모두 4로 제한할 수 있습니다. 현재 [기본 callback](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/module/http/HttpRequestImpl.java#L132)은 본문을 읽고 닫을 때까지 반환하지 않습니다. 이 수명과 제한을 실제 HTTP로 확인해야 하며, 별도 비동기 작업으로 본문을 넘기거나 동기 `execute()`를 사용하면 같은 근거를 적용할 수 없습니다.
+
+재시도와 redirect를 포함한 매 network exchange에서 주소, 앱 식별값과 예산을 검사해야 합니다. application interceptor 한 번만 세거나 `retryOnConnectionFailure=false`만 설정하는 것으로 충분하다고 하지 않습니다. [OkHttp follow-up 구현](https://github.com/lysine-dev/okhttp/blob/parent-4.12.0/okhttp/src/main/kotlin/okhttp3/internal/http/RetryAndFollowUpInterceptor.kt#L255)을 함께 검토했습니다.
+
+## 공통으로 해결해야 할 점
+
+| 항목 | 다음 구현 조건 |
+| --- | --- |
+| 다운로드 귀속 | URL만으로 SDK pack ID를 알 수 없음. 초기에는 단일 활성 작업의 장부를 열고 모든 공급원 요청을 그 예산에 합산. 다운로드 중 지도는 기존 경계 지도를 유지 |
+| 요청 분류 | 고정된 스타일, 타일 버전과 좌표, 글꼴, 아이콘만 허용. 추가 줌, prefetch, 미확인 주소와 다른 호스트는 전송 전 거절 |
+| 앱 식별 | 공급원 요청에만 고정 앱 User-Agent. 계정 토큰, 쿠키, 기기 식별값은 보내지 않음 |
+| 재실행 | 전송 전에 타일 시도와 보수적 바이트 예약을 영속 기록. 중단 뒤 불확실한 예약을 환급하거나 작업 ID 변경으로 예산을 초기화하지 않음 |
+| 본문 용량 | SDK에 전달한 바이트와 OS가 이미 받은 바이트를 구분. 길이 미지정, 압축, 오류 본문, redirect와 동시 요청의 예약 정책을 먼저 확정 |
+
+본문을 읽다가 상한에서 취소하는 것만으로 실제 수신량의 정확한 상한을 증명하지 못합니다. iOS 전달 세션에도 버퍼링이 있으며 Android의 [HTTP/2 수신 버퍼](https://github.com/lysine-dev/okhttp/blob/parent-4.12.0/okhttp/src/main/kotlin/okhttp3/internal/http2/Http2Stream.kt#L417), [HTTP/1 close 시 남은 본문 처리](https://github.com/lysine-dev/okhttp/blob/parent-4.12.0/okhttp/src/main/kotlin/okhttp3/internal/http1/Http1ExchangeCodec.kt#L390)도 고려해야 합니다. 이 문제를 해결하기 전에는 accepted-body 계측만으로 공급원 용량 조건을 보장했다고 표시하지 않습니다.
+
+## 기존 지도 저장소를 보호하는 시험 방식
+
+새 파일 경로만 지정하면 격리가 끝난다고 가정하지 않습니다. iOS [MLNOfflineStorage 초기화](https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/platform/darwin/src/MLNOfflineStorage.mm#L244)는 custom 대상이 없으면 기존 legacy DB를 그곳으로 옮기려고 합니다. Android의 [캐시 경로 설정](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/storage/FileSource.java#L277)도 전역 singleton과 저장 설정에 영향을 주며, RN 지도 모듈은 일찍 초기화됩니다.
+
+첫 네이티브 시험은 **다른 bundle/application ID와 별도 앱 저장 공간**을 쓰는 방식으로 준비합니다. 개인용 앱의 DB 경로를 바꾸거나 전체 캐시를 초기화하지 않습니다. 시험용 식별자는 기존 계정, Keychain 그룹과 위치 기록 작업을 공유하지 않게 검토하고, 새 빌드 전 디스크 여유와 소유 산출물 목록을 확인합니다. 재사용할 native 변경은 관리되는 모듈과 config plugin에 둡니다.
+
+통제 서버 시험은 다음 순서로 진행합니다. 아직 모두 **NOT RUN**입니다.
+
+1. 외부 공급원 주소를 허용하지 않는 별도 시험 앱과 작은 로컬 서버를 준비합니다. 기존 DB, 사진, 인증, MapLibre 저장소를 건드리지 않는지 먼저 확인합니다.
+2. 스타일, 타일, 글꼴과 아이콘을 함께 대기시켜 실제 응답 본문 수명 동안 최대 4개인지 측정합니다. 취소와 늦은 callback에서도 자리가 두 번 반환되지 않아야 합니다.
+3. 식별값의 범위, 다른 호스트 redirect, SDK 자동 재시도, 미지원 URL과 추가 타일의 거절을 서버 요청 기록으로 확인합니다.
+4. 고정 길이와 미지정 길이, 압축, 오류 본문을 작은 합성 한도로 시험합니다. SDK 전달량과 서버 송신량을 따로 기록하고, 실제 수신량 보장이 남아 있으면 통과로 세지 않습니다.
+5. 앱 중단과 재실행 뒤 같은 장부, 사용량과 불확실한 예약을 유지하는지 확인합니다. 개인 앱과 시험 앱의 저장 공간 분리도 다시 대조합니다.
+
+이 검토와 사전 계산만으로 P3-02를 완료하지 않습니다. 전체 **24/54**, P3-02~04와 G1~G4 미완료를 유지합니다. 실제 공급원 트래픽과 휴대폰 네이티브 검증은 다음 구현에서 별도 결과로 기록합니다.
