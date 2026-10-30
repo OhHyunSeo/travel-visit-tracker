@@ -65,10 +65,17 @@ def _bounded_metadata(path: pathlib.Path, expected: os.stat_result) -> bytes:
             raise BoundedStorageError('Cached SDK metadata changed identity or file type')
         if not 0 < actual.st_size <= MAX_METADATA_BYTES:
             raise BoundedStorageError('Cached SDK metadata changed beyond its read bound')
+        # Linux can reuse an unlinked inode immediately. Device/inode alone is
+        # not evidence that this is the file inspected before open().
+        stamp = lambda value: (value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+        if stamp(actual) != stamp(expected):
+            raise BoundedStorageError('Cached SDK metadata changed since inspection')
         with os.fdopen(descriptor, 'rb', closefd=False) as source:
             body = source.read(MAX_METADATA_BYTES + 1)
         if len(body) > MAX_METADATA_BYTES:
             raise BoundedStorageError('Cached SDK metadata changed beyond its read bound')
+        if stamp(os.fstat(descriptor)) != stamp(actual):
+            raise BoundedStorageError('Cached SDK metadata changed while reading')
         return body
     finally:
         os.close(descriptor)

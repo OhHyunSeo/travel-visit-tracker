@@ -5,8 +5,10 @@
 이번 사용자 재개로 아래 중단 지점에서 이어갔습니다. `34d5031`의 CI41003544861은 통과했습니다. 제품 소스와 의존성은 바꾸지 않았으며 P3-02의 별도 통신 도구를 보완했습니다.
 
 - iOS: `TPHTTPExchange`의 새 TCP 연결, 한 번의 HTTP/1.1 쓰기와 EOF 확인, 8KiB 헤더와 256바이트 본문, 취소 완료 뒤 자리 반환을 연결했습니다. Mac native 10개와 새 signed Debug 물리 iPhone 기본 11개, 실제 QA SIGKILL/새 PID 장부 1개가 통과했습니다. 재실행은 기존 미확정 256에 새 256을 추가한 결과이며 같은 요청 재전송이나 전원 종료가 아닙니다. Mac의 부분 EOF 검사를 iPhone 결과로 합치지 않습니다.
-- Android: 읽기 전용 `bounded_avd_storage.py`, 미구현 강제 제한에서 native 진입 거절, 호스트 37개 통과입니다. 원래 이미지 세 현재 해시는 이전 종료값과 같지만 과거 QCOW2 차이 원인은 미확정입니다. 새 AVD와 emulator, ADB, 마운트와 native 사례는 0개입니다. marker의 숫자는 실제 용량 제한이 아닙니다.
-- 전체 verifier exit0: 모바일 609, 서버 61, 합성 서버 11, 당시 Android 36와 Mac 10, 임시 HTTP/SQLite, 파일과 양쪽 JS/Hermes. 마지막 보완 소스의 Android 37와 Mac 10도 별도로 통과했습니다.
+- Android: 읽기 전용 `bounded_avd_storage.py`, 미구현 강제 제한에서 native 진입 거절, 호스트 39개 통과입니다. 원래 이미지 세 현재 해시는 이전 종료값과 같지만 과거 QCOW2 차이 원인은 미확정입니다. 새 AVD와 emulator, ADB, 마운트와 native 사례는 0개입니다. marker의 숫자는 실제 용량 제한이 아닙니다.
+- 전체 verifier exit0: 모바일 609, 서버 61, 합성 서버 11, 당시 Android 36와 Mac 10, 임시 HTTP/SQLite, 파일과 양쪽 JS/Hermes. 마지막 보완 소스의 Android 39와 Mac 10도 별도로 통과했습니다.
+
+첫 커밋의 Linux CI41043153321은 inode 재사용 조건의 거절 검사에서 실패했습니다. 크기와 변경 시각의 전후 확인, 재사용/읽는 중 변경 회귀 2개로 보완했고 Mac의 최종 Android 39개가 통과했습니다. iPhone runtime 소스는 바꾸지 않았습니다. 새 커밋의 CI 상태를 확인하고 이어갑니다.
 
 다음 작업은 **실제 MapLibre SDK를 이 격리된 QA 경로에 연결할 준비**입니다. 합성 HTTP/1.1 송신을 일반 HTTP client로 채택하거나 TLS/HTTP2와 SDK 자동 재요청, OS 수신량 상한까지 증명했다고 하지 않습니다. 기존 RN 요청 변환과 이른 초기화를 보존하고 별도 앱 저장소를 유지해야 합니다. 실제 공급원 다운로드는 계속 꺼 둡니다.
 

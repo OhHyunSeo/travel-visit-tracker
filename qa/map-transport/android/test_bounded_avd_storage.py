@@ -8,6 +8,7 @@ import os
 import pathlib
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -146,6 +147,30 @@ class BoundedPreparationTests(unittest.TestCase):
                  self.assertRaises(storage.BoundedStorageError):
                 self.plan()
             self.assertEqual(private.read_bytes(), b'private body must not be read')
+
+    def test_reused_inode_with_changed_size_or_timestamps_is_refused(self):
+        path = self.image / 'source.properties'
+        expected = path.stat()
+        values = {name: getattr(expected, name) for name in (
+            'st_mode', 'st_nlink', 'st_dev', 'st_ino', 'st_size',
+            'st_mtime_ns', 'st_ctime_ns')}
+        for field in ('st_size', 'st_mtime_ns', 'st_ctime_ns'):
+            changed = types.SimpleNamespace(**{**values, field: values[field] + 1})
+            with self.subTest(field=field), \
+                 mock.patch.object(storage.os, 'fstat', return_value=changed), \
+                 self.assertRaisesRegex(storage.BoundedStorageError, 'changed since'):
+                storage._bounded_metadata(path, expected)
+
+    def test_metadata_changed_during_read_is_refused(self):
+        path = self.image / 'source.properties'
+        expected = path.stat()
+        values = {name: getattr(expected, name) for name in (
+            'st_mode', 'st_nlink', 'st_dev', 'st_ino', 'st_size',
+            'st_mtime_ns', 'st_ctime_ns')}
+        after = types.SimpleNamespace(**{**values, 'st_ctime_ns': expected.st_ctime_ns + 1})
+        with mock.patch.object(storage.os, 'fstat', side_effect=[expected, after]), \
+             self.assertRaisesRegex(storage.BoundedStorageError, 'changed while'):
+            storage._bounded_metadata(path, expected)
 
     def test_low_headroom_and_missing_boot_inputs_are_separate_blockers(self):
         (self.image / 'ramdisk.img').unlink()
