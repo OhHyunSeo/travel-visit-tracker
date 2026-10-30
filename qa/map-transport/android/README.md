@@ -22,6 +22,22 @@
 
 이번에는 새 AVD 증가량을 1GiB 이하로 보수적으로 제한할 근거를 마련하지 못해 **새 AVD 생성과 native 재검사는 NOT RUN**입니다. 예전 이미지의 실제 할당량은 약 10.8GB였습니다. 기존 SDK나 userdata를 복사하거나 새 시스템 이미지를 다운로드하지 않았고, emulator와 ADB도 시작하지 않았습니다. 앞의 여섯 통신 묶음은 이전 고정 소스의 결과로만 유지합니다.
 
+## 10월 30일 저장 공간 준비를 이어서 확인한 내용
+
+새 AVD가 쓸 공간을 폴더 크기 측정이나 준비 기록의 숫자에만 맡기지 않도록 다시 검토했습니다. 고정 크기 RAW 이미지 안에 파일시스템을 두는 방법은 그 안의 쓰기를 제한할 후보입니다. 다만 emulator의 임시 파일, 출력, 자식 process와 이미 열린 쓰기 파일까지 그 안에 가두는 경로가 아직 검증되지 않았습니다. 1GiB 목표는 이 시험이 만드는 파일의 쓰기 범위입니다. 호스트 swap과 다른 프로그램을 포함한 Mac 전체의 공간 변화까지 고정하는 조건을 추가한 것은 아닙니다.
+
+`bounded_avd_storage.py`는 이 준비 조건을 읽기만 하는 작은 점검 도구입니다. cached SDK의 두 메타데이터 파일을 각각 최대 64KiB 읽고 이미지 파일의 크기와 여유 공간을 확인합니다. 큰 이미지 본문을 읽거나 복사하지 않으며, 이미지 생성, 마운트, marker 발급과 emulator/ADB 실행 기능은 없습니다. 현재 API37에는 `userdata.img`가 없어 새 초기화 방법도 확인해야 합니다. 이 사실만으로 작은 AVD의 부팅 실패를 단정하지 않습니다.
+
+```sh
+python3 -B qa/map-transport/android/bounded_avd_storage.py
+```
+
+현재 결과는 **BLOCKED, 종료값 2**가 맞습니다. 검토용 후보는 파일시스템을 포함한 768MiB의 고정 RAW 볼륨이고 남은 256MiB도 아직 검증된 여유분이 아닙니다. 공간 제한과 외부 쓰기 차단, 처음 부팅을 실제로 확인하기 전에는 실행 준비가 끝난 것으로 보고하지 않습니다. 이 단계에서 `diskutil image info`도 호출하지 않습니다. 로컬 설명서에 따르면 정보를 얻으면서 이미지를 attach/detach하기 때문입니다.
+
+기존 하네스에도 이 제한을 연결했습니다. 지금은 독립적으로 강제하는 준비·실행 backend가 없으므로 **정상 모양의 marker를 직접 작성해도 native 명령 전부를 거절**합니다. 명령행이나 환경변수로 이를 건너뛰는 옵션은 없습니다. 새 호스트 검사 12개와 기존 25개, 합계 37개가 통과했습니다. 작은 메타데이터도 읽는 사이 링크나 FIFO로 바뀌면 거절하는지 포함합니다. 이 결과는 제한된 볼륨이나 실제 host/guest 보호의 통과가 아닙니다. 이번에도 새 AVD와 native 사례는 0개이며 과거 QCOW2 차이의 원인은 계속 미확정입니다.
+
+다음에는 고정 볼륨의 실제 용량과 backing 파일, 외부 쓰기 차단과 열린 파일, 전체 자식 process, 임시·출력 경로와 mount 교체를 함께 검증하는 준비 경로가 필요합니다. 그 뒤 작은 fresh AVD 부팅과 기존 identity/transport 보호를 확인합니다. 개인 AVD를 seed로 사용하거나 원본 이미지를 지워 공간을 맞추지 않습니다.
+
 ## 빌드
 
 설치된 SDK 36의 `aapt2`, `d8`, `zipalign`, `apksigner`와 JDK 17을 재사용합니다. Gradle 프로젝트나 새 AGP는 받지 않습니다. 고정 버전 OkHttp 4.12.0과 Okio 3.6.0의 작은 jar만 공식 Maven에서 받을 수 있으며 SHA-256을 확인합니다. Kotlin stdlib 2.2.21은 기존 jar를 재사용하고 해시도 대조합니다. 세 라이브러리의 버전, 주소, 라이선스와 해시는 `dependencies.json`에 있습니다.
@@ -34,7 +50,7 @@ bash qa/map-transport/android/build.sh
 
 ## 새 에뮬레이터 검사를 시작하기 전
 
-현재 검사 도구는 준비 기록 없는 기존 AVD를 의도적으로 거절합니다. 새 시험용 AVD를 만들고 증가량의 상한을 독립적으로 확인하는 준비 단계가 먼저 필요합니다. 숫자만 기록한 marker는 실제 디스크 증가량을 보장하지 않습니다. 이번에는 해당 marker나 실행 환경을 만들지 않았습니다.
+현재 native 검사 도구는 독립적인 공간 제한 backend가 없어 실행을 거절합니다. 이후 이를 구현해도 준비 기록 없는 기존 AVD를 거절하는 identity 검사를 함께 유지해야 합니다. 새 시험용 AVD를 만들고 증가량의 상한을 독립적으로 확인하는 준비 단계가 먼저 필요합니다. 숫자만 기록한 marker는 실제 디스크 증가량을 보장하지 않습니다. 이번에는 해당 marker나 실행 환경을 만들지 않았습니다.
 
 준비된 AVD는 이 도구의 `.build/avd/TripPaintingMapTransportQA_<unique>.avd` 바로 아래에 있어야 합니다. 준비 기록 `.trip-painting-map-qa.json`은 생성한 새 이름과 정규 경로, cached SDK에서 시작했다는 출처, 설정 SHA-256과 검증한 증가량을 묶습니다. 이전 AVD를 복사하거나 경로만 바꾼 경우의 소유 증명으로 사용하지 않습니다. 심볼릭 링크와 외부 userdata/cache 경로는 거절합니다.
 
@@ -43,15 +59,10 @@ bash qa/map-transport/android/build.sh
 호스트 거절 검사는 별도 기기 없이 실행할 수 있습니다.
 
 ```sh
-python3 -m unittest discover -s qa/map-transport/android -p 'test_qa_avd_guard.py'
+python3 -B -m unittest discover -s qa/map-transport/android -p 'test_*.py'
 ```
 
-독립 준비가 완료된 경우에만 검증한 경로를 `QA_AVD_DIR`로 지정하고 실행합니다.
-
-```sh
-node qa/map-transport/fixture/server.mjs --port 3188
-python3 qa/map-transport/android/run-validation.py --serial emulator-5562 --qa-avd-dir "$QA_AVD_DIR" --port 3188
-```
+기존 `run-validation.py --serial … --qa-avd-dir …` 명령은 현재 차단됩니다. 준비 도구가 구현되고 실제 제한을 검증한 뒤 실행 안내를 다시 연결합니다. 서버를 먼저 켜거나 marker를 수동으로 작성할 필요는 없습니다.
 
 실행 도구는 기존 패키지를 임의로 덮어쓰지 않습니다. 고유한 `.build/validation/run_*/`에 결과를 남겨 이전 근거를 덮어쓰지 않고, 처음 검사하는 소유 AVD에 사용 기록을 원자적으로 남긴 뒤 QA 앱만 설치합니다. 끝나면 QA 앱만 제거하고 개인 패키지의 계속된 부재와 네트워크, 화면 설정을 대조합니다. 기존 앱의 인증이나 DB 보존을 새로 확인한 결과로 보고하지 않습니다. HTTP에는 `adb reverse`를 사용하지 않습니다.
 

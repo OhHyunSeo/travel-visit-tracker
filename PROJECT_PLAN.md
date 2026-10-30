@@ -2,7 +2,7 @@
 
 작성일: 2026-10-11, Asia/Seoul  
 목표 플랫폼: Android, iOS  
-현재 상태: 2026-10-30. 별도 iPhone 시험 앱의 시작 오류를 수정하고 기본 11개와 복귀, 재실행 2개를 확인했습니다. Android 실행 보호는 호스트 25개를 통과했으며 과거 AVD 차이의 원인은 미확정입니다. 제품 MapLibre와 실제 다운로드는 아직 연결하지 않았습니다. 사용자 요청으로 저장, 중단하며 전체 24/54와 G1~G4 미완료를 유지합니다. [시험 안내](qa/map-transport/README.md), [요청 제어 검토](docs/OFFLINE_MAP_TRANSPORT.md)와 [진행 기록](PROGRESS.md)에 근거를 남겼습니다.
+현재 상태: 2026-10-30. 별도 지도 통신 경로를 보완했고 Mac native 10개, 새 소스의 실제 iPhone 12개와 Android 준비·보호 호스트 37개를 확인했습니다. Android 새 AVD의 실제 공간 제한과 과거 이미지 차이의 원인은 미해결입니다. 제품 MapLibre와 공급원 다운로드는 아직 연결하지 않았으며 전체 24/54와 G1~G4 미완료를 유지합니다. [재개 순서](docs/RESUME.md)와 [진행 기록](PROGRESS.md)에 범위를 남겼습니다.
 추천 개발 방식: React Native + Expo 개발 빌드 + TypeScript
 
 ## 1. 제품 목표와 첫 버전의 범위

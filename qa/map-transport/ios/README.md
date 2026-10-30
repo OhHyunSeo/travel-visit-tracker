@@ -1,10 +1,26 @@
 # iPhone 지도 통신 시험 앱
 
-2026-10-30에 UIScene과 SceneDelegate 화면 초기화로 시작 오류를 수정했습니다. 실제 아이폰의 별도 전송 검사 13개를 마친 뒤 사용자 요청으로 저장, 중단했습니다. 제품 MapLibre에 연결한 앱이나 공급원 제한을 보장하는 완료본은 아닙니다.
+2026-10-30에 UIScene 시작 오류를 수정한 뒤 후속 사용자 재개에서 단일 HTTP 송신 경로를 추가했습니다. 이전 소스의 실제 iPhone 13개와 새 소스의 12개를 구분해 기록했습니다. 제품 MapLibre에 연결한 앱이나 공급원 제한을 보장하는 완료본은 아닙니다.
 
-앱 ID는 `app.trippainting.maptransportqa`입니다. UIKit과 Foundation만 사용하며 MapLibre, 로그인이나 위치 기록은 연결하지 않았습니다. 서명 검사에서 원래 앱과 다른 application identifier, 공유 Keychain과 app group 없음, 위치와 백그라운드 권한 없음을 확인했습니다.
+앱 ID는 `app.trippainting.maptransportqa`입니다. UIKit, Foundation과 Network.framework를 사용하며 MapLibre, 로그인이나 위치 기록은 연결하지 않았습니다. 서명 검사에서 원래 앱과 다른 application identifier, 공유 Keychain과 app group 없음, 위치와 백그라운드 권한 없음을 확인했습니다.
 
-## 확인한 결과
+## 10월 30일 후속 재개: 한 번만 쓰는 HTTP 시험 경로
+
+이전 전달용 NSURLSession을 `TPHTTPExchange`의 새 TCP 연결과 한 번의 HTTP/1.1 송신으로 바꿨습니다. 실행 전에 장부를 저장하고, 응답을 끝내거나 취소한 연결의 `cancelled` 상태가 올 때 전역 자리를 반환합니다. 내부 HTTP 재시도, 연결 재사용, redirect와 인증 응답 처리는 구현하지 않았습니다. 이 경로는 사설 IPv4의 합성 HTTP 서버만 받으며 HTTPS와 공개 공급원은 거절합니다.
+
+응답 헤더는 8KiB, 본문은 256바이트 안에서 검사합니다. 길이 중복과 미지정, 압축과 chunked, 상태줄의 제어 문자, 잘린 응답과 뒤에 붙은 바이트를 거절하며 정상 본문도 EOF를 확인한 뒤 전달합니다. `acceptedBodyBytes`는 완료해 전달한 본문만, `receivedHTTPBytesSettled`는 끝난 연결에서 검사한 receive 조각의 헤더와 본문을 셉니다. 거절 이후 조각은 더 검사하지 않으므로 전체 callback 바이트나 OS 전체 수신량과도 다릅니다.
+
+Mac에서 같은 Objective-C 소스를 컴파일해 실제 loopback TCP 검사를 추가했습니다. 연결 단절 뒤 자동 재전송 없음, 명시적 재시도와 새 프로세스의 비환급 예약, 12개 요청의 최대 동시 4개, 응답 모양과 취소, 제한 시간을 확인합니다. 실행 명령은 아래와 같고 Linux에서는 Apple framework가 없어 명시적으로 건너뜁니다.
+
+```sh
+python3 -B -m unittest discover -s qa/map-transport/ios -p 'test_http_exchange.py'
+```
+
+새 서명 소스의 실제 iPhone 기본 11개와 QA 강제 종료/새 PID 재실행 1개, 총 12개가 통과했습니다. 기본 사례에서 시작 수와 HTTP 쓰기 수가 맞고, 재실행에서는 미확정 256에 새 256을 추가해 512를 유지했습니다. QA 문서 5개를 대조해 보관하고 앱과 서버를 정리했습니다. Mac의 부분 EOF를 iPhone에서 재현한 결과로 세지 않습니다. 아래의 이전 실제 iPhone 13개와도 별개입니다. 이 실험은 일반 HTTP client나 MapLibre 공급원 어댑터의 완료본이 아닙니다. TLS와 HTTP/2, 실제 SDK 재요청과 저장소 통합, OS 수신량 상한은 남아 있습니다.
+
+Apple은 [Network framework](https://developer.apple.com/documentation/network)를 낮은 수준의 TCP/TLS 접근에 쓰고 일반 HTTP에는 URLSession을 사용하도록 안내합니다. 이번 구현도 제한된 합성 HTTP/1.1 실험으로 둡니다. [송신의 idempotent 옵션](https://developer.apple.com/documentation/network/nw_connection_send_idempotent_content)은 연결 시도에 걸쳐 재생될 수 있어 사용하지 않습니다.
+
+## 이전 소스에서 확인한 결과
 
 10월 30일 서명 빌드와 실제 실행이 통과했습니다. 기본 11개는 혼합 리소스의 본문 수명 최대 4개, 앱 식별값과 합성 인증 제거, 대기와 실행 중 취소, 미지원 주소와 응답의 거절, 예약 한도와 잘못된 장부 보존입니다.
 
@@ -28,8 +44,6 @@ QA 문서 파일 5개를 보관하고 native 결과와 장부, 변경하지 않�
 
 ## 코드의 범위
 
-`TPTransport`는 이 시험 앱의 NSURLSession에만 등록하는 NSURLProtocol입니다. 모든 HTTP와 HTTPS 요청을 받아 허용한 시험 주소 외에는 거절합니다. 전역 대기열은 본문 완료나 native 취소 완료까지 최대 4개의 자리를 유지하도록 작성했습니다. 전달 세션의 캐시, 쿠키와 인증 저장소를 끄고 고정 User-Agent만 보냅니다.
+`TPTransport`는 이 시험 앱의 외부 NSURLSession에만 등록하는 NSURLProtocol입니다. 주소와 리소스를 검사한 뒤 전역 대기열, 예약 장부와 `TPHTTPExchange`를 연결합니다. 계정 헤더를 전달하는 대신 고정된 HTTP 요청을 새로 만듭니다. 제품 앱에는 등록하지 않습니다.
 
-본문 256바이트를 작업 시작 전에 파일 장부에 예약하고 성공, 실패 뒤에도 환급하지 않습니다. 길이 미지정, 압축, 오류, redirect와 예약보다 큰 응답을 거절하도록 작성했습니다. 파일 쓰기는 같은 폴더의 임시 파일, fsync와 rename을 사용하지만 실제 전원 종료의 내구성을 검증한 결과는 아닙니다.
-
-이 장부는 **전달 task 단위**입니다. NSURLSession 안의 투명한 재시도마다 실행되는 강제 지점이 없으므로 실제 네트워크 교환별 타일 한도로 표시하면 안 됩니다. SDK에 받아들인 본문과 OS가 이미 받은 바이트도 다릅니다. MapLibre와의 초기화 순서, 기존 요청 변환 delegate 보존, 실제 교환별 제한과 OS 수신량 보장은 모두 남아 있습니다.
+본문 256바이트를 시작 전에 예약하고 성공과 실패 뒤에도 환급하지 않습니다. 파일 쓰기는 같은 폴더의 임시 파일, fsync와 rename을 사용하며 실제 전원 종료의 내구성 검증은 아닙니다. 합성 경로에서 한 예약에 한 HTTP 송신을 관찰한 결과를 공급원이나 실제 SDK의 모든 요청 제한으로 확대하지 않습니다.

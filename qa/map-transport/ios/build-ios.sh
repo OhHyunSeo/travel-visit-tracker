@@ -11,7 +11,7 @@ if [[ ! "$QA_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]; then
   echo 'The signing team ID must contain 10 uppercase letters or digits.' >&2
   exit 2
 fi
-for QA_SOURCE in main.m TPTransport.m TPTransport.h; do
+for QA_SOURCE in main.m TPTransport.m TPTransport.h TPHTTPExchange.m TPHTTPExchange.h; do
   if [[ ! -f "$QA_IOS_ROOT/$QA_SOURCE" ]]; then
     echo "Missing QA source: $QA_SOURCE" >&2
     exit 2

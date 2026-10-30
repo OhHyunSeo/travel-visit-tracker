@@ -292,6 +292,7 @@ class OwnedAvdGuardTests(unittest.TestCase):
 
         proof = {**self.prepared(), 'transportId': 7}
         with mock.patch.object(sys, 'argv', argv), \
+             mock.patch.object(validation, 'require_bounded_launch'), \
              mock.patch.object(validation, 'inspect_owned_emulator', return_value=proof), \
              mock.patch.object(validation, 'claim_first_validation'), \
              mock.patch.object(validation, 'verify_pinned_transport'), \

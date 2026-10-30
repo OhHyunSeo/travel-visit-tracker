@@ -17,6 +17,7 @@ import uuid
 
 from qa_avd_guard import (AvdGuardError, claim_first_validation,
                           inspect_owned_emulator, verify_pinned_transport)
+from bounded_avd_storage import BoundedStorageError, require_bounded_launch
 
 
 def main():
@@ -33,6 +34,12 @@ def main():
     package = 'app.trippainting.maptransportqa'
     original = 'app.trippainting.mobile'
     prefix = 'run_' + uuid.uuid4().hex[:10]
+    # A numeric marker is identity metadata, not an OS-enforced allocation cap.
+    # Refuse before any host/guest command while the bounded launcher is absent.
+    try:
+        require_bounded_launch()
+    except BoundedStorageError as error:
+        raise AvdGuardError(str(error)) from error
     # Verify local ownership and the actual live host data path before any app command.
     owned_avd = inspect_owned_emulator(args.serial, args.qa_avd_dir, root, sdk, adb)
     output = root / '.build/validation' / prefix

@@ -1,4 +1,5 @@
 #import "TPTransport.h"
+#import "TPHTTPExchange.h"
 #import <arpa/inet.h>
 #import <fcntl.h>
 #import <unistd.h>
@@ -11,14 +12,13 @@ static NSString *TPOrigin;
 static NSURL *TPLedgerURL;
 static NSMutableDictionary *TPLedger;
 static BOOL TPLedgerOK;
-static NSUInteger TPActive, TPMaxActive, TPBlocked, TPStarted, TPObserved, TPAccepted;
+static NSUInteger TPActive, TPMaxActive, TPBlocked, TPStarted, TPAccepted;
 static NSUInteger TPMaxRequests, TPMaxTiles, TPMaxReserved;
+static NSUInteger TPHTTPSends, TPHTTPReceived;
 static const NSUInteger TPReservation = 256;
-static NSString * const TPUA = @"TripPaintingMapTransportQA/1.0";
 
 @interface TPTransport ()
-@property NSURLSession *forwardSession;
-@property NSURLSessionDataTask *forwardTask;
+@property TPHTTPExchange *exchange;
 @property BOOL acquired, stopped, settled, failed;
 @property NSUInteger observed, accepted;
 @property NSString *reservationID;
@@ -79,7 +79,8 @@ static NSString * const TPUA = @"TripPaintingMapTransportQA/1.0";
         TPOrigin = [origin stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"/"]];
         TPLedgerURL = ledgerURL;
         TPMaxRequests = requests; TPMaxTiles = tiles; TPMaxReserved = bytes;
-        TPMaxActive = TPBlocked = TPStarted = TPObserved = TPAccepted = 0;
+        TPMaxActive = TPBlocked = TPStarted = TPAccepted = 0;
+        TPHTTPSends = TPHTTPReceived = 0;
         BOOL exists = [[NSFileManager defaultManager] fileExistsAtPath:ledgerURL.path];
         NSData *data = exists ? [NSData dataWithContentsOfURL:ledgerURL] : nil;
         id saved = data ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil] : nil;
@@ -99,7 +100,7 @@ static NSString * const TPUA = @"TripPaintingMapTransportQA/1.0";
 + (NSDictionary *)snapshot {
     __block NSDictionary *result;
     dispatch_sync(TPQueue, ^{
-        result = @{@"active": @(TPActive), @"maxActive": @(TPMaxActive), @"blockedBeforeDispatch": @(TPBlocked), @"started": @(TPStarted), @"observedBodyBytes": @(TPObserved), @"acceptedBodyBytes": @(TPAccepted), @"ledgerOK": @(TPLedgerOK), @"ledger": TPLedgerOK ? [NSJSONSerialization JSONObjectWithData:[NSJSONSerialization dataWithJSONObject:TPLedger options:0 error:nil] options:0 error:nil] : @{}};
+        result = @{@"active": @(TPActive), @"maxActive": @(TPMaxActive), @"blockedBeforeDispatch": @(TPBlocked), @"started": @(TPStarted), @"httpRequestSendsSettled": @(TPHTTPSends), @"receivedHTTPBytesSettled": @(TPHTTPReceived), @"transport": @"single-send-http1-fixture", @"acceptedBodyBytes": @(TPAccepted), @"ledgerOK": @(TPLedgerOK), @"ledger": TPLedgerOK ? [NSJSONSerialization JSONObjectWithData:[NSJSONSerialization dataWithJSONObject:TPLedger options:0 error:nil] options:0 error:nil] : @{}};
     });
     return result;
 }
@@ -143,20 +144,10 @@ static NSString * const TPUA = @"TripPaintingMapTransportQA/1.0";
         [TPLedger[@"unresolved"] addObject:p.reservationID];
         if (![self persistLedger]) { TPLedgerOK = NO; TPBlocked++; [p fail:3]; continue; }
         p.acquired = YES; TPActive++; TPStarted++; TPMaxActive = MAX(TPMaxActive, TPActive);
-        NSMutableURLRequest *request = [p.request mutableCopy];
-        [request setValue:TPUA forHTTPHeaderField:@"User-Agent"];
-        [request setValue:nil forHTTPHeaderField:@"Authorization"];
-        [request setValue:nil forHTTPHeaderField:@"Cookie"];
-        [request setValue:@"identity" forHTTPHeaderField:@"Accept-Encoding"];
-        request.HTTPShouldHandleCookies = NO;
-        NSURLSessionConfiguration *configuration = NSURLSessionConfiguration.ephemeralSessionConfiguration;
-        configuration.protocolClasses = @[]; configuration.URLCache = nil; configuration.HTTPCookieStorage = nil; configuration.URLCredentialStorage = nil; configuration.HTTPShouldSetCookies = NO;
-        configuration.requestCachePolicy = NSURLRequestReloadIgnoringLocalCacheData;
-        configuration.timeoutIntervalForRequest = 30; configuration.timeoutIntervalForResource = 45;
-        NSOperationQueue *callbacks = [NSOperationQueue new]; callbacks.maxConcurrentOperationCount = 1;
-        p.forwardSession = [NSURLSession sessionWithConfiguration:configuration delegate:p delegateQueue:callbacks];
-        p.forwardTask = [p.forwardSession dataTaskWithRequest:request];
-        [p.forwardTask resume];
+        p.exchange = [[TPHTTPExchange alloc] initWithURL:p.request.URL queue:TPQueue timeout:10 completion:^(NSHTTPURLResponse *response, NSData *data, NSError *error) {
+            [p exchangeCompleted:response data:data error:error];
+        }];
+        [p.exchange start];
     }
 }
 - (void)startLoading {
@@ -169,47 +160,30 @@ static NSString * const TPUA = @"TripPaintingMapTransportQA/1.0";
     dispatch_async(TPQueue, ^{
         self.stopped = YES;
         [TPPending removeObject:self];
-        [self.forwardTask cancel];
+        [self.exchange cancel];
         // An active permit stays held until the native completion callback.
     });
 }
-- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task willPerformHTTPRedirection:(NSHTTPURLResponse *)response newRequest:(NSURLRequest *)request completionHandler:(void (^)(NSURLRequest *))completionHandler {
-    completionHandler(nil);
-    dispatch_async(TPQueue, ^{ [self fail:4]; [self.forwardTask cancel]; });
-}
-- (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)task didReceiveResponse:(NSURLResponse *)response completionHandler:(void (^)(NSURLSessionResponseDisposition))completionHandler {
-    dispatch_async(TPQueue, ^{
-        NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
-        NSString *encoding = [http valueForHTTPHeaderField:@"Content-Encoding"];
-        BOOL allowed = !self.stopped && !self.failed && http.statusCode == 200 && response.expectedContentLength >= 0 && response.expectedContentLength <= TPReservation && (!encoding.length || [encoding.lowercaseString isEqual:@"identity"]);
-        if (allowed) { [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed]; completionHandler(NSURLSessionResponseAllow); }
-        else { [self fail:5]; completionHandler(NSURLSessionResponseCancel); }
-    });
-}
-- (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)task didReceiveData:(NSData *)data {
-    dispatch_async(TPQueue, ^{
-        self.observed += data.length; TPObserved += data.length;
-        if (self.stopped || self.failed) return;
-        if (data.length > TPReservation - self.accepted) { [self fail:6]; [self.forwardTask cancel]; return; }
-        self.accepted += data.length; TPAccepted += data.length;
-        [self.client URLProtocol:self didLoadData:data];
-    });
-}
-- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
-    dispatch_async(TPQueue, ^{
-        if (self.settled) return;
-        self.settled = YES;
-        if (self.acquired) {
-            [TPLedger[@"unresolved"] removeObject:self.reservationID];
-            if (![TPTransport persistLedger]) TPLedgerOK = NO;
-            TPActive--; self.acquired = NO;
+- (void)exchangeCompleted:(NSHTTPURLResponse *)response data:(NSData *)data error:(NSError *)error {
+    if (self.settled) return;
+    self.settled = YES;
+    TPHTTPSends += self.exchange.requestSendCount;
+    TPHTTPReceived += self.exchange.receivedHTTPBytes;
+    if (self.acquired) {
+        [TPLedger[@"unresolved"] removeObject:self.reservationID];
+        if (![TPTransport persistLedger]) TPLedgerOK = NO;
+        TPActive--; self.acquired = NO;
+    }
+    if (!self.stopped && !self.failed) {
+        if (error) [self fail:7];
+        else {
+            TPAccepted += data.length;
+            [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed];
+            [self.client URLProtocol:self didLoadData:data];
+            [self.client URLProtocolDidFinishLoading:self];
         }
-        if (!self.stopped && !self.failed) {
-            if (error) [self fail:7];
-            else [self.client URLProtocolDidFinishLoading:self];
-        }
-        [self.forwardSession finishTasksAndInvalidate]; self.forwardTask = nil; self.forwardSession = nil;
-        [TPTransport drain];
-    });
+    }
+    self.exchange = nil;
+    [TPTransport drain];
 }
 @end

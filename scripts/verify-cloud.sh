@@ -6,7 +6,8 @@ export CI=1 EXPO_NO_TELEMETRY=1 EXPO_OFFLINE=1
 
 npm --prefix travel_visit_tracker run check
 node --test qa/map-transport/fixture/server.test.mjs
-python3 -m unittest discover -s qa/map-transport/android -p 'test_qa_avd_guard.py'
+python3 -m unittest discover -s qa/map-transport/android -p 'test_*.py'
+python3 -m unittest discover -s qa/map-transport/ios -p 'test_http_exchange.py'
 node --check backend/server.js
 npm --prefix backend test
 (
