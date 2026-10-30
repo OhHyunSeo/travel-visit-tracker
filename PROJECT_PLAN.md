@@ -2,7 +2,7 @@
 
 작성일: 2026-10-11, Asia/Seoul  
 목표 플랫폼: Android, iOS  
-현재 상태: 2026-10-29. P3-02의 사전 계산 뒤 별도 전송 시험을 시작했습니다. 합성 서버 11개와 Android 별도 앱 여섯 묶음은 통과했고, iPhone 시작 오류와 Android AVD 보존 차이는 남아 있습니다. 제품 MapLibre와 실제 다운로드는 아직 연결하지 않았습니다. 사용자 요청으로 저장, 중단했으며 전체 24/54와 G1~G4 미완료를 유지합니다. [시험 안내](qa/map-transport/README.md), [요청 제어 검토](docs/OFFLINE_MAP_TRANSPORT.md)와 [진행 기록](PROGRESS.md)에 근거를 남겼습니다.
+현재 상태: 2026-10-30. 별도 iPhone 시험 앱의 시작 오류를 수정하고 기본 11개와 복귀, 재실행 2개를 확인했습니다. Android 실행 보호는 호스트 25개를 통과했으며 과거 AVD 차이의 원인은 미확정입니다. 제품 MapLibre와 실제 다운로드는 아직 연결하지 않았습니다. 사용자 요청으로 저장, 중단하며 전체 24/54와 G1~G4 미완료를 유지합니다. [시험 안내](qa/map-transport/README.md), [요청 제어 검토](docs/OFFLINE_MAP_TRANSPORT.md)와 [진행 기록](PROGRESS.md)에 근거를 남겼습니다.
 추천 개발 방식: React Native + Expo 개발 빌드 + TypeScript
 
 ## 1. 제품 목표와 첫 버전의 범위

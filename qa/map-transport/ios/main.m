@@ -162,6 +162,10 @@ static void TPRestart(NSURLSession *outer, NSURLSession *control, BOOL resume) {
     BOOL ready = TPWait(^BOOL { return TPStatsValid(TPStats(control)); }, 15000);
     BOOL opened = TPOpen(@"restart", 8, 4, 2048);
     NSDictionary *before = TPTransport.snapshot;
+    if (!ready || !opened) {
+        TPWrite(@"result.json", @{@"stage": resume ? @"resume" : @"hold", @"complete": @YES, @"pass": @NO, @"readyForTermination": @NO, @"error": @"fixture or ledger was not ready"});
+        return;
+    }
     if (resume) {
         TPFetch(control, @"release"); TPIdle(control); TPFetch(control, @"reset");
         NSDictionary *response = TPFetch(outer, @"resource/style/resumed?delayMs=20"); BOOL idle = TPIdle(control);
@@ -176,33 +180,84 @@ static void TPRestart(NSURLSession *outer, NSURLSession *control, BOOL resume) {
         TPWrite(@"result.json", @{@"stage": @"hold", @"readyForTermination": @(ready && opened && active), @"native": TPTransport.snapshot, @"process": @(NSProcessInfo.processInfo.processIdentifier)});
     }
 }
-@interface TPAppDelegate : UIResponder <UIApplicationDelegate>
+// The runner starts once per process, after its UIWindowScene becomes active.
+static BOOL TPDidStart, TPRunnerActive, TPPriorIdleTimerDisabled;
+
+@interface TPSceneDelegate : UIResponder <UIWindowSceneDelegate>
 @property UIWindow *window;
 @property UILabel *label;
 @end
-@implementation TPAppDelegate
-- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
-    application.idleTimerDisabled = YES;
-    self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    UIViewController *controller = [UIViewController new]; controller.view.backgroundColor = UIColor.systemBackgroundColor;
-    self.label = [[UILabel alloc] initWithFrame:CGRectInset(UIScreen.mainScreen.bounds, 24, 120)]; self.label.numberOfLines = 0; self.label.textAlignment = NSTextAlignmentCenter;
+@implementation TPSceneDelegate
+- (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)options {
+    if (![scene isKindOfClass:UIWindowScene.class]) return;
+    self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
+    UIViewController *controller = [UIViewController new];
+    controller.view.backgroundColor = UIColor.systemBackgroundColor;
+    self.label = [UILabel new]; self.label.translatesAutoresizingMaskIntoConstraints = NO;
+    self.label.numberOfLines = 0; self.label.textAlignment = NSTextAlignmentCenter;
     self.label.text = @"지도 통신 시험\n\n기존 여행색칠과 분리된 시험 앱입니다.\n로컬 네트워크 안내가 나오면 허용해 주세요.";
-    [controller.view addSubview:self.label]; self.window.rootViewController = controller; [self.window makeKeyAndVisible];
+    [controller.view addSubview:self.label];
+    [NSLayoutConstraint activateConstraints:@[
+        [self.label.centerXAnchor constraintEqualToAnchor:controller.view.centerXAnchor],
+        [self.label.centerYAnchor constraintEqualToAnchor:controller.view.centerYAnchor],
+        [self.label.leadingAnchor constraintGreaterThanOrEqualToAnchor:controller.view.safeAreaLayoutGuide.leadingAnchor constant:24],
+        [self.label.trailingAnchor constraintLessThanOrEqualToAnchor:controller.view.safeAreaLayoutGuide.trailingAnchor constant:-24],
+    ]];
+    self.window.rootViewController = controller; [self.window makeKeyAndVisible];
+}
+- (void)sceneDidBecomeActive:(UIScene *)scene {
+    UIApplication *application = UIApplication.sharedApplication;
+    if (TPDidStart) { if (TPRunnerActive) application.idleTimerDisabled = YES; return; }
+    TPDidStart = YES; TPRunnerActive = YES;
+    TPPriorIdleTimerDisabled = application.idleTimerDisabled;
+    application.idleTimerDisabled = YES;
     NSDictionary *env = NSProcessInfo.processInfo.environment;
     TPBase = env[@"QA_SERVER_ORIGIN"];
-    TPRunID = env[@"QA_RUN_ID"] ?: @"invalid";
+    TPRunID = env[@"QA_RUN_ID"];
     TPDocuments = [[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     NSString *stage = env[@"QA_STAGE"] ?: @"basic";
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSURLSession *control = TPControl(), *outer = TPOuter();
-        if (!TPBase || ![TPTransport safeOrigin:TPBase]) {
-            TPWrite(@"result.json", @{@"complete": @YES, @"pass": @NO, @"error": @"missing or unsafe private fixture origin"});
+        NSRegularExpression *runPattern = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9_-]{1,64}$" options:0 error:nil];
+        BOOL validRun = TPRunID && [runPattern numberOfMatchesInString:TPRunID options:0 range:NSMakeRange(0, TPRunID.length)] == 1;
+        BOOL validStage = [@[@"basic", @"hold", @"resume"] containsObject:stage];
+        BOOL freshBasic = ![stage isEqual:@"basic"] || ![[NSFileManager defaultManager] fileExistsAtPath:[TPDocuments URLByAppendingPathComponent:TPRunID ?: @"invalid"].path];
+        if (!TPBase || ![TPTransport safeOrigin:TPBase] || !validRun || !validStage || !freshBasic) {
+            TPWrite(@"result.json", @{@"complete": @YES, @"pass": @NO, @"error": @"missing, unsafe or reused fixture inputs"});
         } else if ([stage isEqual:@"basic"]) TPBasic(outer, control);
         else TPRestart(outer, control, [stage isEqual:@"resume"]);
-        dispatch_async(dispatch_get_main_queue(), ^{ self.label.text = [stage isEqual:@"hold"] ? @"재실행 시험 준비 중\n기존 여행색칠의 자료는 사용하지 않습니다." : @"통신 시험을 마쳤습니다.\n결과를 Mac에서 확인하고 있습니다."; });
-        if (![stage isEqual:@"hold"]) { [outer invalidateAndCancel]; [control invalidateAndCancel]; dispatch_async(dispatch_get_main_queue(), ^{ application.idleTimerDisabled = NO; }); }
+        NSData *saved = [NSData dataWithContentsOfURL:[TPDocuments URLByAppendingPathComponent:@"result.json"]];
+        NSDictionary *savedResult = saved ? [NSJSONSerialization JSONObjectWithData:saved options:0 error:nil] : nil;
+        BOOL keepRunning = [stage isEqual:@"hold"] && [savedResult[@"readyForTermination"] boolValue];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (keepRunning) self.label.text = @"재실행 시험 준비 중\n기존 여행색칠의 자료는 사용하지 않습니다.";
+            else {
+                TPRunnerActive = NO; application.idleTimerDisabled = TPPriorIdleTimerDisabled;
+                NSData *data = [NSData dataWithContentsOfURL:[TPDocuments URLByAppendingPathComponent:@"result.json"]];
+                NSDictionary *result = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+                self.label.text = [result[@"pass"] boolValue] ? @"통신 시험을 마쳤습니다.\n결과를 Mac에서 확인하고 있습니다." : @"시험 결과를 확인하고 있습니다.\nMac에서 진행 상태를 확인해 주세요.";
+            }
+        });
+        if (!keepRunning) { [outer invalidateAndCancel]; [control invalidateAndCancel]; }
     });
-    return YES;
+}
+- (void)sceneWillResignActive:(UIScene *)scene {
+    if (TPDidStart) UIApplication.sharedApplication.idleTimerDisabled = TPPriorIdleTimerDisabled;
+}
+- (void)sceneDidDisconnect:(UIScene *)scene {
+    if (TPDidStart) UIApplication.sharedApplication.idleTimerDisabled = TPPriorIdleTimerDisabled;
+}
+@end
+
+@interface TPAppDelegate : UIResponder <UIApplicationDelegate>
+@end
+@implementation TPAppDelegate
+- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options { return YES; }
+- (UISceneConfiguration *)application:(UIApplication *)application configurationForConnectingSceneSession:(UISceneSession *)session options:(UISceneConnectionOptions *)options {
+    UISceneConfiguration *configuration = [[UISceneConfiguration alloc] initWithName:@"Map Transport QA" sessionRole:session.role];
+    configuration.sceneClass = UIWindowScene.class;
+    configuration.delegateClass = TPSceneDelegate.class;
+    return configuration;
 }
 @end
 int main(int argc, char **argv) { @autoreleasepool { return UIApplicationMain(argc, argv, nil, NSStringFromClass(TPAppDelegate.class)); } }

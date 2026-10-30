@@ -6,6 +6,7 @@ reverse, personal-app launch, DB repository, auth or location APIs are used.
 """
 import argparse
 import json
+import os
 import pathlib
 import re
 import shlex
@@ -14,25 +15,33 @@ import time
 import urllib.request
 import uuid
 
+from qa_avd_guard import (AvdGuardError, claim_first_validation,
+                          inspect_owned_emulator, verify_pinned_transport)
+
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--serial', default='emulator-5560')
+    parser.add_argument('--serial', required=True)
     parser.add_argument('--port', type=int, default=3188)
+    parser.add_argument('--qa-avd-dir', type=pathlib.Path, required=True)
     args = parser.parse_args()
     if not args.serial.startswith('emulator-') or not 1024 <= args.port <= 65535:
         raise SystemExit('An emulator and nonprivileged fixture port are required')
     root = pathlib.Path(__file__).resolve().parent
-    adb = pathlib.Path.home() / 'Library/Android/sdk/platform-tools/adb'
+    sdk = pathlib.Path(os.environ.get('ANDROID_HOME', pathlib.Path.home() / 'Library/Android/sdk')).resolve()
+    adb = sdk / 'platform-tools/adb'
     package = 'app.trippainting.maptransportqa'
     original = 'app.trippainting.mobile'
-    output = root / '.build/validation'
-    output.mkdir(exist_ok=True)
     prefix = 'run_' + uuid.uuid4().hex[:10]
+    # Verify local ownership and the actual live host data path before any app command.
+    owned_avd = inspect_owned_emulator(args.serial, args.qa_avd_dir, root, sdk, adb)
+    output = root / '.build/validation' / prefix
     installed = False
 
     def command(*parts, check=True):
-        result = subprocess.run([str(adb), '-s', args.serial, *parts], capture_output=True, text=True, timeout=20)
+        verify_pinned_transport(owned_avd, sdk)
+        result = subprocess.run([str(adb), '-t', str(owned_avd['transportId']), *parts], capture_output=True, text=True, timeout=20)
+        verify_pinned_transport(owned_avd, sdk)
         if check and result.returncode:
             raise RuntimeError('Scoped adb operation failed: ' + result.stderr.strip())
         return result.stdout.strip()
@@ -54,17 +63,15 @@ def main():
         raise RuntimeError('Synthetic check did not settle before its limit')
 
     def baseline():
-        script = "for d in files databases shared_prefs; do if test -d \"$d\"; then find \"$d\" -type f -exec sha256sum {} \\;; fi; done"
-        files = shell(f'run-as {original} sh -c {shlex.quote(script)}', check=False)
-        apk = shell(f'pm path {original}')
-        apk_hashes = []
-        for line in apk.splitlines():
-            if line.startswith('package:'):
-                apk_hashes.append(shell('sha256sum ' + shlex.quote(line.removeprefix('package:'))).split()[0])
+        # A fresh QA AVD must not contain the personal application at all.
+        # Do not read its files, SQLite databases or authentication values.
+        if shell('getprop sys.boot_completed') != '1':
+            raise RuntimeError('The dedicated QA AVD has not completed boot')
+        if shell(f'cmd package list packages -U {original}'):
+            raise RuntimeError('Personal app found in QA AVD; refusing any private data access')
         return {
-            'originalFiles': sorted(files.splitlines()),
-            'originalApkHashes': apk_hashes,
-            'originalUid': shell(f'cmd package list packages -U {original}'),
+            'personalAppAbsent': True,
+            'personalAppFilesRead': False,
             'network': {key: shell('settings get global ' + key) for key in ['airplane_mode_on', 'wifi_on', 'mobile_data']},
             'screenTimeout': shell('settings get system screen_off_timeout'),
         }
@@ -96,19 +103,19 @@ def main():
             assert not item['receivedAuthHeader'] and not item['cookieHeader']
 
     before = baseline()
-    assert before['originalApkHashes'] and before['originalFiles'], 'Original preservation baseline unavailable'
-    assert all(re.match(r'^[a-f0-9]{64}\s', line) for line in before['originalFiles']), 'Invalid original file hash output'
-    (output / 'original-before.json').write_text(json.dumps(before, indent=2) + '\n')
     if shell(f'pm path {package}', check=False):
         raise RuntimeError('QA package already exists; refusing to replace unowned app')
     assert control('/stats')['active'] == 0
+    claim_first_validation(owned_avd, prefix)
+    output.mkdir(parents=True, exist_ok=False)
+    (output / 'isolation-proof.json').write_text(json.dumps(owned_avd, indent=2) + '\n')
+    (output / 'environment-before.json').write_text(json.dumps(before, indent=2) + '\n')
     results = {}
     try:
         command('install', str(root / '.build/map-transport-qa.apk'))
         installed = True
         qa_uid = re.search(r'uid:(\d+)', shell('cmd package list packages -U ' + package)).group(1)
-        original_uid = re.search(r'uid:(\d+)', before['originalUid']).group(1)
-        assert qa_uid != original_uid, 'QA app unexpectedly shares the original Linux UID'
+        assert qa_uid, 'Installed QA application UID unavailable'
         for scenario in ['batch', 'reject', 'bodies', 'budget', 'tile-budget']:
             control('/reset')
             result, stats = completed(scenario, prefix + '_' + scenario.replace('-', '_'))
@@ -163,17 +170,33 @@ def main():
         results['restart'] = {'held': held, 'inspected': inspected, 'resumed': resumed, 'server': stats, 'pidChanged': True}
         (output / 'restart.json').write_text(json.dumps(results['restart'], indent=2) + '\n')
     finally:
-        shell('am force-stop ' + package, check=False)
-        control('/release')
+        # One failed cleanup step must not skip the remaining owned actions.
+        failures = []
+        actions = [('force-stop', lambda: shell('am force-stop ' + package)),
+                   ('fixture-release', lambda: control('/release'))]
         if installed:
-            command('uninstall', package)
-        after = baseline()
-        (output / 'original-after.json').write_text(json.dumps(after, indent=2) + '\n')
-        assert after == before, 'Original app/APK/network baseline changed'
+            actions.append(('uninstall-qa', lambda: command('uninstall', package)))
+        for name, action in actions:
+            try:
+                action()
+            except Exception as error:
+                failures.append({'step': name, 'error': type(error).__name__})
+        try:
+            after = baseline()
+            (output / 'environment-after.json').write_text(json.dumps(after, indent=2) + '\n')
+            if after != before:
+                failures.append({'step': 'environment-compare', 'error': 'baseline differs'})
+        except Exception as error:
+            failures.append({'step': 'environment-compare', 'error': type(error).__name__})
+        (output / 'cleanup.json').write_text(json.dumps({'failures': failures}, indent=2) + '\n')
+        if failures:
+            raise RuntimeError('Owned cleanup incomplete; inspect the saved cleanup report')
     summary = {
         'standaloneAndroidApi37Debug': 'PASS', 'scenarioGroups': len(results),
-        'originalAppFilesApkNetwork': 'MATCH', 'qaPackageRemoved': not bool(shell('pm path ' + package, check=False)),
-        'separateLinuxUid': qa_uid != original_uid,
+        'dedicatedQaAvdOwnership': 'PASS',
+        'originalPersonalAppAbsentBeforeAndAfter': True, 'personalDataFilesRead': False,
+        'networkAndScreenSettings': 'MATCH', 'qaPackageRemoved': not bool(shell('cmd package list packages -U ' + package)),
+        'originalAppFilesApkUidAuthComparison': 'NOT RUN; personal app absent from fresh QA AVD',
         'mapLibreIntegrated': False, 'physicalAndroid': 'NOT RUN', 'release': 'NOT RUN',
         'osReceivedByteHardCap': 'NOT PROVEN', 'metric': 'accepted fixture body bytes plus conservative nonrefunded reservations',
         'httpAdbReverse': False, 'providerRequests': 0,
@@ -183,4 +206,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except AvdGuardError as error:
+        raise SystemExit('Refused emulator validation: ' + str(error)) from error
