@@ -40,6 +40,28 @@ python3 -B qa/map-transport/android/bounded_avd_storage.py
 
 다음에는 고정 볼륨의 실제 용량과 backing 파일, 외부 쓰기 차단과 열린 파일, 전체 자식 process, 임시·출력 경로와 mount 교체를 함께 검증하는 준비 경로가 필요합니다. 그 뒤 작은 fresh AVD 부팅과 기존 identity/transport 보호를 확인합니다. 개인 AVD를 seed로 사용하거나 원본 이미지를 지워 공간을 맞추지 않습니다.
 
+## 작은 고정 용량 구성요소를 실제로 확인했습니다
+
+`bounded_storage_fixture.py`로 새 32MiB HFS+ 이미지 하나를 만들고 이 폴더의 고유 시험 경로에 연결했습니다. 별도 Python worker와 그 자식만 사용했으며 AVD, emulator, ADB와 개인 앱은 실행하지 않았습니다. 원래 SDK나 AVD를 복사하거나 고치지도 않았습니다.
+
+최종 소스의 실제 macOS 구성요소 검사는 통과했습니다. OS가 보고한 파일시스템 용량은 33,554,432바이트였습니다. 내부 쓰기는 성공했고 32,505,856바이트를 쓴 뒤 실제 ENOSPC를 받았습니다. 시험용 채움 파일만 제거한 뒤 다시 쓸 수 있었습니다. Mac의 저장 공간을 가득 채운 결과는 아닙니다.
+
+worker와 자식 모두 볼륨 밖의 시험 canary 열기, 새 파일 생성과 볼륨 안 symlink를 통한 바깥 쓰기를 EPERM으로 거절했습니다. canary 바이트는 같았습니다. 부모가 열고 상속 가능하게 둔 바깥 writable FD도 worker에 전달되지 않았습니다. 자식의 별도 FD 검사는 하지 않았으므로 그 필드는 null로 남깁니다. 자식은 동일한 제한을 상속하고 같은 process group에 남으며, 명령이 끝나거나 제한 시간을 넘기면 남은 소유 group도 정리합니다.
+
+입력은 읽기 전용 `/dev/null`, 출력은 합계 64KiB 상한의 pipe이며 명령 시간은 최대 45초입니다. 초기 실행에서 Python의 기본 DEVNULL 처리가 바깥 쓰기로 거절돼, 쓰기 허용 예외를 추가하지 않고 읽기 전용으로 여는 방식으로 고쳤습니다. 제한된 도구 실행에서의 sandbox 적용 거절도 준비 실패로 남겼고 권한이 허용된 실행에서 실제 볼륨 검사를 마쳤습니다.
+
+이미지는 처음과 마지막 모두 논리 크기와 실제 할당량 33,554,432바이트였습니다. 모든 worker가 끝난 뒤 소유 마운트를 해제하고 이번 이미지와 canary만 제거했습니다. 기존 이미지, SDK, 캐시와 백업은 보존했습니다. 결과와 작은 진단만 Git 제외 `.build/storage-component/`에 남겼습니다. 최종 호스트 검사는 기존 39개에 새 10개를 더한 **49개 PASS**입니다.
+
+이것은 작은 Python process의 파일 쓰기 제한과 고정 파일시스템의 실검사입니다. 전체 emulator/QEMU/ADB의 쓰기나 fresh AVD 부팅, 1GiB 준비 완료와 MapLibre 실행으로 확대하지 않습니다. `sandbox-exec`는 deprecated이며 profile 문법도 공개 안정 API로 취급하지 않습니다. macOS의 swap, 시스템 로그와 다른 process의 증가량도 제한한 결과가 아닙니다. 기존 native admission은 계속 닫혀 있습니다.
+
+명시적으로 이 작은 구성요소만 다시 확인할 때 사용하는 명령입니다. 이미지 생성과 마운트가 필요하므로 일반 호스트 회귀나 Cloud CI에서는 실행하지 않습니다.
+
+```sh
+python3 -B qa/map-transport/android/bounded_storage_fixture.py --run-fixture
+```
+
+구현 근거는 이 Mac의 `hdiutil(1)`의 고정 UDRW 생성과 mountpoint 옵션, `sandbox-exec(1)`의 profile 실행, `sandbox(7)`의 자식 상속과 이미 열린 FD 제한 설명입니다. 읽기와 process 실행, 지정 경로 쓰기만 허용하며 `system.sb`의 넓은 예외는 가져오지 않았습니다. 다음은 이 작은 보호 경로를 실제 emulator에 적용할 수 있는지 확인하는 별도 준비이며, 개인 AVD를 seed로 쓰지 않습니다.
+
 ## 빌드
 
 설치된 SDK 36의 `aapt2`, `d8`, `zipalign`, `apksigner`와 JDK 17을 재사용합니다. Gradle 프로젝트나 새 AGP는 받지 않습니다. 고정 버전 OkHttp 4.12.0과 Okio 3.6.0의 작은 jar만 공식 Maven에서 받을 수 있으며 SHA-256을 확인합니다. Kotlin stdlib 2.2.21은 기존 jar를 재사용하고 해시도 대조합니다. 세 라이브러리의 버전, 주소, 라이선스와 해시는 `dependencies.json`에 있습니다.

@@ -2,7 +2,7 @@
 
 작성일: 2026-10-11, Asia/Seoul  
 목표 플랫폼: Android, iOS  
-현재 상태: 2026-10-30. 별도 지도 통신 경로를 보완했고 Mac native 10개, 새 소스의 실제 iPhone 12개와 Android 준비·보호 호스트 39개를 확인했습니다. Android 새 AVD의 실제 공간 제한과 과거 이미지 차이의 원인은 미해결입니다. 제품 MapLibre와 공급원 다운로드는 아직 연결하지 않았으며 전체 24/54와 G1~G4 미완료를 유지합니다. [재개 순서](docs/RESUME.md)와 [진행 기록](PROGRESS.md)에 범위를 남겼습니다.
+현재 상태: 2026-10-31. 별도 iPhone 앱에서 실제 MapLibre의 합성 지도 렌더 완료와 외부 요청 거절 두 사례를 확인했습니다. Android는 32MiB 제한 구성요소와 호스트 49개를 확인했으며 fresh AVD는 미실행입니다. 제품 지도와 공급원 다운로드는 아직 연결하지 않았고 전체 24/54, G1~G4 미완료를 유지합니다. [재개 순서](docs/RESUME.md)와 [진행 기록](PROGRESS.md)에 범위를 남겼습니다.
 추천 개발 방식: React Native + Expo 개발 빌드 + TypeScript
 
 ## 1. 제품 목표와 첫 버전의 범위

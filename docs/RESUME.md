@@ -1,5 +1,19 @@
 # 여기서 이어서 개발하기
 
+## 10월 31일 현재 저장 지점
+
+`92802dc`의 GitHub CI41043567625 성공을 확인했습니다. 이어서 `qa/map-transport/ios-maplibre/`에 실제 SDK를 넣은 별도 앱을 추가하고 물리 iPhone 두 검사를 마쳤습니다. 제품의 Expo/RN 소스와 의존성, 개인 저장소는 그대로입니다.
+
+- iPhone: MapLibre 6.31.0, 새 bundle `app.trippainting.maplibreqa`, signed Debug. 합성 스타일·PNG 수신과 기대 source/layer, SDK 렌더 완료 콜백 1개, 정확한 외부 타일의 전송 전 거절 1개 PASS. 기존 요청 변환 역할의 QA sentinel을 보존하고 `/entry`→`/sdk` 변경을 서버에서 확인했습니다. 실제 RN 모듈은 연결하지 않았습니다. 초기 허용 전 대기는 대상 요청 0건으로 제외했습니다.
+- Android: 작은 Python worker의 실제 32MiB 고정 HFS/ENOSPC/복구, worker·child의 외부 open/create/symlink 쓰기 거절과 worker writable FD 미상속, 이미지 크기·할당량 유지 및 소유 환경 정리 PASS. 자식에 별도로 FD를 전달하지 않았으므로 해당 FD 검사는 NOT RUN입니다. 최종 호스트 49개 PASS. emulator/AVD/ADB와 1GiB 전체 준비는 미실행입니다. 새 코드는 기존 native admission을 열지 않습니다.
+- 전체 verifier exit0: 모바일 609, 서버 61, 합성 서버 17, Android 호스트 49와 Mac native 10, 임시 HTTP/SQLite·파일, Android/iOS JS/Hermes. iPhone의 새 SDK 두 사례와 이전 별도 전송 12개를 합쳐 같은 소스로 보고하지 않습니다.
+
+다음은 실제 제품에 연결하기 전 남은 SDK 경로입니다. 실제 RN 요청 변환 모듈과 초기화, 글꼴·아이콘·여러 타일의 본문 수명과 재요청, TLS/HTTP2, 영속 다운로드 예산과 OS 수신량을 확인해야 합니다. 새 SDK의 렌더 완료는 픽셀 검사나 사용자 화면 확인으로 세지 않습니다. 공급원 다운로드와 제품 지도 변경은 계속 꺼 둡니다.
+
+Android의 32MiB 구성요소를 전체 emulator 제한으로 옮기려면 SDK fresh 초기화와 모든 writable/temp/output/상속 FD 경로, 외부 쓰기와 자식 process를 실제 실행에서 확인해야 합니다. 개인 AVD를 seed로 복사하거나 원본 이미지를 수정·삭제하지 않습니다. 과거 QCOW2 차이는 미확정으로 유지합니다.
+
+새 iPhone 결과·장부 3개를 대조했고 전용 캐시 경로는 새 QA bundle 내부였습니다. QA 앱과 소유 서버는 제거·종료했습니다. 원래 앱 설치 정보는 같으며 개인 DB·사진·인증은 열거나 새로 대조하지 않았습니다. 통과 앱은 `.build/pinned-sdk-20261031/`, 원문은 Git 제외 `maplibre-sdk-qa-20261031/`에 보관합니다. 이번 생성 출력 2,117개, 77,824,684바이트만 정리했고 이전 자료는 유지했습니다. 전체 **24/54**, P3-02 부분 완료와 G1~G4 미완료입니다.
+
 ## 10월 30일 후속 재개 완료 지점
 
 이번 사용자 재개로 아래 중단 지점에서 이어갔습니다. `34d5031`의 CI41003544861은 통과했습니다. 제품 소스와 의존성은 바꾸지 않았으며 P3-02의 별도 통신 도구를 보완했습니다.

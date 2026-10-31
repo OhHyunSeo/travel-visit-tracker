@@ -1,0 +1,12 @@
+{
+  "name": "MapLibre Native iOS dynamic",
+  "version": "6.31.0",
+  "url": "https://github.com/maplibre/maplibre-native/releases/download/ios-v6.31.0/MapLibre.dynamic.xcframework.zip",
+  "archiveBytes": 10312052,
+  "sha256": "de3aaa435dd86768b06d90245e630d068dd7eef1491afae7217d1654c52c462a",
+  "maxUnpackedBytes": 40000000,
+  "slice": "MapLibre.xcframework/ios-arm64/MapLibre.framework/",
+  "sourceManifest": "https://github.com/maplibre/maplibre-gl-native-distribution/blob/6.31.0/Package.swift",
+  "release": "https://github.com/maplibre/maplibre-native/releases/tag/ios-v6.31.0",
+  "scope": "Standalone synthetic QA only; product dependencies unchanged"
+}

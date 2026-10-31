@@ -4,13 +4,21 @@
 
 P3-02를 시작하며 양쪽 네이티브 확장 경로와 공통 사전 계산을 검토했습니다. **제품 MapLibre의 통신 제한은 아직 구현하거나 검증하지 않았습니다.** 현재 지도는 기존 경계 지도를 유지하며 공급원 다운로드를 시작하지 않습니다. [공급원 선정과 예산](OFFLINE_MAP_PLAN.md)의 조건도 유지합니다.
 
+## 10월 31일 실제 SDK의 작은 범위 확인
+
+[별도 iPhone 앱](../qa/map-transport/ios-maplibre/README.md)에 공식 체크섬으로 고정한 MapLibre 6.31.0 dynamic SDK를 넣었습니다. 물리 iPhone signed Debug에서 합성 스타일·PNG를 받아 기대 source/layer와 렌더 완료 콜백을 확인했고, 외부 타일은 전송 전에 거절했습니다. 서버 도착은 합성 리소스 3건이며 인증·쿠키가 없었습니다. 기존 delegate 역할의 QA sentinel을 유지한 채 주소 변환도 반영됐습니다. 실제 RN 모듈, 글꼴·아이콘·여러 타일의 동시 처리, TLS/HTTP2와 OS 수신량 상한은 미검증입니다.
+
+[6.31.0 세션 설정](https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/platform/darwin/src/MLNNetworkConfiguration.h)은 지도와 offline storage 생성 전에 적용하도록 명시합니다. 새 앱은 이 순서를 지키고 명시적 스타일로 시작했습니다. 기본 캐시는 새 QA bundle의 앱 내부에 만들어졌고, 원래 앱의 지도 저장소는 열지 않았습니다. 렌더 콜백을 픽셀 검사나 실제 여행 지도 표시 수용 결과로 세지 않습니다.
+
+Android는 32MiB 고정 HFS 공간과 Python worker/child의 쓰기 제한 구성요소를 실제로 확인했습니다. ENOSPC와 복구, 외부 open/create/symlink 거절, worker FD 미상속 및 이미지 크기·할당량 유지와 정리까지 통과했습니다. 실제 emulator와 전체 1GiB 준비의 증거는 아닙니다. 전체 verifier 609/61, 합성 서버 17개와 호스트 49개/Mac 10개도 통과했으며 **24/54**, P3-02 부분 완료와 G1~G4 미완료를 유지합니다.
+
 ## 10월 30일 후속 재개: 단일 HTTP 송신 시험
 
 이전 저장본 `34d5031`의 CI41003544861은 통과했습니다. 별도 iOS 시험 경로에서 전달용 NSURLSession을 새 TCP 연결과 한 번의 HTTP/1.1 쓰기로 바꿨습니다. 장부를 먼저 저장한 뒤 송신하고 연결의 취소 완료까지 자리를 유지합니다. 같은 소스의 Mac native 검사 10개에서 실제 부분 EOF 뒤 재전송 없음, 재시도 뒤 예약 유지와 한도 초과 거절, 최대 동시 4개와 잘못된 응답 거절을 확인했습니다. 이는 사설 HTTP 합성 서버의 결과입니다.
 
 Apple의 [QA1941](https://developer.apple.com/library/archive/qa/qa1941/_index.html)은 URLSession의 idempotent 요청이 일부 조건에서 자동으로 재시도될 수 있음을 설명합니다. 이번 [Network framework](https://developer.apple.com/documentation/network) 실험은 그 전달 계층을 분리해 관찰하기 위한 것입니다. 일반 HTTP 구현으로 채택한 것이 아니며 HTTPS, HTTP/2와 실제 MapLibre 재요청은 연결하지 않았습니다. 같은 signed Debug 소스의 물리 iPhone 기본 11개와 실제 QA SIGKILL/새 PID 장부 1개도 통과했습니다. 미확정 256을 남기고 새 256을 추가했으며 이전 13개나 Mac의 부분 EOF 결과로 대신하지 않습니다.
 
-Android에는 cached SDK와 여유 공간을 읽기만 하는 준비 점검을 추가했습니다. 실제 제한 backend가 없는 동안 숫자 marker만으로 native 실행에 들어갈 수 없도록 거절합니다. 최종 호스트 검사는 37개이고 원래 AVD의 현재 세 해시는 이전 종료값과 같습니다. 과거 차이의 원인은 여전히 미확정입니다. 새 AVD나 emulator, ADB는 실행하지 않았고 1GiB의 실제 강제 제한은 아직 입증하지 못했습니다.
+Android에는 cached SDK와 여유 공간을 읽기만 하는 준비 점검을 추가했습니다. 실제 제한 backend가 없는 동안 숫자 marker만으로 native 실행에 들어갈 수 없도록 거절합니다. 최종 호스트 검사는 39개이고 원래 AVD의 현재 세 해시는 이전 종료값과 같습니다. 과거 차이의 원인은 여전히 미확정입니다. 새 AVD나 emulator, ADB는 실행하지 않았고 1GiB의 실제 강제 제한은 아직 입증하지 못했습니다.
 
 제품 다운로드는 계속 꺼져 있으며 **24/54**, P3-02 부분 완료와 G1~G4 미완료를 유지합니다. TCP callback의 수신량을 OS 전체 수신량으로, 새 경로의 한 번 쓰기를 공급원과 SDK 전체의 교환 제어로 바꾸어 보고하지 않습니다.
 
@@ -74,7 +82,7 @@ MapLibre 전용 `NSURLSessionConfiguration.protocolClasses`에 공급원 주소�
 
 첫 네이티브 시험은 **다른 bundle/application ID와 별도 앱 저장 공간**을 쓰는 방식으로 준비합니다. 개인용 앱의 DB 경로를 바꾸거나 전체 캐시를 초기화하지 않습니다. 시험용 식별자는 기존 계정, Keychain 그룹과 위치 기록 작업을 공유하지 않게 검토하고, 새 빌드 전 디스크 여유와 소유 산출물 목록을 확인합니다. 재사용할 native 변경은 관리되는 모듈과 config plugin에 둡니다.
 
-제품의 MapLibre 경로에 대한 통제 서버 시험은 다음 순서로 진행합니다. 별도 Android 전송 도구의 결과와 구분하며 실제 SDK 경로는 아직 **NOT RUN**입니다.
+제품의 RN MapLibre 통합 경로에 대한 통제 서버 시험은 다음 순서로 진행합니다. 별도 iPhone native SDK의 작은 두 사례와 Android 전송 도구를 제품 수용으로 대신하지 않으며 제품 RN 경로는 아직 **NOT RUN**입니다.
 
 1. 외부 공급원 주소를 허용하지 않으며 실제 MapLibre를 포함하는 별도 시험 앱을 준비합니다. 현재 작은 전송 앱과 합성 서버를 바탕으로 기존 DB, 사진, 인증, MapLibre 저장소를 건드리지 않는지 먼저 확인합니다.
 2. 스타일, 타일, 글꼴과 아이콘을 함께 대기시켜 실제 응답 본문 수명 동안 최대 4개인지 측정합니다. 취소와 늦은 callback에서도 자리가 두 번 반환되지 않아야 합니다.
