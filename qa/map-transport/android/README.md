@@ -1,0 +1,113 @@
+# Android 지도 전송 시험 앱
+
+실제 앱과 다른 `app.trippainting.maptransportqa` 패키지로 만든 작은 시험 앱입니다. Android의 비동기 OkHttp 경로와 앱 전용 파일의 예약 장부를 확인합니다. MapLibre, 로그인, 위치 기능과 개인 앱의 저장 공간은 연결하지 않습니다. 권한은 인터넷 하나이며 백업도 꺼져 있습니다.
+
+검사할 동작은 다음과 같습니다.
+
+- 두 client가 공유하는 dispatcher가 본문을 읽고 닫을 때까지 최대 4개 요청을 유지합니다.
+- 에뮬레이터의 `10.0.2.2`에 있는 지정 시험 서버와 네 종류의 합성 리소스만 요청합니다. 알 수 없는 주소와 쿼리를 전송 전에 거절하고 redirect를 따라가지 않습니다.
+- 고정 User-Agent만 보내며 쿠키, 계정 인증, 프록시와 캐시는 사용하지 않습니다. network interceptor는 자동 follow-up의 두 번째 교환을 전송 전에 거절합니다.
+- 요청 전에 본문 128바이트를 예약해 `AtomicFile`에 쓰고 동기화합니다. 예약은 성공이나 실패 뒤에도 환급하지 않습니다. 앱 강제 종료 뒤 확인하지 못한 예약은 대기로 남습니다.
+- 합성 한도는 본문 예약 8,192바이트, 타일 시도 40번, 전체 시도 100번입니다. 각 시도에서 길이를 알 수 없거나 128바이트를 넘는 본문, 압축 응답과 오류 응답은 받아들이지 않습니다.
+
+여기서 세는 본문은 **앱이 받아들인 바이트**입니다. OS가 이미 받은 바이트나 HTTP/TLS 전체 전송량을 제한했다는 결과가 아닙니다. 현재 시험 서버는 HTTP/1.1이며 실제 SDK, HTTP/2, 공급원 접속과 운영 앱의 lifecycle 통합도 별도입니다. 시험별 `run_id`는 독립 합성 사례를 위한 이름으로, 실제 다운로드 ID를 바꿔 예산을 초기화하는 제품 기능이 아닙니다.
+
+## 2026-10-30 재개 결과
+
+이전 AVD의 QCOW2, base userdata와 설정을 읽기만 해서 다시 대조했습니다. 현재 해시는 이전 실행 종료 때 보관한 값과 모두 같습니다. 과거 QCOW2의 전후 차이는 당시 전체 해시와 크기만 기록돼 있어 메타데이터와 guest 데이터 변경을 구분할 수 없습니다. 원인은 계속 미확정이며 원본을 복구하거나 덮어쓰고 삭제하지 않았습니다.
+
+다음 실행이 기존 AVD를 잘못 선택하지 않도록 `qa_avd_guard.py`를 추가했습니다. 전용 이름과 workspace 소유 경로, 준비 기록과 설정 해시, 실제 emulator process의 데이터 경로를 함께 확인합니다. 호스트 검사를 마친 뒤 읽기 전용 guest 이름도 대조합니다. 기본 이미지의 symlink와 hardlink, QCOW2 backing 경로도 확인합니다. 이 조건을 통과하기 전에는 앱 설치나 실행 명령을 보내지 않습니다. 실제 명령은 검사한 ADB transport ID로 고정하고 매번 host PID, 시작 시각과 경로를 다시 확인합니다. 사용했던 QA AVD도 재사용하지 않도록 첫 실행 전에 소유 기록을 한 번만 남깁니다.
+
+호스트 회귀 검사 25개는 통과했습니다. 기존 이름, 외부 경로와 심볼릭 링크, 바뀐 설정과 미지원 옵션, 콘솔과 ADB의 서로 다른 소유 PID, 이전 사용 기록을 거절하는지 확인했습니다. fixture 정리 실패가 QA 패키지 제거를 건너뛰지 않는지도 확인했습니다. 이 결과는 실제 emulator/guest 연결의 통과가 아닙니다.
+
+이번에는 새 AVD 증가량을 1GiB 이하로 보수적으로 제한할 근거를 마련하지 못해 **새 AVD 생성과 native 재검사는 NOT RUN**입니다. 예전 이미지의 실제 할당량은 약 10.8GB였습니다. 기존 SDK나 userdata를 복사하거나 새 시스템 이미지를 다운로드하지 않았고, emulator와 ADB도 시작하지 않았습니다. 앞의 여섯 통신 묶음은 이전 고정 소스의 결과로만 유지합니다.
+
+## 10월 30일 저장 공간 준비를 이어서 확인한 내용
+
+새 AVD가 쓸 공간을 폴더 크기 측정이나 준비 기록의 숫자에만 맡기지 않도록 다시 검토했습니다. 고정 크기 RAW 이미지 안에 파일시스템을 두는 방법은 그 안의 쓰기를 제한할 후보입니다. 다만 emulator의 임시 파일, 출력, 자식 process와 이미 열린 쓰기 파일까지 그 안에 가두는 경로가 아직 검증되지 않았습니다. 1GiB 목표는 이 시험이 만드는 파일의 쓰기 범위입니다. 호스트 swap과 다른 프로그램을 포함한 Mac 전체의 공간 변화까지 고정하는 조건을 추가한 것은 아닙니다.
+
+`bounded_avd_storage.py`는 이 준비 조건을 읽기만 하는 작은 점검 도구입니다. cached SDK의 두 메타데이터 파일을 각각 최대 64KiB 읽고 이미지 파일의 크기와 여유 공간을 확인합니다. 큰 이미지 본문을 읽거나 복사하지 않으며, 이미지 생성, 마운트, marker 발급과 emulator/ADB 실행 기능은 없습니다. 현재 API37에는 `userdata.img`가 없어 새 초기화 방법도 확인해야 합니다. 이 사실만으로 작은 AVD의 부팅 실패를 단정하지 않습니다.
+
+```sh
+python3 -B qa/map-transport/android/bounded_avd_storage.py
+```
+
+현재 결과는 **BLOCKED, 종료값 2**가 맞습니다. 검토용 후보는 파일시스템을 포함한 768MiB의 고정 RAW 볼륨이고 남은 256MiB도 아직 검증된 여유분이 아닙니다. 공간 제한과 외부 쓰기 차단, 처음 부팅을 실제로 확인하기 전에는 실행 준비가 끝난 것으로 보고하지 않습니다. 이 단계에서 `diskutil image info`도 호출하지 않습니다. 로컬 설명서에 따르면 정보를 얻으면서 이미지를 attach/detach하기 때문입니다.
+
+기존 하네스에도 이 제한을 연결했습니다. 지금은 독립적으로 강제하는 준비·실행 backend가 없으므로 **정상 모양의 marker를 직접 작성해도 native 명령 전부를 거절**합니다. 명령행이나 환경변수로 이를 건너뛰는 옵션은 없습니다. 새 호스트 검사 14개와 기존 25개, 합계 39개가 통과했습니다. 작은 메타데이터도 읽는 사이 링크나 FIFO로 바뀌면 거절하는지 포함합니다. 이 결과는 제한된 볼륨이나 실제 host/guest 보호의 통과가 아닙니다. 이번에도 새 AVD와 native 사례는 0개이며 과거 QCOW2 차이의 원인은 계속 미확정입니다.
+
+첫 Linux CI에서는 삭제된 파일의 inode가 곧바로 재사용돼 교체 거절 검사가 실패했습니다. 번호와 기기 번호만 비교하던 읽기를 크기, 변경 시각과 읽기 전후 검사로 보완했습니다. 재사용과 읽는 중 변경 회귀를 포함한 최종 호스트 39개를 확인하며 실제 볼륨이나 emulator 검증으로 세지 않습니다.
+
+다음에는 고정 볼륨의 실제 용량과 backing 파일, 외부 쓰기 차단과 열린 파일, 전체 자식 process, 임시·출력 경로와 mount 교체를 함께 검증하는 준비 경로가 필요합니다. 그 뒤 작은 fresh AVD 부팅과 기존 identity/transport 보호를 확인합니다. 개인 AVD를 seed로 사용하거나 원본 이미지를 지워 공간을 맞추지 않습니다.
+
+## 작은 고정 용량 구성요소를 실제로 확인했습니다
+
+`bounded_storage_fixture.py`로 새 32MiB HFS+ 이미지 하나를 만들고 이 폴더의 고유 시험 경로에 연결했습니다. 별도 Python worker와 그 자식만 사용했으며 AVD, emulator, ADB와 개인 앱은 실행하지 않았습니다. 원래 SDK나 AVD를 복사하거나 고치지도 않았습니다.
+
+최종 소스의 실제 macOS 구성요소 검사는 통과했습니다. OS가 보고한 파일시스템 용량은 33,554,432바이트였습니다. 내부 쓰기는 성공했고 32,505,856바이트를 쓴 뒤 실제 ENOSPC를 받았습니다. 시험용 채움 파일만 제거한 뒤 다시 쓸 수 있었습니다. Mac의 저장 공간을 가득 채운 결과는 아닙니다.
+
+worker와 자식 모두 볼륨 밖의 시험 canary 열기, 새 파일 생성과 볼륨 안 symlink를 통한 바깥 쓰기를 EPERM으로 거절했습니다. canary 바이트는 같았습니다. 부모가 열고 상속 가능하게 둔 바깥 writable FD도 worker에 전달되지 않았습니다. 자식의 별도 FD 검사는 하지 않았으므로 그 필드는 null로 남깁니다. 자식은 동일한 제한을 상속하고 같은 process group에 남으며, 명령이 끝나거나 제한 시간을 넘기면 남은 소유 group도 정리합니다.
+
+입력은 읽기 전용 `/dev/null`, 출력은 합계 64KiB 상한의 pipe이며 명령 시간은 최대 45초입니다. 초기 실행에서 Python의 기본 DEVNULL 처리가 바깥 쓰기로 거절돼, 쓰기 허용 예외를 추가하지 않고 읽기 전용으로 여는 방식으로 고쳤습니다. 제한된 도구 실행에서의 sandbox 적용 거절도 준비 실패로 남겼고 권한이 허용된 실행에서 실제 볼륨 검사를 마쳤습니다.
+
+이미지는 처음과 마지막 모두 논리 크기와 실제 할당량 33,554,432바이트였습니다. 모든 worker가 끝난 뒤 소유 마운트를 해제하고 이번 이미지와 canary만 제거했습니다. 기존 이미지, SDK, 캐시와 백업은 보존했습니다. 결과와 작은 진단만 Git 제외 `.build/storage-component/`에 남겼습니다. 최종 호스트 검사는 기존 39개에 새 10개를 더한 **49개 PASS**입니다.
+
+이것은 작은 Python process의 파일 쓰기 제한과 고정 파일시스템의 실검사입니다. 전체 emulator/QEMU/ADB의 쓰기나 fresh AVD 부팅, 1GiB 준비 완료와 MapLibre 실행으로 확대하지 않습니다. `sandbox-exec`는 deprecated이며 profile 문법도 공개 안정 API로 취급하지 않습니다. macOS의 swap, 시스템 로그와 다른 process의 증가량도 제한한 결과가 아닙니다. 기존 native admission은 계속 닫혀 있습니다.
+
+명시적으로 이 작은 구성요소만 다시 확인할 때 사용하는 명령입니다. 이미지 생성과 마운트가 필요하므로 일반 호스트 회귀나 Cloud CI에서는 실행하지 않습니다.
+
+```sh
+python3 -B qa/map-transport/android/bounded_storage_fixture.py --run-fixture
+```
+
+구현 근거는 이 Mac의 `hdiutil(1)`의 고정 UDRW 생성과 mountpoint 옵션, `sandbox-exec(1)`의 profile 실행, `sandbox(7)`의 자식 상속과 이미 열린 FD 제한 설명입니다. 읽기와 process 실행, 지정 경로 쓰기만 허용하며 `system.sb`의 넓은 예외는 가져오지 않았습니다. 다음은 이 작은 보호 경로를 실제 emulator에 적용할 수 있는지 확인하는 별도 준비이며, 개인 AVD를 seed로 쓰지 않습니다.
+
+## 10월 31일 캐시된 실행 파일의 비부팅 확인
+
+기존 32MiB 구성요소 안에서 cached emulator 37.2.12의 실행 파일을 실제로 불러왔습니다. 인자는 **`-version` 하나**로 고정하며 AVD명, `-list-avds`, `-qemu`나 임의 옵션을 받지 않습니다. 최종 소스에서 37.2.12.0 출력과 종료를 확인했고 Mach·socket 권한 예외를 추가하지 않았습니다. AVD 부팅과 ADB, Android 앱 검사는 하지 않았습니다.
+
+작은 wrapper가 바깥 writable FD가 닫힌 것을 확인하고 preamble을 저장한 뒤 `execve`로 cached launcher를 실행합니다. SDK launcher, QEMU와 메타데이터 세 파일은 전후 SHA-256이 같았습니다. 이 파일을 읽을 때도 링크와 FIFO 교체, 128MiB를 넘는 파일과 읽는 중 변경을 거절합니다. 개인 AVD 디렉터리 읽기는 profile에서 거절하며 Android 설정·임시 경로는 소유 볼륨 안으로 지정합니다. HOME, home과 CODEX_HOME을 새 경로로 바꾸지 않습니다.
+
+실행 중 생성된 emulator crash settings 40바이트가 볼륨 안의 tmp에 있었습니다. 출력은 기존 64KiB pipe 상한을 사용합니다. 32MiB 파일시스템의 쓰기·ENOSPC·복구와 worker/child의 바깥 쓰기 거절도 유지됐고, backing 이미지의 논리 크기·할당량은 처음과 끝 모두 33,554,432바이트였습니다. 소유 process가 끝난 뒤 마운트를 해제하고 이번 이미지와 canary만 정리했습니다.
+
+처음 준비에서는 제한된 Python worker가 argparse 기본값을 계산하면서 home을 조회해 멈췄습니다. emulator 실행 전의 준비 실패이며, HOME이나 권한을 넓히지 않고 SDK 기본값을 바깥 버전 모드에서만 계산하도록 고쳤습니다. 최종 호스트 검사는 기존 49개와 새 12개, **61개 PASS**입니다. 원문은 Git 제외 `.build/storage-component/run_0a87f5bc160b/`에 있습니다.
+
+```sh
+python3 -B qa/map-transport/android/bounded_storage_fixture.py --probe-emulator-version
+```
+
+이 명령도 새 32MiB 시험 이미지의 생성과 마운트가 필요한 명시적 macOS 검사입니다. 일반 호스트 회귀와 Cloud CI에서는 실행하지 않습니다. 실행 파일의 버전 출력은 fresh userdata 생성이나 AVD 초기화, 모든 emulator 자식 경로의 보호와 부팅 성공을 증명하지 않습니다. native admission과 공급원 다운로드는 계속 닫혀 있습니다.
+
+fresh seed도 조금 더 좁혔습니다. cached API37의 `data/empty_data_disk`는 host가 빈 data partition을 만들도록 알리는 파일입니다. 설치된 QEMU의 읽기 전용 코드 확인에서는 `createUserData()`가 내장 ext4 생성 경로를 사용하는 것을 확인했습니다. 별도 `mkfs.ext4` 결과를 이 경로의 통과로 바꾸어 보고하지 않습니다. 실제 producer와 최소 크기, 1GiB 이하 부팅은 미실행입니다. 이후 초기화가 ADB key 경로도 다룰 수 있어 개인 경로 읽기 차단과 새 설정 공간을 함께 검증해야 합니다.
+
+[공식 launcher 소스](https://android.googlesource.com/platform/external/qemu/+/1381d44efe69ba0b37fb7f7ef868125e279fc14a/android/emulator/main-emulator.cpp)는 `-version`을 queryVersion으로 처리하고 대상 실행 파일로 전달하는 구조를 보여 줍니다. 이 소스의 branch를 설치된 37.2.12 전체와 동일하다고 가정하지 않고, 실제 출력과 파일 해시를 별도로 남겼습니다. 과거 개인 AVD의 QCOW2 차이 원인은 계속 미확정이며 원본을 덮어쓰거나 삭제하지 않았습니다.
+
+## 빌드
+
+설치된 SDK 36의 `aapt2`, `d8`, `zipalign`, `apksigner`와 JDK 17을 재사용합니다. Gradle 프로젝트나 새 AGP는 받지 않습니다. 고정 버전 OkHttp 4.12.0과 Okio 3.6.0의 작은 jar만 공식 Maven에서 받을 수 있으며 SHA-256을 확인합니다. Kotlin stdlib 2.2.21은 기존 jar를 재사용하고 해시도 대조합니다. 세 라이브러리의 버전, 주소, 라이선스와 해시는 `dependencies.json`에 있습니다.
+
+```sh
+bash qa/map-transport/android/build.sh
+```
+
+표준 위치와 다르면 `ANDROID_HOME`, `JAVA_HOME`, `KOTLIN_STDLIB_JAR`로 지정합니다. 출력과 시험 서명 키는 Git에서 제외한 이 폴더의 `.build/`에만 만듭니다. 기존 앱의 빌드, 패키지 설정과 의존성은 바꾸지 않습니다.
+
+## 새 에뮬레이터 검사를 시작하기 전
+
+현재 native 검사 도구는 독립적인 공간 제한 backend가 없어 실행을 거절합니다. 이후 이를 구현해도 준비 기록 없는 기존 AVD를 거절하는 identity 검사를 함께 유지해야 합니다. 새 시험용 AVD를 만들고 증가량의 상한을 독립적으로 확인하는 준비 단계가 먼저 필요합니다. 숫자만 기록한 marker는 실제 디스크 증가량을 보장하지 않습니다. 이번에는 해당 marker나 실행 환경을 만들지 않았습니다.
+
+준비된 AVD는 이 도구의 `.build/avd/TripPaintingMapTransportQA_<unique>.avd` 바로 아래에 있어야 합니다. 준비 기록 `.trip-painting-map-qa.json`은 생성한 새 이름과 정규 경로, cached SDK에서 시작했다는 출처, 설정 SHA-256과 검증한 증가량을 묶습니다. 이전 AVD를 복사하거나 경로만 바꾼 경우의 소유 증명으로 사용하지 않습니다. 심볼릭 링크와 외부 userdata/cache 경로는 거절합니다.
+
+실행 중인 emulator의 콘솔과 ADB 포트가 같은 호스트 PID인지 읽기만 해서 확인합니다. 이미 준비된 ADB 서버가 없으면 client 호출 전에 거절하며, 준비 주체가 그 서버의 수명을 소유해야 합니다. SDK 실행 파일과 명시적 `-avd`, `-datadir`, `-port`, `-no-snapshot` 및 허용한 옵션을 대조하고, 그 뒤 `adb emu avd name`을 읽습니다. 실제 Android 휴대폰과 임의의 emulator serial만으로는 진행하지 않습니다. 연결에 대응하는 transport ID를 얻고, 이후 명령 전후에 emulator와 ADB 서버의 PID, 시작 시각과 실제 데이터 경로가 같은지 다시 확인합니다. host 프로세스 확인과 CLI 실행 사이의 동시 종료를 원자적으로 묶는 OS sandbox는 아니므로 다른 주체가 시험 환경을 재시작하면 검사를 중단해야 합니다. 첫 검사에 사용할 새 AVD에서는 개인용 `app.trippainting.mobile` 패키지가 없어야 하며, 그 파일이나 DB를 읽어 baseline으로 삼지 않습니다.
+
+호스트 거절 검사는 별도 기기 없이 실행할 수 있습니다.
+
+```sh
+python3 -B -m unittest discover -s qa/map-transport/android -p 'test_*.py'
+```
+
+기존 `run-validation.py --serial … --qa-avd-dir …` 명령은 현재 차단됩니다. 준비 도구가 구현되고 실제 제한을 검증한 뒤 실행 안내를 다시 연결합니다. 서버를 먼저 켜거나 marker를 수동으로 작성할 필요는 없습니다.
+
+실행 도구는 기존 패키지를 임의로 덮어쓰지 않습니다. 고유한 `.build/validation/run_*/`에 결과를 남겨 이전 근거를 덮어쓰지 않고, 처음 검사하는 소유 AVD에 사용 기록을 원자적으로 남긴 뒤 QA 앱만 설치합니다. 끝나면 QA 앱만 제거하고 개인 패키지의 계속된 부재와 네트워크, 화면 설정을 대조합니다. 기존 앱의 인증이나 DB 보존을 새로 확인한 결과로 보고하지 않습니다. HTTP에는 `adb reverse`를 사용하지 않습니다.
+
+이 도구는 AVD를 만들거나 시작, 종료하지 않습니다. 준비 주체가 실제 디스크 증가량과 새 저장 공간의 출처, 소유 서버와 emulator 종료를 별도로 확인해야 합니다. 과거 QCOW2 차이가 해결되지 않은 상태에서 원본을 덮어쓰거나 지워 해시를 맞추지 않습니다.

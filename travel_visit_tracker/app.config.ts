@@ -28,6 +28,7 @@ const config: ExpoConfig = {
     './plugins/with-gradle-jdk.js',
     'expo-router',
     'expo-dev-client',
+    ['expo-secure-store', { configureAndroidBackup: true, faceIDPermission: false }],
     '@maplibre/maplibre-react-native',
     [
       'expo-location',
@@ -52,7 +53,8 @@ const config: ExpoConfig = {
     [
       'expo-build-properties',
       {
-        ios: { enableSceneSupport: true },
+        // Build with the selected Xcode instead of importing another Swift SDK's interfaces.
+        ios: { enableSceneSupport: true, usePrecompiledModules: false },
         android: { compileSdkVersion: 36, targetSdkVersion: 36 },
       },
     ],
