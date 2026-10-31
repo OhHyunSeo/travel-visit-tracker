@@ -22,16 +22,43 @@ test("original indexed PNG is 256px with bounded decompressed and encoded bytes"
 });
 
 test("style fits reservation at longest supported IPv4 origin with one zoom-zero raster source", () => {
-  for (const blocked of [false, true]) {
-    const bytes = syntheticRasterStyle("http://192.168.255.255:65535", blocked);
+  for (const [blocked, multi] of [[false, false], [true, false], [false, true]]) {
+    const bytes = syntheticRasterStyle("http://192.168.255.255:65535", blocked, multi);
     assert.ok(bytes.length <= 256);
     const style = JSON.parse(bytes);
     assert.equal(style.version, 8);
-    assert.equal(style.sources.t.maxzoom, 0);
+    assert.equal(style.sources.t.maxzoom, multi ? 2 : 0);
+    assert.equal(style.sources.t.minzoom, multi ? 2 : 0);
     assert.equal(style.sources.t.tileSize, 256);
     assert.equal(style.layers[0].type, "raster");
     assert.equal(style.sources.t.tiles[0].includes("example.invalid"), blocked);
   }
+});
+
+test("multi-tile fixture holds four actual body lifetimes and refuses reset while active", async t => {
+  const fixture = await createSDKFixture(); t.after(() => fixture.close());
+  const style = await (await fetch(`${fixture.origin}/resource/style/multi`)).json();
+  assert.equal(style.sources.t.minzoom, 2);
+  assert.equal(style.sources.t.maxzoom, 2);
+  await fetch(`${fixture.origin}/reset`);
+  const responses = await Promise.all(["2_0_0", "2_0_1", "2_1_0", "2_1_1"].map(id => fetch(`${fixture.origin}/resource/tile/${id}`)));
+  assert.equal(fixture.stats().active, 4);
+  assert.equal((await fetch(`${fixture.origin}/reset`)).status, 409);
+  const bodies = await Promise.all(responses.map(response => response.arrayBuffer()));
+  assert.ok(bodies.every(body => Buffer.from(body).equals(syntheticRasterTile())));
+  assert.equal(fixture.stats().maxActive, 4);
+  assert.equal(fixture.stats().active, 0);
+});
+
+test("multi-tile fixture cancels a delayed body and shuts down without a late write", async () => {
+  const fixture = await createSDKFixture();
+  const response = await fetch(`${fixture.origin}/resource/tile/2_0_0`);
+  assert.equal(fixture.stats().active, 1);
+  await fixture.close();
+  await assert.rejects(response.arrayBuffer());
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.equal(fixture.stats().active, 0);
+  assert.equal(fixture.stats().requests[0].bytesWritten, 0);
 });
 
 test("fixture serves valid style and PNG with exact length and scoped header-presence records", async t => {

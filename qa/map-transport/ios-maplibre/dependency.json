@@ -8,5 +8,16 @@
   "slice": "MapLibre.xcframework/ios-arm64/MapLibre.framework/",
   "sourceManifest": "https://github.com/maplibre/maplibre-gl-native-distribution/blob/6.31.0/Package.swift",
   "release": "https://github.com/maplibre/maplibre-native/releases/tag/ios-v6.31.0",
-  "scope": "Standalone synthetic QA only; product dependencies unchanged"
+  "scope": "Standalone synthetic QA only; product dependencies unchanged",
+  "rnNativeTransform": {
+    "package": "@maplibre/maplibre-react-native",
+    "version": "11.5.0",
+    "packageRelativePath": "../../../travel_visit_tracker/node_modules/@maplibre/maplibre-react-native",
+    "sources": {
+      "MLRNTransformRequest.h": "d5eb13fdfdb20a1d41ebd31e00d161e99840905dd9f2ce893bc357036e71d770",
+      "MLRNTransformRequest.m": "66e6333da941a21dd7f48bbaa1b9ee41a0a927bcfeeaeb9947dc4f8ca23d4e47"
+    },
+    "licenseSha256": "92149854b2081d6ddbb5bd57ab35dbc384b7c835c78562c9eacfcb7941896a2f",
+    "scope": "unmodified native transform class only; JS/TurboModule bridge not linked"
+  }
 }

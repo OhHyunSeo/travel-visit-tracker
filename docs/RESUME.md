@@ -1,5 +1,17 @@
 # 여기서 이어서 개발하기
 
+## 10월 31일 후속 검사 완료 후 사용자 요청으로 저장, 중단
+
+**현재 시작한 검사까지만 마치고 저장하라는 요청을 완료했습니다. 새 사용자 재개 전에는 개발, 빌드나 기기 검사와 Android 추가 지시를 시작하지 않습니다.** 이전 `6ee6c32`의 CI41195903763은 성공했습니다.
+
+- iPhone: 별도 MapLibre 6.31.0 앱에 설치된 RN 11.5.0의 변경 없는 native `MLRNTransformRequest` 클래스를 연결했습니다. 새 소스 세 사례 PASS: 주소 변환과 합성 지도 렌더 완료, 줌 2 타일 4개의 native/server 동시 최대 4 및 렌더 완료, 정확한 외부 타일의 전송 전 거절. 서버 총 8개 요청과 native 집계가 같고 인증·쿠키가 없었습니다. JS/TurboModule bridge와 다섯 번째 요청 대기, 픽셀·사용자 화면 수용은 확인하지 않았습니다.
+- Android: 실제 32MiB 제한 공간에서 cached emulator 37.2.12의 `-version`만 실행해 37.2.12.0과 종료를 확인했습니다. 바깥 writable FD 닫힘, SDK 세 해시와 이미지 용량 유지, 정리 PASS. 호스트 61개 PASS이며 새 AVD 생성·부팅과 ADB, 앱 native 검사는 0개입니다. 원본 현재 세 해시는 이전 종료값과 같고 과거 QCOW2 차이는 미확정입니다. 기존 native admission은 계속 닫혀 있습니다.
+- 전체 verifier exit0: 모바일 609, 서버 61, 합성 서버 19, Android 호스트 61, Mac native 10, 임시 HTTP/SQLite·파일과 Android/iOS JS/Hermes.
+
+QA 결과와 세 장부, 문서 4개를 대조해 보관하고 앱과 소유 서버를 정리했습니다. 원래 앱 설치 정보는 같으며 개인 DB, 사진과 native 인증은 열거나 새로 대조하지 않았습니다. 새 통과 앱은 `.build/pinned-native-transform-20261031/`, 원문은 Git 제외 `maplibre-transform-qa-20261031/`, Android는 `.build/storage-component/run_0a87f5bc160b/`입니다. 이번 생성 출력 2,110개, 77,545,112바이트만 대조 후 정리했고 이전 SDK·AVD·캐시·빌드·백업은 보존했습니다.
+
+다음 사용자 재개 때는 RN JS 초기화와 더 넓은 SDK 리소스·대기·취소·재요청, TLS/HTTP2와 영속 예산을 이어갑니다. OS 전체 수신량 상한은 미검증입니다. Android는 107바이트 fresh 생성 표식에서 실제 초기화와 최소 용량, 자식·FD·쓰기 경로의 강제 제한을 먼저 증명해야 합니다. 개인 AVD를 seed로 복사하거나 원본을 덮어쓰고 삭제하지 않습니다. 공급원 다운로드와 제품 지도 변경은 계속 꺼 두며 **24/54**, P3-02 부분 완료와 G1~G4 미완료입니다.
+
 ## 10월 31일 현재 저장 지점
 
 `92802dc`의 GitHub CI41043567625 성공을 확인했습니다. 이어서 `qa/map-transport/ios-maplibre/`에 실제 SDK를 넣은 별도 앱을 추가하고 물리 iPhone 두 검사를 마쳤습니다. 제품의 Expo/RN 소스와 의존성, 개인 저장소는 그대로입니다.

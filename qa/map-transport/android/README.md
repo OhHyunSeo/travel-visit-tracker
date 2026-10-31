@@ -62,6 +62,26 @@ python3 -B qa/map-transport/android/bounded_storage_fixture.py --run-fixture
 
 구현 근거는 이 Mac의 `hdiutil(1)`의 고정 UDRW 생성과 mountpoint 옵션, `sandbox-exec(1)`의 profile 실행, `sandbox(7)`의 자식 상속과 이미 열린 FD 제한 설명입니다. 읽기와 process 실행, 지정 경로 쓰기만 허용하며 `system.sb`의 넓은 예외는 가져오지 않았습니다. 다음은 이 작은 보호 경로를 실제 emulator에 적용할 수 있는지 확인하는 별도 준비이며, 개인 AVD를 seed로 쓰지 않습니다.
 
+## 10월 31일 캐시된 실행 파일의 비부팅 확인
+
+기존 32MiB 구성요소 안에서 cached emulator 37.2.12의 실행 파일을 실제로 불러왔습니다. 인자는 **`-version` 하나**로 고정하며 AVD명, `-list-avds`, `-qemu`나 임의 옵션을 받지 않습니다. 최종 소스에서 37.2.12.0 출력과 종료를 확인했고 Mach·socket 권한 예외를 추가하지 않았습니다. AVD 부팅과 ADB, Android 앱 검사는 하지 않았습니다.
+
+작은 wrapper가 바깥 writable FD가 닫힌 것을 확인하고 preamble을 저장한 뒤 `execve`로 cached launcher를 실행합니다. SDK launcher, QEMU와 메타데이터 세 파일은 전후 SHA-256이 같았습니다. 이 파일을 읽을 때도 링크와 FIFO 교체, 128MiB를 넘는 파일과 읽는 중 변경을 거절합니다. 개인 AVD 디렉터리 읽기는 profile에서 거절하며 Android 설정·임시 경로는 소유 볼륨 안으로 지정합니다. HOME, home과 CODEX_HOME을 새 경로로 바꾸지 않습니다.
+
+실행 중 생성된 emulator crash settings 40바이트가 볼륨 안의 tmp에 있었습니다. 출력은 기존 64KiB pipe 상한을 사용합니다. 32MiB 파일시스템의 쓰기·ENOSPC·복구와 worker/child의 바깥 쓰기 거절도 유지됐고, backing 이미지의 논리 크기·할당량은 처음과 끝 모두 33,554,432바이트였습니다. 소유 process가 끝난 뒤 마운트를 해제하고 이번 이미지와 canary만 정리했습니다.
+
+처음 준비에서는 제한된 Python worker가 argparse 기본값을 계산하면서 home을 조회해 멈췄습니다. emulator 실행 전의 준비 실패이며, HOME이나 권한을 넓히지 않고 SDK 기본값을 바깥 버전 모드에서만 계산하도록 고쳤습니다. 최종 호스트 검사는 기존 49개와 새 12개, **61개 PASS**입니다. 원문은 Git 제외 `.build/storage-component/run_0a87f5bc160b/`에 있습니다.
+
+```sh
+python3 -B qa/map-transport/android/bounded_storage_fixture.py --probe-emulator-version
+```
+
+이 명령도 새 32MiB 시험 이미지의 생성과 마운트가 필요한 명시적 macOS 검사입니다. 일반 호스트 회귀와 Cloud CI에서는 실행하지 않습니다. 실행 파일의 버전 출력은 fresh userdata 생성이나 AVD 초기화, 모든 emulator 자식 경로의 보호와 부팅 성공을 증명하지 않습니다. native admission과 공급원 다운로드는 계속 닫혀 있습니다.
+
+fresh seed도 조금 더 좁혔습니다. cached API37의 `data/empty_data_disk`는 host가 빈 data partition을 만들도록 알리는 파일입니다. 설치된 QEMU의 읽기 전용 코드 확인에서는 `createUserData()`가 내장 ext4 생성 경로를 사용하는 것을 확인했습니다. 별도 `mkfs.ext4` 결과를 이 경로의 통과로 바꾸어 보고하지 않습니다. 실제 producer와 최소 크기, 1GiB 이하 부팅은 미실행입니다. 이후 초기화가 ADB key 경로도 다룰 수 있어 개인 경로 읽기 차단과 새 설정 공간을 함께 검증해야 합니다.
+
+[공식 launcher 소스](https://android.googlesource.com/platform/external/qemu/+/1381d44efe69ba0b37fb7f7ef868125e279fc14a/android/emulator/main-emulator.cpp)는 `-version`을 queryVersion으로 처리하고 대상 실행 파일로 전달하는 구조를 보여 줍니다. 이 소스의 branch를 설치된 37.2.12 전체와 동일하다고 가정하지 않고, 실제 출력과 파일 해시를 별도로 남겼습니다. 과거 개인 AVD의 QCOW2 차이 원인은 계속 미확정이며 원본을 덮어쓰거나 삭제하지 않았습니다.
+
 ## 빌드
 
 설치된 SDK 36의 `aapt2`, `d8`, `zipalign`, `apksigner`와 JDK 17을 재사용합니다. Gradle 프로젝트나 새 AGP는 받지 않습니다. 고정 버전 OkHttp 4.12.0과 Okio 3.6.0의 작은 jar만 공식 Maven에서 받을 수 있으며 SHA-256을 확인합니다. Kotlin stdlib 2.2.21은 기존 jar를 재사용하고 해시도 대조합니다. 세 라이브러리의 버전, 주소, 라이선스와 해시는 `dependencies.json`에 있습니다.

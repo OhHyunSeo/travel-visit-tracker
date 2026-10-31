@@ -2,6 +2,7 @@
 #import <MapLibre/MapLibre.h>
 #import <MapLibre/MLNNetworkConfiguration.h>
 #import "TPTransport.h"
+#import "MLRNTransformRequest.h"
 
 static NSURL *TPRunDirectory;
 static NSString *TPOrigin;
@@ -31,13 +32,14 @@ static NSDictionary *TPControl(NSString *path) {
     return result;
 }
 
-@interface TPSDKController : UIViewController <MLNMapViewDelegate, MLNNetworkConfigurationDelegate>
+@interface TPSDKController : UIViewController <MLNMapViewDelegate>
 @property UILabel *label;
 @property MLNMapView *map;
 @property NSMutableArray *cases;
 @property NSUInteger transforms, rewrittenStyles, externalTileRequests, phase;
 @property BOOL styleLoaded, fullyRendered, finishing;
 @property NSTimer *timer;
+@property MLRNTransformRequest *transform;
 @end
 
 @implementation TPSDKController
@@ -63,10 +65,12 @@ static NSDictionary *TPControl(NSString *path) {
     TPWrite(@{@"complete": @YES, @"pass": @(pass), @"reason": reason,
               @"cases": self.cases ?: @[], @"process": @(NSProcessInfo.processInfo.processIdentifier),
               @"transforms": @(transforms), @"rewrittenStyles": @(rewrites), @"externalTileRequests": @(self.externalTileRequests),
-              @"delegatePreserved": @(MLNNetworkConfiguration.sharedManager.delegate == self),
-              @"scope": @"isolated MapLibre6.31.0 native SDK; synthetic HTTP raster only; no RN/TLS/HTTP2/provider/OS-byte acceptance"});
+              @"delegatePreserved": @(self.transform && MLNNetworkConfiguration.sharedManager.delegate == self.transform),
+              @"delegateClass": self.transform ? NSStringFromClass(self.transform.class) : @"none",
+              @"scope": @"isolated MapLibre6.31.0 with actual RN11.5 native transform class; no JS/TurboModule bridge, TLS/HTTP2/provider/OS-byte acceptance"});
     self.label.text = pass ? @"지도 엔진 시험을 마쳤습니다.\n결과를 Mac에서 확인하고 있습니다." : @"지도 시험 결과를 확인하고 있습니다.\nMac 안내를 확인해 주세요.";
     self.map.delegate = nil;
+    self.transform.logCallback = nil;
 }
 - (void)start {
     if (TPStarted) return;
@@ -101,14 +105,24 @@ static NSDictionary *TPControl(NSString *path) {
 - (void)createMap {
     MLNNetworkConfiguration *network = MLNNetworkConfiguration.sharedManager;
     if (network.delegate) { [self finish:NO reason:@"unexpected preexisting SDK delegate"]; return; }
-    // This strong controller is a QA transform sentinel, not the React Native module.
-    network.delegate = self;
+    // Link the installed package's unmodified native class; no React/JS bridge or stub.
+    self.transform = MLRNTransformRequest.sharedInstance;
+    if (network.delegate != self.transform) { [self finish:NO reason:@"native transform did not install its delegate"]; return; }
+    __weak TPSDKController *weakSelf = self;
+    self.transform.logCallback = ^(NSString *level, NSString *tag, NSString *message) {
+        TPSDKController *owner = weakSelf;
+        if (owner && [message hasPrefix:@"Final URL: "]) [owner observedTransformURL:[message substringFromIndex:11]];
+    };
+    NSString *match = [@"^" stringByAppendingString:[NSRegularExpression escapedPatternForString:[TPOrigin stringByAppendingString:@"/resource/"]]];
+    [self.transform addUrlTransform:@"qa-entry" match:match find:@"/resource/style/entry$" replace:@"/resource/style/sdk"];
+    [self.transform addHeader:@"qa-auth" match:match name:@"Authorization" value:@"synthetic-sdk-secret-must-not-forward"];
+    [self.transform addHeader:@"qa-cookie" match:match name:@"Cookie" value:@"synthetic-sdk-cookie-must-not-forward=1"];
     NSURLSessionConfiguration *configuration = NSURLSessionConfiguration.ephemeralSessionConfiguration;
     configuration.protocolClasses = @[TPTransport.class]; configuration.URLCache = nil;
     configuration.HTTPCookieStorage = nil; configuration.URLCredentialStorage = nil;
     configuration.HTTPShouldSetCookies = NO;
     network.sessionConfiguration = configuration;
-    if (network.delegate != self) { [self finish:NO reason:@"session configuration replaced delegate"]; return; }
+    if (network.delegate != self.transform) { [self finish:NO reason:@"session configuration replaced delegate"]; return; }
     if (![TPTransport configureOrigin:TPOrigin ledgerURL:[TPRunDirectory URLByAppendingPathComponent:@"render-ledger.json"] maxRequests:32 maxTiles:16 maxReservedBytes:8192]) { [self finish:NO reason:@"ledger not ready"]; return; }
     self.phase = 1;
     // Explicit style avoids constructing a default network style before the gate.
@@ -123,40 +137,43 @@ static NSDictionary *TPControl(NSString *path) {
     self.timer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) { [self inspectProgress]; }];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ if (!self.finishing) [self finish:NO reason:@"SDK trial deadline"]; });
 }
-- (NSMutableURLRequest *)willSendRequest:(NSMutableURLRequest *)request {
-    NSMutableURLRequest *result = [request mutableCopy];
+- (void)observedTransformURL:(NSString *)url {
     @synchronized(self) {
         self.transforms++;
-        if ([result.URL.absoluteString isEqual:[TPOrigin stringByAppendingString:@"/resource/style/entry"]]) {
-            result.URL = [NSURL URLWithString:[TPOrigin stringByAppendingString:@"/resource/style/sdk"]];
-            self.rewrittenStyles++;
-        }
-        NSURLComponents *parts = [NSURLComponents componentsWithURL:result.URL resolvingAgainstBaseURL:NO];
-        if (self.phase == 2 && [parts.scheme isEqual:@"http"] && [parts.host isEqual:@"example.invalid"] && (!parts.port || parts.port.integerValue == 80) && [parts.path isEqual:@"/resource/tile/0_0_0"] && !parts.query && !parts.fragment) self.externalTileRequests++;
+        if ([url isEqual:[TPOrigin stringByAppendingString:@"/resource/style/sdk"]]) self.rewrittenStyles++;
+        NSURLComponents *parts = [NSURLComponents componentsWithString:url];
+        if (self.phase == 3 && [parts.scheme isEqual:@"http"] && [parts.host isEqual:@"example.invalid"] && (!parts.port || parts.port.integerValue == 80) && [parts.path isEqual:@"/resource/tile/0_0_0"] && !parts.query && !parts.fragment) self.externalTileRequests++;
     }
-    [result setValue:@"synthetic-sdk-secret-must-not-forward" forHTTPHeaderField:@"Authorization"];
-    [result setValue:@"synthetic-sdk-cookie-must-not-forward=1" forHTTPHeaderField:@"Cookie"];
-    return result;
 }
 - (void)mapView:(MLNMapView *)mapView didFinishLoadingStyle:(MLNStyle *)style {
     self.styleLoaded = [style sourceWithIdentifier:@"t"] != nil && [style layerWithIdentifier:@"t"] != nil;
 }
 - (void)mapViewDidFinishRenderingFrame:(MLNMapView *)mapView fullyRendered:(BOOL)fullyRendered {
-    if (self.styleLoaded && fullyRendered) self.fullyRendered = YES;
+    if (!self.styleLoaded || !fullyRendered || self.phase > 2) return;
+    NSDictionary *native = TPTransport.snapshot;
+    NSUInteger minimumTiles = self.phase == 2 ? 4 : 1;
+    if ([native[@"active"] integerValue] == 0 && [native[@"ledger"][@"tiles"] unsignedIntegerValue] >= minimumTiles && [native[@"blockedBeforeDispatch"] integerValue] == 0) self.fullyRendered = YES;
 }
 - (void)inspectProgress {
     if (self.finishing) return;
     NSDictionary *native = TPTransport.snapshot;
     if (self.phase == 1 && self.styleLoaded && self.fullyRendered && [native[@"ledger"][@"tiles"] integerValue] >= 1 && [native[@"active"] integerValue] == 0 && [native[@"blockedBeforeDispatch"] integerValue] == 0 && [native[@"httpRequestSendsSettled"] integerValue] >= 2 && [native[@"acceptedBodyBytes"] integerValue] > 256) {
         self.phase = 2;
-        [self.cases addObject:@{@"name": @"actual SDK raster rendered through preserved transform and native gate", @"pass": @YES, @"native": native, @"styleLoaded": @YES, @"fullyRendered": @YES}];
+        [self.cases addObject:@{@"name": @"actual RN native transform class and SDK raster render", @"pass": @YES, @"native": native, @"styleLoaded": @YES, @"fullyRendered": @YES}];
         self.styleLoaded = NO; self.fullyRendered = NO;
-        if (![TPTransport configureOrigin:TPOrigin ledgerURL:[TPRunDirectory URLByAppendingPathComponent:@"blocked-ledger.json"] maxRequests:32 maxTiles:16 maxReservedBytes:8192]) { [self finish:NO reason:@"second ledger not ready"]; return; }
+        if (![TPTransport configureOrigin:TPOrigin ledgerURL:[TPRunDirectory URLByAppendingPathComponent:@"multi-ledger.json"] maxRequests:32 maxTiles:16 maxReservedBytes:8192]) { [self finish:NO reason:@"multi ledger not ready"]; return; }
+        [self.map setCenterCoordinate:CLLocationCoordinate2DMake(0, 0) zoomLevel:2 animated:NO];
+        self.map.styleURL = [NSURL URLWithString:[TPOrigin stringByAppendingString:@"/resource/style/multi"]];
+    } else if (self.phase == 2 && self.styleLoaded && self.fullyRendered && [native[@"active"] integerValue] == 0 && [native[@"ledger"][@"tiles"] integerValue] >= 4 && [native[@"maxActive"] integerValue] == 4 && [native[@"blockedBeforeDispatch"] integerValue] == 0) {
+        self.phase = 3;
+        [self.cases addObject:@{@"name": @"actual SDK multi-tile bodies stay within four native permits", @"pass": @YES, @"native": native, @"styleLoaded": @YES, @"fullyRendered": @YES}];
+        self.styleLoaded = NO; self.fullyRendered = NO;
+        if (![TPTransport configureOrigin:TPOrigin ledgerURL:[TPRunDirectory URLByAppendingPathComponent:@"blocked-ledger.json"] maxRequests:32 maxTiles:16 maxReservedBytes:8192]) { [self finish:NO reason:@"blocked ledger not ready"]; return; }
         self.map.styleURL = [NSURL URLWithString:[TPOrigin stringByAppendingString:@"/resource/style/blocked"]];
-    } else if (self.phase == 2 && self.styleLoaded && self.externalTileRequests >= 1 && [native[@"active"] integerValue] == 0 && [native[@"blockedBeforeDispatch"] integerValue] >= 1 && [native[@"httpRequestSendsSettled"] integerValue] == 1) {
+    } else if (self.phase == 3 && self.styleLoaded && self.externalTileRequests >= 1 && [native[@"active"] integerValue] == 0 && [native[@"blockedBeforeDispatch"] integerValue] >= 1 && [native[@"httpRequestSendsSettled"] integerValue] == 1) {
         [self.cases addObject:@{@"name": @"actual SDK external tile refused before dispatch", @"pass": @YES, @"native": native}];
         NSUInteger rewrites; @synchronized(self) { rewrites = self.rewrittenStyles; }
-        [self finish:rewrites >= 1 && MLNNetworkConfiguration.sharedManager.delegate == self reason:@"SDK fixture checks completed"];
+        [self finish:rewrites >= 1 && MLNNetworkConfiguration.sharedManager.delegate == self.transform reason:@"SDK native transform and concurrency checks completed"];
     }
 }
 @end

@@ -9,6 +9,17 @@ import zipfile
 
 root = Path(__file__).resolve().parent
 spec = json.loads((root / 'dependency.json').read_text())
+rn = spec['rnNativeTransform']
+rn_root = (root / rn['packageRelativePath']).resolve()
+if json.loads((rn_root / 'package.json').read_text())['version'] != rn['version']:
+    raise RuntimeError('Installed native transform package version differs from the QA pin')
+for name, digest in rn['sources'].items():
+    source = rn_root / 'ios/modules/transform-request' / name
+    if hashlib.sha256(source.read_bytes()).hexdigest() != digest:
+        raise RuntimeError('Installed native transform source changed; preserve and inspect it')
+rn_license = (rn_root / 'LICENSE.md').read_bytes()
+if hashlib.sha256(rn_license).hexdigest() != rn['licenseSha256']:
+    raise RuntimeError('Installed transform package license changed')
 build = root / '.build'
 if build.is_symlink():
     raise RuntimeError('QA build directory must not be a link')
@@ -80,6 +91,13 @@ with zipfile.ZipFile(archive) as source:
     else:
         with license_path.open('xb') as output:
             output.write(license_body)
+rn_license_path = destination(Path('MapLibre-RN-Native-LICENSE.md'))
+if rn_license_path.exists():
+    if rn_license_path.read_bytes() != rn_license:
+        raise RuntimeError('Existing native transform license changed')
+else:
+    with rn_license_path.open('xb') as output:
+        output.write(rn_license)
 manifest_path = build / 'sdk-manifest.json'
 manifest_body = json.dumps(manifest, indent=2)
 if manifest_path.is_symlink() or (manifest_path.exists() and (not manifest_path.is_file() or manifest_path.stat().st_nlink != 1)):
@@ -91,4 +109,5 @@ else:
     with manifest_path.open('x') as output:
         output.write(manifest_body)
 print(json.dumps({'checksumVerified': True, 'physicalSliceFiles': len(manifest),
-                  'physicalSliceBytes': sum(item['bytes'] for item in manifest.values())}))
+                  'physicalSliceBytes': sum(item['bytes'] for item in manifest.values()),
+                  'nativeTransformVersion': rn['version'], 'nativeTransformSourceHashesMatch': True}))

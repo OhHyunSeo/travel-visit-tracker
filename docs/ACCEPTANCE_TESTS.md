@@ -7,7 +7,7 @@
 
 ## 배경지도 선정과 실제 시험의 구분
 
-10월 31일 별도 native MapLibre 6.31.0 앱의 물리 iPhone 두 사례가 통과했습니다. 합성 스타일·타일과 SDK 렌더 완료, 외부 타일의 전송 전 거절이며 실제 RN 모듈이나 픽셀·사용자 화면 확인, TLS/HTTP2와 제품 오프라인 지도 수용은 아닙니다. Android는 Mac의 작은 32MiB Python worker 구성요소와 호스트 49개까지이며 emulator/AVD/ADB는 실행하지 않았습니다. 아래 실기기 수용 판정과 **24/54**, G1~G4 미완료를 유지합니다.
+10월 31일 후속 별도 MapLibre 앱의 물리 iPhone 세 사례가 통과했습니다. 설치된 RN native 요청 변환 클래스, 합성 지도 렌더, 타일 4개의 native/server 최대 동시 4와 외부 요청 거절입니다. JS/TurboModule bridge, 다섯 번째 요청 대기, 픽셀·사용자 확인과 제품 오프라인 지도 수용은 아닙니다. Android는 32MiB 제한 안의 cached emulator 버전 실행과 호스트 61개까지이며 AVD 부팅·ADB·앱 native 검사는 없습니다. 사용자 요청으로 저장, 중단했고 아래 실기기 수용 판정과 **24/54**, G1~G4 미완료를 유지합니다.
 
 10월 30일 후속 재개에서는 단일 HTTP/1.1 송신의 Mac native 10개, 같은 새 signed Debug 소스의 실제 iPhone 기본 11개와 QA 강제 종료/새 PID 재실행 1개를 확인했습니다. Android 준비·보호 호스트 39개도 통과했습니다. Mac의 부분 EOF와 iPhone 재실행, 이전 13개를 구분하며 실제 MapLibre/TLS/HTTP2/OS 수신량과 새 Android native 검사는 남아 있습니다. 제품 앱과 아래 수용 판정, 전체 24/54는 바꾸지 않습니다.
 

@@ -38,14 +38,15 @@ export function syntheticRasterTile() {
   ]);
 }
 
-export function syntheticRasterStyle(origin, blocked = false) {
+export function syntheticRasterStyle(origin, blocked = false, multi = false) {
   return Buffer.from(JSON.stringify({
     version: 8,
     sources: { t: {
       type: "raster",
       tiles: [`${blocked ? "http://example.invalid:80" : origin}/resource/tile/{z}_{x}_{y}`],
       tileSize: 256,
-      maxzoom: 0,
+      minzoom: multi ? 2 : 0,
+      maxzoom: multi ? 2 : 0,
     } },
     layers: [{ id: "t", type: "raster", source: "t" }],
   }));
@@ -57,7 +58,7 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
     throw new Error("Use a literal loopback or explicitly allowed private IPv4 address");
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invalid port");
   const tile = syntheticRasterTile();
-  const requests = [], pending = new Set();
+  const requests = [], pending = new Set(), timers = new Set();
   let origin, active = 0, maxActive = 0, closed = false;
   const stats = () => ({ active, maxActive, resourceCount: requests.length, requests: requests.map(x => ({ ...x })) });
   const server = http.createServer((request, response) => {
@@ -73,9 +74,10 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
       requests.length = 0; maxActive = 0;
       return json(200, { reset: true });
     }
-    const style = request.url === "/resource/style/sdk" || request.url === "/resource/style/blocked";
-    if (!style && request.url !== "/resource/tile/0_0_0") return json(404, { error: "Unknown synthetic SDK resource" });
-    const body = style ? syntheticRasterStyle(origin, request.url.endsWith("/blocked")) : tile;
+    const style = ["/resource/style/sdk", "/resource/style/multi", "/resource/style/blocked"].includes(request.url);
+    const multiTile = /^\/resource\/tile\/2_[0-3]_[0-3]$/.test(request.url);
+    if (!style && !multiTile && request.url !== "/resource/tile/0_0_0") return json(404, { error: "Unknown synthetic SDK resource" });
+    const body = style ? syntheticRasterStyle(origin, request.url.endsWith("/blocked"), request.url.endsWith("/multi")) : tile;
     if (body.length > 256) return json(500, { error: "Synthetic reservation exceeded" });
     const entry = {
       path: request.url, bytes: body.length, bytesWritten: 0, finished: false,
@@ -86,12 +88,26 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
     requests.push(entry); pending.add(response);
     active++; maxActive = Math.max(maxActive, active);
     let settled = false;
-    const settle = () => { if (!settled) { settled = true; active--; pending.delete(response); } };
+    let timer;
+    const settle = () => {
+      if (!settled) {
+        settled = true; active--; pending.delete(response);
+        if (timer) { clearTimeout(timer); timers.delete(timer); }
+      }
+    };
     response.once("finish", () => { entry.finished = true; settle(); });
     response.once("close", settle);
     response.writeHead(200, { "Content-Type": style ? "application/json" : "image/png", "Content-Length": body.length, "Cache-Control": "no-store" });
-    response.end(body);
-    entry.bytesWritten = body.length; // Accepted by Node, not OS-delivered bytes.
+    const sendBody = () => {
+      if (settled) return;
+      response.end(body);
+      entry.bytesWritten = body.length; // Accepted by Node, not OS-delivered bytes.
+    };
+    if (multiTile) {
+      response.flushHeaders();
+      timer = setTimeout(() => { timers.delete(timer); sendBody(); }, 120);
+      timers.add(timer);
+    } else sendBody();
   });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -104,6 +120,8 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
     close: async () => {
       if (closed) return;
       closed = true;
+      for (const timer of timers) clearTimeout(timer);
+      timers.clear();
       for (const response of pending) response.destroy();
       await new Promise((resolve, reject) => {
         server.close(error => error ? reject(error) : resolve());

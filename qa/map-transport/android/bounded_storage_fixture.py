@@ -217,7 +217,7 @@ def owned_attachments(reply: bytes, image: pathlib.Path) -> list[str]:
     return devices
 
 
-def run_fixture(android: pathlib.Path) -> dict:
+def run_fixture(android: pathlib.Path, version_sdk: pathlib.Path | None = None) -> dict:
     if sys.platform != 'darwin':
         raise FixtureError('The actual component is macOS-only; use host tests elsewhere')
     android = android.resolve()
@@ -237,7 +237,9 @@ def run_fixture(android: pathlib.Path) -> dict:
                    'PYTHONDONTWRITEBYTECODE': '1', 'PYTHONNOUSERSITE': '1', 'LANG': 'C'}
     report = {'scope': 'macOS fixed-filesystem and Python-worker confinement component only',
               'imageRequestedBytes': IMAGE_BYTES, 'maxImageFileBytes': MAX_NEW_BYTES,
-              'emulatorAvdAdbOrSdkWrites': False, 'nativeAdmissionEnabled': False,
+              'avdBootAdbOrSdkWrites': False,
+              'emulatorExecutableVersionOnly': version_sdk is not None,
+              'nativeAdmissionEnabled': False,
               'wholeMacGrowthCapProven': False, 'passed': False, 'cleanup': {}}
     device = None
     attach_attempted = False
@@ -276,6 +278,10 @@ def run_fixture(android: pathlib.Path) -> dict:
         finally:
             os.close(descriptor)
         report['worker'] = json.loads(reply)
+        if version_sdk is not None:
+            from emulator_bootstrap_probe import run_probe
+            report['loaderProbe'] = run_probe(root, environment, version_sdk)
+            report['scope'] = '32MiB confinement component plus fixed emulator -version loader probe'
         if (mounted_capacity(root)['device'] != report['mounted']['device']
                 or (image.stat().st_dev, image.stat().st_ino) != backing_identity):
             raise FixtureError('The mounted filesystem or owned backing file changed')
@@ -332,13 +338,21 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--run-fixture', action='store_true')
+    mode.add_argument('--probe-emulator-version', action='store_true')
     mode.add_argument('--worker', type=pathlib.Path)
     mode.add_argument('--worker-child', type=pathlib.Path)
     parser.add_argument('--inherited-fd', type=int)
+    parser.add_argument('--sdk-root', type=pathlib.Path)
     args = parser.parse_args()
     android = pathlib.Path(__file__).resolve().parent
-    if args.run_fixture:
-        result = run_fixture(android)
+    if args.run_fixture or args.probe_emulator_version:
+        sdk = None
+        if args.probe_emulator_version:
+            sdk = args.sdk_root
+            if sdk is None:
+                sdk = (pathlib.Path(os.environ['ANDROID_HOME']) if os.environ.get('ANDROID_HOME')
+                       else pathlib.Path.home() / 'Library/Android/sdk')
+        result = run_fixture(android, sdk)
     else:
         root = owned_root(args.worker or args.worker_child, android)
         result = worker(root, args.inherited_fd, args.worker_child is not None)
