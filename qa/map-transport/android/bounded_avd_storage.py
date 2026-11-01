@@ -50,7 +50,7 @@ def _regular_file(path: pathlib.Path) -> os.stat_result | None:
     return value
 
 
-def _bounded_metadata(path: pathlib.Path, expected: os.stat_result) -> bytes:
+def _bounded_metadata(path: pathlib.Path, expected: os.stat_result, *, allow_empty: bool = False) -> bytes:
     # Do not follow a symlink or block on a FIFO swapped in after lstat.
     if not hasattr(os, 'O_NOFOLLOW') or not hasattr(os, 'O_NONBLOCK'):
         raise BoundedStorageError('Safe non-following metadata reads are unavailable')
@@ -63,7 +63,7 @@ def _bounded_metadata(path: pathlib.Path, expected: os.stat_result) -> bytes:
         if (not stat.S_ISREG(actual.st_mode) or actual.st_nlink != 1
                 or (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino)):
             raise BoundedStorageError('Cached SDK metadata changed identity or file type')
-        if not 0 < actual.st_size <= MAX_METADATA_BYTES:
+        if not (0 if allow_empty else 1) <= actual.st_size <= MAX_METADATA_BYTES:
             raise BoundedStorageError('Cached SDK metadata changed beyond its read bound')
         # Linux can reuse an unlinked inode immediately. Device/inode alone is
         # not evidence that this is the file inspected before open().
@@ -115,13 +115,23 @@ def build_preparation_plan(android_root: pathlib.Path, sdk_root: pathlib.Path,
             raise BoundedStorageError('Cached SDK metadata is missing or exceeds its read bound')
         body = _bounded_metadata(path, value)
         metadata[name] = {'bytes': len(body), 'sha256': hashlib.sha256(body).hexdigest()}
+    # AOSP uses this marker's presence, not a factory userdata image body.
+    # Inspect it as bounded metadata; it cannot open the native admission gate.
+    marker_path = system_image / 'data/empty_data_disk'
+    _no_symlinks(marker_path.parent, sdk_root)
+    marker_stat = _regular_file(marker_path)
+    marker = None
+    if marker_stat is not None:
+        marker_body = _bounded_metadata(marker_path, marker_stat, allow_empty=True)
+        marker = {'relativePath': 'data/empty_data_disk', 'bytes': len(marker_body),
+                  'sha256': hashlib.sha256(marker_body).hexdigest()}
     missing = [name for name in ('system.img', 'kernel-ranchu', 'ramdisk.img')
                if entries[name] is None or not entries[name]['logicalBytes']]
     blockers = [
         {'code': 'NO_VERIFIED_WRITE_CONFINEMENT',
          'detail': 'No tested launcher confines emulator/QEMU/ADB temp, output, inherited writable descriptors and all child writes to a fixed-capacity filesystem.'},
         {'code': 'NO_FIXED_CAPACITY_VOLUME',
-         'detail': 'No owned fixed RAW/HFS volume has been created, mounted or independently checked; a marker number is not enforcement.'},
+         'detail': 'No full fresh-AVD fixed RAW/HFS volume has been independently checked; the separate 32MiB component or a marker number cannot authorize a boot.'},
         {'code': 'FIRST_BOOT_SPACE_UNVERIFIED',
          'detail': 'Fresh cached-image initialization and boot inside the candidate capacity have not been tested; no personal AVD may be used as a seed.'},
     ]
@@ -142,6 +152,14 @@ def build_preparation_plan(android_root: pathlib.Path, sdk_root: pathlib.Path,
         'workspaceFreeBytes': free_bytes,
         'cachedSdkMetadata': metadata,
         'cachedImageFiles': entries,
+        'freshInitialization': {
+            'factoryUserdataPresent': entries['userdata.img'] is not None,
+            'emptyDataMarker': marker,
+            'producerCandidate': 'emulator-internal-empty-ext4' if marker else 'unverified',
+            'producerValidated': False,
+            'minimumBootCapacityValidated': False,
+            'sourceScope': 'AOSP marker branch only; not a cached-binary producer execution',
+        },
         'candidateOnly': {
             'format': 'fixed RAW image with HFS filesystem; no sparse growth',
             'volumeBytesIncludingFilesystem': CANDIDATE_VOLUME_BYTES,

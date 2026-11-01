@@ -15,6 +15,7 @@ static BOOL TPLedgerOK;
 static NSUInteger TPActive, TPMaxActive, TPBlocked, TPStarted, TPAccepted;
 static NSUInteger TPMaxRequests, TPMaxTiles, TPMaxReserved;
 static NSUInteger TPHTTPSends, TPHTTPReceived;
+static NSUInteger TPMaxPending, TPCancelledPending, TPCancelledActive, TPReleased;
 static const NSUInteger TPReservation = 256;
 
 @interface TPTransport ()
@@ -81,6 +82,7 @@ static const NSUInteger TPReservation = 256;
         TPMaxRequests = requests; TPMaxTiles = tiles; TPMaxReserved = bytes;
         TPMaxActive = TPBlocked = TPStarted = TPAccepted = 0;
         TPHTTPSends = TPHTTPReceived = 0;
+        TPMaxPending = TPCancelledPending = TPCancelledActive = TPReleased = 0;
         BOOL exists = [[NSFileManager defaultManager] fileExistsAtPath:ledgerURL.path];
         NSData *data = exists ? [NSData dataWithContentsOfURL:ledgerURL] : nil;
         id saved = data ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil] : nil;
@@ -100,7 +102,7 @@ static const NSUInteger TPReservation = 256;
 + (NSDictionary *)snapshot {
     __block NSDictionary *result;
     dispatch_sync(TPQueue, ^{
-        result = @{@"active": @(TPActive), @"maxActive": @(TPMaxActive), @"blockedBeforeDispatch": @(TPBlocked), @"started": @(TPStarted), @"httpRequestSendsSettled": @(TPHTTPSends), @"receivedHTTPBytesSettled": @(TPHTTPReceived), @"transport": @"single-send-http1-fixture", @"acceptedBodyBytes": @(TPAccepted), @"ledgerOK": @(TPLedgerOK), @"ledger": TPLedgerOK ? [NSJSONSerialization JSONObjectWithData:[NSJSONSerialization dataWithJSONObject:TPLedger options:0 error:nil] options:0 error:nil] : @{}};
+        result = @{@"active": @(TPActive), @"maxActive": @(TPMaxActive), @"pending": @(TPPending.count), @"maxPending": @(TPMaxPending), @"cancelledPending": @(TPCancelledPending), @"cancelledActive": @(TPCancelledActive), @"released": @(TPReleased), @"blockedBeforeDispatch": @(TPBlocked), @"started": @(TPStarted), @"httpRequestSendsSettled": @(TPHTTPSends), @"receivedHTTPBytesSettled": @(TPHTTPReceived), @"transport": @"single-send-http1-fixture", @"acceptedBodyBytes": @(TPAccepted), @"ledgerOK": @(TPLedgerOK), @"ledger": TPLedgerOK ? [NSJSONSerialization JSONObjectWithData:[NSJSONSerialization dataWithJSONObject:TPLedger options:0 error:nil] options:0 error:nil] : @{}};
     });
     return result;
 }
@@ -152,12 +154,17 @@ static const NSUInteger TPReservation = 256;
 }
 - (void)startLoading {
     dispatch_async(TPQueue, ^{
+        if (self.stopped) return;
         if (![self allowedRequest]) { TPBlocked++; [self fail:1]; return; }
         [TPPending addObject:self]; [TPTransport drain];
+        TPMaxPending = MAX(TPMaxPending, TPPending.count);
     });
 }
 - (void)stopLoading {
     dispatch_async(TPQueue, ^{
+        if (self.stopped) return;
+        if ([TPPending containsObject:self]) TPCancelledPending++;
+        if (self.acquired && !self.settled) TPCancelledActive++;
         self.stopped = YES;
         [TPPending removeObject:self];
         [self.exchange cancel];
@@ -172,7 +179,7 @@ static const NSUInteger TPReservation = 256;
     if (self.acquired) {
         [TPLedger[@"unresolved"] removeObject:self.reservationID];
         if (![TPTransport persistLedger]) TPLedgerOK = NO;
-        TPActive--; self.acquired = NO;
+        TPActive--; TPReleased++; self.acquired = NO;
     }
     if (!self.stopped && !self.failed) {
         if (error) [self fail:7];

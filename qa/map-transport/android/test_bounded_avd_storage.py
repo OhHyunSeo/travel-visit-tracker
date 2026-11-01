@@ -59,6 +59,52 @@ class BoundedPreparationTests(unittest.TestCase):
                       {value['code'] for value in after['blockers']})
         self.assertFalse(after['nativeLaunchAllowed'])
 
+    def test_empty_data_marker_is_bounded_metadata_not_native_authorization(self):
+        marker = self.image / 'data/empty_data_disk'
+        marker.parent.mkdir()
+        marker.write_bytes(b'cached synthetic initialization marker')
+        plan = self.plan()
+        fresh = plan['freshInitialization']
+        self.assertEqual(fresh['emptyDataMarker']['sha256'], hashlib.sha256(marker.read_bytes()).hexdigest())
+        self.assertEqual(fresh['producerCandidate'], 'emulator-internal-empty-ext4')
+        self.assertFalse(fresh['producerValidated'])
+        self.assertFalse(fresh['minimumBootCapacityValidated'])
+        self.assertFalse(plan['nativeLaunchAllowed'])
+        self.assertIn('FACTORY_USERDATA_PRODUCER_UNVERIFIED', {x['code'] for x in plan['blockers']})
+        marker.write_bytes(b'')
+        self.assertEqual(self.plan()['freshInitialization']['emptyDataMarker']['bytes'], 0)
+
+    def test_marker_links_fifo_and_oversized_inputs_are_refused(self):
+        marker = self.image / 'data/empty_data_disk'
+        marker.parent.mkdir()
+        outside = self.root / 'original-marker'
+        outside.write_bytes(b'must stay unchanged')
+        for kind in ('symlink', 'hardlink', 'fifo', 'oversized'):
+            marker.unlink(missing_ok=True)
+            if kind == 'symlink': marker.symlink_to(outside)
+            elif kind == 'hardlink': os.link(outside, marker)
+            elif kind == 'fifo': os.mkfifo(marker)
+            else: marker.write_bytes(b'x' * (storage.MAX_METADATA_BYTES + 1))
+            with self.subTest(kind=kind), self.assertRaises(storage.BoundedStorageError):
+                self.plan()
+        self.assertEqual(outside.read_bytes(), b'must stay unchanged')
+        marker.unlink()
+        marker.parent.rmdir()
+        marker.parent.symlink_to(self.root, target_is_directory=True)
+        with self.assertRaises(storage.BoundedStorageError): self.plan()
+
+    def test_marker_inspection_preserves_inputs_and_runs_no_producer(self):
+        marker = self.image / 'data/empty_data_disk'
+        marker.parent.mkdir()
+        marker.write_bytes(b'fresh marker only')
+        before = {str(p.relative_to(self.root)): hashlib.sha256(p.read_bytes()).hexdigest()
+                  for p in self.root.rglob('*') if p.is_file()}
+        with mock.patch('subprocess.run') as execute, mock.patch('os.system') as shell:
+            self.plan()
+        execute.assert_not_called(); shell.assert_not_called()
+        self.assertEqual(before, {str(p.relative_to(self.root)): hashlib.sha256(p.read_bytes()).hexdigest()
+                                  for p in self.root.rglob('*') if p.is_file()})
+
     def test_image_bodies_are_neither_read_nor_copied(self):
         actual_open = pathlib.Path.open
 

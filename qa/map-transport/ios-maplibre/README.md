@@ -1,5 +1,11 @@
 # 실제 지도 엔진을 연결한 iPhone 시험
 
+## 2026-11-01 다섯 번째 타일 대기 준비
+
+다중 타일 구간의 viewport를 1024×1024pt로 넓혔습니다. 실제 SDK에서 최소 다섯 타일과 native active 4/pending 1 이상의 동시 스냅샷, 렌더 완료와 마지막 빈 대기를 모두 확인해야 통과합니다. 이전 네 타일 결과를 이 조건의 통과로 바꾸지 않습니다.
+
+새 signed Debug 빌드와 정적 격리는 통과했습니다. iPhone 실행은 연결·잠금 해제 답변을 기다리는 **NOT RUN**이며 아직 새 QA 앱을 설치하지 않았습니다. 준비본은 `.build/pinned-queue-prepared-20261101/MapLibreQA.app`, 소스·앱 해시는 Git 제외 `map-queue-qa-20261101/prepared-app.json`에 있습니다. Mac의 별도 대기·취소 13개 결과도 이 기기 검사를 대신하지 않습니다.
+
 기존 여행색칠과 다른 `app.trippainting.maplibreqa` 앱입니다. MapLibre 6.31.0으로 작은 합성 지도를 읽습니다. 계정, 사진, 방문과 위치 기록은 연결하지 않습니다. 지도 캐시도 이 앱의 저장 공간에 새로 생깁니다.
 
 2026-10-31 후속 signed Debug 앱에서는 설치된 RN 11.5.0의 `MLRNTransformRequest.h/.m`을 변경 없이 직접 연결했습니다. 버전과 두 파일의 SHA-256을 고정하고 MIT 라이선스를 앱에 포함합니다. JS/TurboModule wrapper는 연결하지 않았습니다. 실제 iPhone의 새 소스에서 세 가지를 확인했습니다.

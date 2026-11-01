@@ -1,5 +1,15 @@
 # 여기서 이어서 개발하기
 
+## 11월 1일 재개: 호스트 대기·취소 완료, iPhone 확인 대기
+
+`369de61`의 CI41197798422 PASS에서 이어갔습니다. Mac native 13개와 Android 호스트 64개가 통과했습니다. 추가한 세 native 사례는 첫 네 본문을 보류했을 때 다섯 번째 전송 대기, 대기 요청의 중복 취소 시 전송·예약 없음, 전송 중 중복 취소 시 한 번 반환과 예약 유지입니다. Mac 합성 TCP 결과를 iPhone이나 SDK 취소로 세지 않습니다.
+
+별도 iPhone SDK 앱은 1024×1024pt viewport에서 다섯 개 이상 타일을 요청하고 실제 native active 4/pending 1 이상의 동시 스냅샷을 요구하도록 준비했습니다. 서명 Debug 빌드와 정적 격리는 PASS이며 실제 기기는 **NOT RUN**입니다. 연결·잠금 해제 답변이 오면 준비한 빌드를 그대로 재사용합니다. fresh 원래 설치 정보와 QA 앱 부재를 확인한 뒤 QA만 설치하고 새 run ID로 실행합니다. 결과의 waitingSnapshot·최종 장부와 서버 도착을 대조하고 QA 문서를 보관한 뒤 QA 앱과 소유 서버만 정리합니다. 제품 앱의 DB·사진·인증은 열지 않습니다.
+
+Android는 cached 빈 data 생성 표식을 bounded metadata로 읽는 점검만 추가했습니다. 107바이트 표식은 내부 ext4 생성의 후보이며 producer 실행, 최소 부팅 용량과 전체 emulator 제한을 증명하지 않습니다. 실행 허용은 닫혀 있고 새 AVD·emulator·ADB는 시작하지 않았습니다. 개인 AVD를 복사하거나 덮어쓰고 삭제하지 않으며 과거 QCOW2 원인은 미확정입니다.
+
+전체 verifier exit0은 모바일 609, 서버 61, 합성 서버 19, Android 호스트 64와 Mac native 13, 임시 HTTP/SQLite·파일과 양쪽 JS/Hermes를 포함합니다. 다음 기기 검사에는 `.build/pinned-queue-prepared-20261101/MapLibreQA.app`을 재사용하고 `map-queue-qa-20261101/prepared-app.json`의 runtimeSources·appFiles를 먼저 대조합니다. 이는 서명된 준비본이며 기기 통과본이 아닙니다. 이번 중간 출력 2,095개, 77,040,095바이트만 대조 후 정리했고 기존 자료는 보존했습니다. 현재 근거는 Git 제외 `map-queue-qa-20261101/`에 있습니다. 실제 RN JS 초기화, 글꼴·아이콘, SDK 취소·재요청, TLS/HTTP2와 영속 팩·OS 수신량은 남아 있습니다. 공급원 다운로드를 켜지 않으며 **24/54**, P3-02 부분 완료와 G1~G4 미완료입니다.
+
 ## 10월 31일 후속 검사 완료 후 사용자 요청으로 저장, 중단
 
 **현재 시작한 검사까지만 마치고 저장하라는 요청을 완료했습니다. 새 사용자 재개 전에는 개발, 빌드나 기기 검사와 Android 추가 지시를 시작하지 않습니다.** 이전 `6ee6c32`의 CI41195903763은 성공했습니다.

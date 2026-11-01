@@ -40,6 +40,7 @@ static NSDictionary *TPControl(NSString *path) {
 @property BOOL styleLoaded, fullyRendered, finishing;
 @property NSTimer *timer;
 @property MLRNTransformRequest *transform;
+@property NSDictionary *waitingSnapshot;
 @end
 
 @implementation TPSDKController
@@ -54,7 +55,10 @@ static NSDictionary *TPControl(NSString *path) {
     [super viewDidLayoutSubviews];
     CGFloat top = self.view.safeAreaInsets.top;
     self.label.frame = CGRectMake(12, top + 8, self.view.bounds.size.width - 24, 100);
-    self.map.frame = CGRectMake(0, top + 116, self.view.bounds.size.width, MAX(200, self.view.bounds.size.height - top - 116));
+    // A larger QA viewport requests more than four distinct z2 tiles without
+    // changing the source, making the SDK wait queue observable on any phone.
+    CGSize size = self.phase == 2 ? CGSizeMake(1024, 1024) : CGSizeMake(self.view.bounds.size.width, MAX(200, self.view.bounds.size.height - top - 116));
+    self.map.frame = CGRectMake(0, top + 116, size.width, size.height);
 }
 - (void)finish:(BOOL)pass reason:(NSString *)reason {
     if (self.finishing) return;
@@ -151,12 +155,13 @@ static NSDictionary *TPControl(NSString *path) {
 - (void)mapViewDidFinishRenderingFrame:(MLNMapView *)mapView fullyRendered:(BOOL)fullyRendered {
     if (!self.styleLoaded || !fullyRendered || self.phase > 2) return;
     NSDictionary *native = TPTransport.snapshot;
-    NSUInteger minimumTiles = self.phase == 2 ? 4 : 1;
+    NSUInteger minimumTiles = self.phase == 2 ? 5 : 1;
     if ([native[@"active"] integerValue] == 0 && [native[@"ledger"][@"tiles"] unsignedIntegerValue] >= minimumTiles && [native[@"blockedBeforeDispatch"] integerValue] == 0) self.fullyRendered = YES;
 }
 - (void)inspectProgress {
     if (self.finishing) return;
     NSDictionary *native = TPTransport.snapshot;
+    if (self.phase == 2 && !self.waitingSnapshot && [native[@"active"] integerValue] == 4 && [native[@"pending"] integerValue] > 0) self.waitingSnapshot = native;
     if (self.phase == 1 && self.styleLoaded && self.fullyRendered && [native[@"ledger"][@"tiles"] integerValue] >= 1 && [native[@"active"] integerValue] == 0 && [native[@"blockedBeforeDispatch"] integerValue] == 0 && [native[@"httpRequestSendsSettled"] integerValue] >= 2 && [native[@"acceptedBodyBytes"] integerValue] > 256) {
         self.phase = 2;
         [self.cases addObject:@{@"name": @"actual RN native transform class and SDK raster render", @"pass": @YES, @"native": native, @"styleLoaded": @YES, @"fullyRendered": @YES}];
@@ -164,9 +169,10 @@ static NSDictionary *TPControl(NSString *path) {
         if (![TPTransport configureOrigin:TPOrigin ledgerURL:[TPRunDirectory URLByAppendingPathComponent:@"multi-ledger.json"] maxRequests:32 maxTiles:16 maxReservedBytes:8192]) { [self finish:NO reason:@"multi ledger not ready"]; return; }
         [self.map setCenterCoordinate:CLLocationCoordinate2DMake(0, 0) zoomLevel:2 animated:NO];
         self.map.styleURL = [NSURL URLWithString:[TPOrigin stringByAppendingString:@"/resource/style/multi"]];
-    } else if (self.phase == 2 && self.styleLoaded && self.fullyRendered && [native[@"active"] integerValue] == 0 && [native[@"ledger"][@"tiles"] integerValue] >= 4 && [native[@"maxActive"] integerValue] == 4 && [native[@"blockedBeforeDispatch"] integerValue] == 0) {
+        [self.view setNeedsLayout]; [self.view layoutIfNeeded];
+    } else if (self.phase == 2 && self.styleLoaded && self.fullyRendered && self.waitingSnapshot && [native[@"active"] integerValue] == 0 && [native[@"pending"] integerValue] == 0 && [native[@"ledger"][@"tiles"] integerValue] >= 5 && [native[@"maxActive"] integerValue] == 4 && [native[@"maxPending"] integerValue] >= 1 && [native[@"blockedBeforeDispatch"] integerValue] == 0) {
         self.phase = 3;
-        [self.cases addObject:@{@"name": @"actual SDK multi-tile bodies stay within four native permits", @"pass": @YES, @"native": native, @"styleLoaded": @YES, @"fullyRendered": @YES}];
+        [self.cases addObject:@{@"name": @"actual SDK fifth tile waits behind four native permits", @"pass": @YES, @"native": native, @"waitingSnapshot": self.waitingSnapshot, @"styleLoaded": @YES, @"fullyRendered": @YES}];
         self.styleLoaded = NO; self.fullyRendered = NO;
         if (![TPTransport configureOrigin:TPOrigin ledgerURL:[TPRunDirectory URLByAppendingPathComponent:@"blocked-ledger.json"] maxRequests:32 maxTiles:16 maxReservedBytes:8192]) { [self finish:NO reason:@"blocked ledger not ready"]; return; }
         self.map.styleURL = [NSURL URLWithString:[TPOrigin stringByAppendingString:@"/resource/style/blocked"]];

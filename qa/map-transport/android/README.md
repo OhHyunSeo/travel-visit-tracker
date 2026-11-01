@@ -1,5 +1,11 @@
 # Android 지도 전송 시험 앱
 
+## 11월 1일 fresh 생성 표식의 읽기 전용 확인
+
+`bounded_avd_storage.py`가 `data/empty_data_disk`도 최대 64KiB로 읽고 크기와 SHA-256을 남깁니다. 빈 표식은 허용하되 링크·FIFO·초과 크기와 읽기 전후 변경은 거절합니다. 큰 이미지 본문은 읽거나 복사하지 않습니다. 현재 cached 표식은 107바이트였고 host 회귀는 64개 PASS입니다.
+
+[AOSP 초기화 분기](https://android.googlesource.com/platform/external/qemu/+/emu-master-dev/android-qemu2-glue/main.cpp)는 이 표식의 존재로 빈 ext4 생성 경로를 선택합니다. 점검 결과에는 이를 후보로만 표시합니다. 현재 cached binary의 producer 실행이나 최소 부팅 크기를 증명한 결과는 아니며 native admission과 모든 blocker는 유지합니다. 새 AVD 생성·부팅, emulator·ADB와 원본 이미지 해시 재대조는 이번에 실행하지 않았습니다.
+
 실제 앱과 다른 `app.trippainting.maptransportqa` 패키지로 만든 작은 시험 앱입니다. Android의 비동기 OkHttp 경로와 앱 전용 파일의 예약 장부를 확인합니다. MapLibre, 로그인, 위치 기능과 개인 앱의 저장 공간은 연결하지 않습니다. 권한은 인터넷 하나이며 백업도 꺼져 있습니다.
 
 검사할 동작은 다음과 같습니다.

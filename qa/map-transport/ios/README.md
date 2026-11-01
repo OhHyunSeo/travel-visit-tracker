@@ -1,5 +1,13 @@
 # iPhone 지도 통신 시험 앱
 
+## 2026-11-01 Mac에서 대기와 중복 취소 확인
+
+`test-transport-queue.m`은 첫 네 응답 본문을 보류한 실제 loopback 서버와 함께 여덟 요청을 검사합니다. native 대기 4개와 서버 도착 4개를 대조한 뒤 본문을 풀어 다섯 번째가 먼저 전송되지 않는지 확인합니다. 대기 요청의 두 번 취소는 전송·예약 없이 빠지고, 전송 중 두 번 취소는 native 종료 callback 뒤 한 번만 자리를 반환하며 이전 예약은 남깁니다. 원본 자료 대신 임시 장부와 합성 본문을 사용합니다.
+
+새 세 사례와 기존 열 사례, Mac native 13개가 통과했습니다. Linux에서는 Apple framework 전용 13개를 명시적으로 건너뜁니다. `pending/maxPending`, 취소와 반환 카운터는 QA 관찰값이며 제품 API에 추가하지 않았습니다. 서버가 취소를 인식하는 시점과 native 취소 완료는 다를 수 있어 전송 중 취소의 서버 active 수를 OS 전체 동시 수신량 상한으로 세지 않습니다.
+
+이 결과는 실제 MapLibre나 iPhone의 취소·대기 증거가 아닙니다. 별도 SDK 앱의 새 기기 검사는 준비 중이며 공급원과 TLS/HTTP2, 제품 연결은 계속 꺼 둡니다.
+
 2026-10-30에 UIScene 시작 오류를 수정한 뒤 후속 사용자 재개에서 단일 HTTP 송신 경로를 추가했습니다. 이전 소스의 실제 iPhone 13개와 새 소스의 12개를 구분해 기록했습니다. 제품 MapLibre에 연결한 앱이나 공급원 제한을 보장하는 완료본은 아닙니다.
 
 앱 ID는 `app.trippainting.maptransportqa`입니다. UIKit, Foundation과 Network.framework를 사용하며 MapLibre, 로그인이나 위치 기록은 연결하지 않았습니다. 서명 검사에서 원래 앱과 다른 application identifier, 공유 Keychain과 app group 없음, 위치와 백그라운드 권한 없음을 확인했습니다.

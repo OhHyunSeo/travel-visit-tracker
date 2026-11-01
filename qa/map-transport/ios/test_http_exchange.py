@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import socket
+import select
 import subprocess
 import sys
 import tempfile
@@ -90,6 +91,42 @@ class RawFixture:
             thread.join(3)
 
 
+class QueueFixture(RawFixture):
+    """No response bodies until the host has inspected the native wait queue."""
+    def __init__(self):
+        super().__init__([])
+        self.release = threading.Event()
+
+    def serve(self, connection):
+        connection.settimeout(1)
+        request = bytearray()
+        registered = False
+        try:
+            while b"\r\n\r\n" not in request and len(request) < 4096:
+                part = connection.recv(1024)
+                if not part:
+                    return
+                request.extend(part)
+            with self.lock:
+                self.requests.append(bytes(request))
+                self.active += 1
+                self.peak = max(self.peak, self.active)
+                registered = True
+            while not self.release.wait(.01) and not self.stopped.is_set():
+                readable, _, _ = select.select([connection], [], [], 0)
+                if readable and not connection.recv(1):
+                    return
+            if not self.stopped.is_set():
+                connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\ntest")
+        except (OSError, TimeoutError):
+            pass
+        finally:
+            if registered:
+                with self.lock:
+                    self.active -= 1
+            connection.close()
+
+
 @unittest.skipUnless(sys.platform == "darwin", "Apple Foundation/Network native host test")
 class SingleExchangeTests(unittest.TestCase):
     @classmethod
@@ -106,6 +143,14 @@ class SingleExchangeTests(unittest.TestCase):
             "-isysroot", sdk, "-framework", "Foundation", "-framework", "Network",
             str(ROOT / "test-http-exchange.m"), str(ROOT / "TPHTTPExchange.m"),
             str(ROOT / "TPTransport.m"), "-o", str(cls.binary),
+        ], check=True, capture_output=True, text=True)
+        cls.queue_binary = cls.directory / "queue-test"
+        subprocess.run([
+            "xcrun", "clang", "-fobjc-arc", "-fblocks", "-Wall", "-Wextra",
+            "-Wno-unused-parameter", "-Wno-incompatible-pointer-types", "-Werror",
+            "-isysroot", sdk, "-framework", "Foundation", "-framework", "Network",
+            str(ROOT / "test-transport-queue.m"), str(ROOT / "TPHTTPExchange.m"),
+            str(ROOT / "TPTransport.m"), "-o", str(cls.queue_binary),
         ], check=True, capture_output=True, text=True)
 
     @classmethod
@@ -238,6 +283,74 @@ class SingleExchangeTests(unittest.TestCase):
             self.assertEqual(result["native"]["httpRequestSendsSettled"], 12)
             self.assertEqual(result["native"]["ledger"]["reservedBytes"], 12 * 256)
             self.assertEqual(result["native"]["ledger"]["unresolved"], [])
+
+    def queue_scenario(self, mode):
+        ledger = self.directory / (mode + ".json")
+        with QueueFixture() as fixture:
+            process = subprocess.Popen([
+                str(self.queue_binary), f"http://127.0.0.1:{fixture.port}", str(ledger), mode,
+            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                def wait_until(predicate):
+                    end = time.monotonic() + 5
+                    while time.monotonic() < end:
+                        if predicate():
+                            return
+                        self.assertIsNone(process.poll(), "native queue driver exited before checkpoint")
+                        time.sleep(.01)
+                    self.fail("native queue checkpoint deadline")
+
+                checkpoint = Path(str(ledger) + ".checkpoint")
+                wait_until(checkpoint.exists)
+                wait_until(lambda: len(fixture.requests) == 4)
+                before = json.loads(checkpoint.read_text())
+                self.assertEqual((before["active"], before["started"], before["maxPending"]), (4, 4, 4))
+                self.assertEqual(before["ledger"]["reservedBytes"], 1024)
+                self.assertEqual(before["pending"], 3 if mode == "pending-cancel" else 4)
+                self.assertEqual({r.split(b" ")[1] for r in fixture.requests},
+                                 {f"/resource/tile/q_{i}".encode() for i in range(4)})
+                # The server has four held bodies; no fifth exchange has arrived.
+                if mode == "active-cancel":
+                    Path(str(ledger) + ".cancel").write_text("cancel first active task")
+                    after = Path(str(ledger) + ".after-cancel")
+                    wait_until(after.exists)
+                    value = json.loads(after.read_text())
+                    self.assertEqual((value["active"], value["pending"], value["started"], value["released"]), (4, 3, 5, 1))
+                    self.assertEqual(value["ledger"]["reservedBytes"], 1280)
+                    wait_until(lambda: len(fixture.requests) == 5)
+                fixture.release.set()
+                output, error = process.communicate(timeout=8)
+                self.assertEqual(process.returncode, 0, error)
+                result = json.loads(output)
+                native = result["native"]
+                cancelled = {"pending-cancel": "4", "active-cancel": "0"}.get(mode)
+                for key, value in result["results"].items():
+                    self.assertEqual(value, {"error": -999, "length": 0} if key == cancelled else {"error": 0, "length": 4})
+                admitted = 7 if mode == "pending-cancel" else 8
+                self.assertEqual(len(fixture.requests), admitted)
+                self.assertEqual((native["active"], native["pending"], native["maxActive"], native["released"]), (0, 0, 4, admitted))
+                self.assertEqual(native["httpRequestSendsSettled"], admitted)
+                self.assertEqual(native["ledger"]["reservedBytes"], admitted * 256)
+                self.assertEqual(native["ledger"]["unresolved"], [])
+                self.assertEqual(native["cancelledPending"], int(mode == "pending-cancel"))
+                self.assertEqual(native["cancelledActive"], int(mode == "active-cancel"))
+                if mode != "active-cancel":
+                    self.assertEqual(fixture.peak, 4)
+                if mode == "pending-cancel":
+                    self.assertNotIn(b"/resource/tile/q_4", [r.split(b" ")[1] for r in fixture.requests])
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate()
+
+    def test_fifth_exchange_waits_before_any_held_body_finishes(self):
+        self.queue_scenario("queue")
+
+    def test_pending_double_cancel_never_sends_or_reserves(self):
+        self.queue_scenario("pending-cancel")
+
+    def test_active_double_cancel_releases_once_and_preserves_charge(self):
+        self.queue_scenario("active-cancel")
 
 
 if __name__ == "__main__":
