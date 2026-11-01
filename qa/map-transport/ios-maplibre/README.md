@@ -1,5 +1,22 @@
 # 실제 지도 엔진을 연결한 iPhone 시험
 
+## 2026-11-02 취소와 수동 재로딩 통과
+
+새 signed Debug 소스의 물리 iPhone 두 사례가 통과했습니다. `QA_STAGE=cancel-retry`는 한 장부로 진행합니다. 타일 전송 4개·대기 2개를 서버와 함께 관측한 뒤 로컬 빈 `styleJSON`으로 전환해 SDK 취소를 일으킵니다. task나 전송 도구의 취소 함수를 직접 호출하지 않습니다. 네 옛 응답은 본문 없이 닫혔으며 시작한 다섯 요청의 자리 반환과 기존 1,280바이트 예약을 대조했습니다.
+
+이전 응답이 모두 닫힌 뒤 `/release-held`가 0개를 해제했음을 확인하고 같은 스타일 주소를 다시 엽니다. 기존 네 타일 경로를 포함한 여섯 타일이 실제로 재수신됐고 SDK 렌더 완료가 확인됐습니다. 최종 시작·반환·송신은 12회, 본문 1,040바이트, 예약 3,072바이트이며 native와 서버의 최대 동시는 각각 4, 마지막 active/pending은 0입니다. 자동 네트워크 재시도가 아닌 수동 SDK 스타일 재로딩 결과입니다.
+
+원격 빈 스타일을 같은 전송 대기열에 넣었던 첫 준비와 SDK 주석 source/layer까지 0개로 기대했던 다음 준비는 제외해 보관했습니다. 최종 도구는 빈 JSON과 합성 raster 제거를 확인하고 내부 주석 객체의 이름을 별도로 기록합니다. 두 번째 준비의 취소 4/2만으로 전체 통과를 선언하지 않았습니다.
+
+`cancel_result.py`는 결과와 서버 기록, 선택한 PID와 보관 장부를 독립적으로 대조합니다. 전송·대기 수명, 예약 누적, 옛 응답 불변, 실제 같은 경로 재요청과 본문 수가 맞아야 통과합니다. Objective-C 논리식의 정확한 숫자 1 직렬화만 해당 플래그에 허용하며 일반 카운터의 bool은 거절합니다. 합성 보고서 회귀 13개가 통과했으며 기기 사례 수와 합치지 않습니다.
+
+```sh
+python3 -B -m unittest discover -s qa/map-transport/ios-maplibre -p 'test_cancel_result.py'
+python3 qa/map-transport/ios-maplibre/cancel_result.py RESULT_JSON SERVER_JSON --ledger LEDGER_JSON --pid QA_PID
+```
+
+Documents 6개(최종 결과·장부와 제외 두 run의 결과·장부)를 대조한 뒤 QA 앱·전용 캐시·서버를 정리했습니다. 원래 앱 설치 정보는 같고 개인 DB·사진·native 인증은 열거나 새로 대조하지 않았습니다. 통과 앱은 `.build/pinned-sdk-cancel-20261102/`, 원문은 Git 제외 `map-sdk-cancel-resume-20261102/`에 보관합니다. 제품 소스·의존성과 공급원 다운로드는 연결하지 않았습니다.
+
 ## 2026-11-01 실제 iPhone 대기열 통과
 
 준비된 `80f4b4d` signed Debug 앱을 변경 없이 재사용해 세 사례를 마쳤습니다. 다중 구간은 실제 타일 6개를 요청했고 native active 4/pending 2를 동시에 관측했습니다. 당시 unresolved 4개·예약 1,280바이트였으며, 완료 뒤 스타일 포함 시작·반환·송신 7회와 예약 1,792바이트, active/pending 0을 확인했습니다. 서버 최대 동시 수는 4였습니다.
@@ -30,7 +47,7 @@
 
 ## 범위는 여기까지입니다
 
-이 결과는 작은 네이티브 SDK 시험입니다. React Native의 JS 초기화와 bridge, 글꼴과 아이콘, 다섯 개 이상 요청의 대기·취소·재요청, TLS/HTTP2, 오프라인 팩과 OS 수신량 상한은 아직 확인하지 않았습니다. 렌더 완료는 SDK 콜백으로 확인했으며 픽셀 검사나 사용자의 화면 확인 결과로 세지 않습니다. 공개 지도 공급원에는 요청하지 않았고 제품 앱에도 연결하지 않았습니다.
+이 결과는 작은 네이티브 SDK 시험입니다. React Native의 JS 초기화와 bridge, 글꼴과 아이콘, TLS/HTTP2, 오프라인 팩과 OS 수신량 상한은 아직 확인하지 않았습니다. 위 취소·수동 재로딩은 합성 HTTP/1.1 경로의 결과입니다. 렌더 완료는 SDK 콜백으로 확인했으며 픽셀 검사나 사용자의 화면 확인 결과로 세지 않습니다. 공개 지도 공급원에는 요청하지 않았고 제품 앱에도 연결하지 않았습니다.
 
 `MLNNetworkConfiguration`의 delegate는 native 클래스의 singleton입니다. URL과 header 규칙은 지도 생성 전에만 등록하며 시험 중 배열을 수정하지 않습니다. 세션 설정을 바꿔도 같은 클래스가 유지되고 주소 변환이 서버 도착 경로에 반영되는지 확인했습니다. 설정은 `MLNMapView`와 기본 지도 저장소를 만들기 전에 적용하고 명시적인 합성 스타일로 시작합니다. 위치 표시와 위치 권한 요청은 꺼 둡니다.
 
@@ -46,6 +63,6 @@ bash qa/map-transport/ios-maplibre/build-ios.sh
 
 아이폰과 Mac은 같은 로컬 네트워크에 연결하고 로컬 네트워크 안내를 허용합니다. 케이블은 설치·관측에 사용하며 합성 HTTP 연결을 대신하지 않습니다. 허용이나 네트워크 준비 전에 끝난 run은 새 프로세스와 새 ID로 다시 시작하고 이전 결과는 제외해 보관합니다.
 
-실행할 때 `QA_SERVER_ORIGIN`과 새 `QA_RUN_ID`를 전달합니다. 서버는 [sdk-server.mjs](../fixture/sdk-server.mjs)이며 명시적으로 허용한 사설 IPv4의 HTTP만 받습니다. 이미 사용한 시험 이름은 거절하고 결과 파일도 덮어쓰지 않습니다. 현재 앱의 재실행 보존 검사는 별도 범위입니다.
+실행할 때 `QA_SERVER_ORIGIN`과 새 `QA_RUN_ID`를 전달합니다. `QA_STAGE`는 기본 `queue`이며 취소 후 같은 경로를 다시 받는 구간은 `cancel-retry`입니다. 다른 stage는 거절하고, 새 프로세스와 리소스 0건인 새 서버 상태를 요구합니다. 서버는 [sdk-server.mjs](../fixture/sdk-server.mjs)이며 명시적으로 허용한 사설 IPv4의 HTTP만 받습니다. 이미 사용한 시험 이름은 거절하고 결과 파일도 덮어쓰지 않습니다. 현재 앱의 재실행 보존 검사는 별도 범위입니다.
 
 이번 원문은 Git 제외 `docs/test-results/maplibre-transform-qa-20261031/`, 통과 앱은 `.build/pinned-native-transform-20261031/`입니다. 이전 두 사례는 `maplibre-sdk-qa-20261031/`와 `.build/pinned-sdk-20261031/`에 유지합니다. 다음은 [재개 순서](../../../docs/RESUME.md)와 [제품 연결 전 조건](../../../docs/OFFLINE_MAP_TRANSPORT.md)을 따릅니다.
