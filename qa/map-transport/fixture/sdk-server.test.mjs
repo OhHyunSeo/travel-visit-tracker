@@ -33,6 +33,68 @@ test("style fits reservation at longest supported IPv4 origin with one zoom-zero
     assert.equal(style.layers[0].type, "raster");
     assert.equal(style.sources.t.tiles[0].includes("example.invalid"), blocked);
   }
+  const held = syntheticRasterStyle("http://192.168.255.255:65535", false, false, true);
+  assert.ok(held.length <= 256);
+  assert.equal(JSON.parse(held).sources.t.maxzoom, 2);
+  assert.ok(JSON.parse(held).sources.t.tiles[0].includes("/tile/h_"));
+});
+
+test("held SDK bodies wait for explicit release; empty style contains no resources", async t => {
+  const fixture = await createSDKFixture(); t.after(() => fixture.close());
+  const empty = await fetch(`${fixture.origin}/resource/style/empty`);
+  assert.deepEqual(await empty.json(), { version: 8, sources: {}, layers: [] });
+  await fetch(`${fixture.origin}/reset`);
+  const response = await fetch(`${fixture.origin}/resource/tile/h_2_0_0`);
+  assert.equal(fixture.stats().heldActive, 1);
+  assert.equal(fixture.stats().requests[0].bytesWritten, 0);
+  assert.equal((await fetch(`${fixture.origin}/reset`)).status, 409);
+  const released = await (await fetch(`${fixture.origin}/release-held`)).json();
+  assert.deepEqual(released, { heldReleased: true, releasedOpenBodies: 1 });
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), syntheticRasterTile());
+  assert.equal(fixture.stats().resourceCount, 1);
+  assert.equal(fixture.stats().heldActive, 0);
+  assert.equal(fixture.stats().requests[0].finished, true);
+  await fetch(`${fixture.origin}/reset`);
+  assert.equal(fixture.stats().heldReleased, false);
+});
+
+test("cancelled held body stays unsent; release and same-path retry cannot revive it", async t => {
+  const fixture = await createSDKFixture(); t.after(() => fixture.close());
+  const controller = new AbortController();
+  const path = "/resource/tile/h_2_0_0";
+  const response = await fetch(fixture.origin + path, { signal: controller.signal });
+  const body = response.arrayBuffer();
+  controller.abort(); controller.abort();
+  await assert.rejects(body);
+  const end = performance.now() + 1000;
+  while (fixture.stats().active && performance.now() < end) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(fixture.stats().heldActive, 0);
+  assert.equal(fixture.stats().requests[0].closedBeforeFinish, true);
+  assert.equal(fixture.stats().requests[0].bytesWritten, 0);
+  assert.deepEqual(await (await fetch(`${fixture.origin}/release-held`)).json(), { heldReleased: true, releasedOpenBodies: 0 });
+  const retry = await fetch(fixture.origin + path);
+  assert.deepEqual(Buffer.from(await retry.arrayBuffer()), syntheticRasterTile());
+  assert.deepEqual(fixture.stats().requests.map(x => x.path), [path, path]);
+  assert.equal(fixture.stats().requests[0].finished, false);
+  assert.equal(fixture.stats().requests[1].finished, true);
+});
+
+test("held fixture shutdown closes its body without a later release write", async () => {
+  const fixture = await createSDKFixture();
+  const response = await fetch(`${fixture.origin}/resource/tile/h_2_0_0`);
+  await fixture.close();
+  await assert.rejects(response.arrayBuffer());
+  assert.equal(fixture.stats().heldActive, 0);
+  assert.equal(fixture.stats().active, 0);
+  assert.equal(fixture.stats().requests[0].bytesWritten, 0);
+});
+
+test("held control requires exact GET path and never counts as an SDK resource", async t => {
+  const fixture = await createSDKFixture(); t.after(() => fixture.close());
+  for (const path of ["/release-held?x=1", "/release-held/", "/resource/tile/h_2_4_0", "/resource/style/held?x=1"]) assert.equal((await fetch(fixture.origin + path)).status, 404);
+  assert.equal((await fetch(`${fixture.origin}/release-held`, { method: "POST" })).status, 405);
+  assert.equal(fixture.stats().heldReleased, false);
+  assert.equal(fixture.stats().resourceCount, 0);
 });
 
 test("multi-tile fixture holds four actual body lifetimes and refuses reset while active", async t => {

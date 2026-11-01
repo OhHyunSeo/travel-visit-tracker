@@ -38,15 +38,15 @@ export function syntheticRasterTile() {
   ]);
 }
 
-export function syntheticRasterStyle(origin, blocked = false, multi = false) {
+export function syntheticRasterStyle(origin, blocked = false, multi = false, held = false) {
   return Buffer.from(JSON.stringify({
     version: 8,
     sources: { t: {
       type: "raster",
-      tiles: [`${blocked ? "http://example.invalid:80" : origin}/resource/tile/{z}_{x}_{y}`],
+      tiles: [`${blocked ? "http://example.invalid:80" : origin}/resource/tile/${held ? "h_" : ""}{z}_{x}_{y}`],
       tileSize: 256,
-      minzoom: multi ? 2 : 0,
-      maxzoom: multi ? 2 : 0,
+      minzoom: multi || held ? 2 : 0,
+      maxzoom: multi || held ? 2 : 0,
     } },
     layers: [{ id: "t", type: "raster", source: "t" }],
   }));
@@ -58,9 +58,9 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
     throw new Error("Use a literal loopback or explicitly allowed private IPv4 address");
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invalid port");
   const tile = syntheticRasterTile();
-  const requests = [], pending = new Set(), timers = new Set();
-  let origin, active = 0, maxActive = 0, closed = false;
-  const stats = () => ({ active, maxActive, resourceCount: requests.length, requests: requests.map(x => ({ ...x })) });
+  const requests = [], pending = new Set(), timers = new Set(), heldBodies = new Map();
+  let origin, active = 0, maxActive = 0, closed = false, heldReleased = false;
+  const stats = () => ({ active, maxActive, heldActive: heldBodies.size, heldReleased, resourceCount: requests.length, requests: requests.map(x => ({ ...x })) });
   const server = http.createServer((request, response) => {
     const json = (status, value) => {
       response.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
@@ -69,18 +69,28 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
     if (request.method !== "GET") return json(405, { error: "GET required" });
     // Exact request targets only; no URL decoding, aliases, queries or forwarded URLs.
     if (request.url === "/stats") return json(200, stats());
+    // Out-of-band QA control, not a provider resource or budgeted SDK request.
+    if (request.url === "/release-held") {
+      heldReleased = true;
+      const release = [...heldBodies.values()];
+      for (const sendBody of release) sendBody();
+      return json(200, { heldReleased, releasedOpenBodies: release.length });
+    }
     if (request.url === "/reset") {
       if (active) return json(409, { error: "Resources active" });
-      requests.length = 0; maxActive = 0;
+      requests.length = 0; maxActive = 0; heldReleased = false;
       return json(200, { reset: true });
     }
-    const style = ["/resource/style/sdk", "/resource/style/multi", "/resource/style/blocked"].includes(request.url);
+    const style = ["/resource/style/sdk", "/resource/style/multi", "/resource/style/blocked", "/resource/style/held", "/resource/style/empty"].includes(request.url);
     const multiTile = /^\/resource\/tile\/2_[0-3]_[0-3]$/.test(request.url);
-    if (!style && !multiTile && request.url !== "/resource/tile/0_0_0") return json(404, { error: "Unknown synthetic SDK resource" });
-    const body = style ? syntheticRasterStyle(origin, request.url.endsWith("/blocked"), request.url.endsWith("/multi")) : tile;
+    const heldTile = /^\/resource\/tile\/h_2_[0-3]_[0-3]$/.test(request.url);
+    if (!style && !multiTile && !heldTile && request.url !== "/resource/tile/0_0_0") return json(404, { error: "Unknown synthetic SDK resource" });
+    const body = request.url === "/resource/style/empty" ? Buffer.from('{"version":8,"sources":{},"layers":[]}')
+      : style ? syntheticRasterStyle(origin, request.url.endsWith("/blocked"), request.url.endsWith("/multi"), request.url.endsWith("/held")) : tile;
     if (body.length > 256) return json(500, { error: "Synthetic reservation exceeded" });
     const entry = {
       path: request.url, bytes: body.length, bytesWritten: 0, finished: false,
+      held: heldTile, closedBeforeFinish: false,
       ua: request.headers["user-agent"] ?? null,
       receivedAuthHeader: request.headers.authorization !== undefined,
       cookieHeader: request.headers.cookie !== undefined,
@@ -91,19 +101,23 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
     let timer;
     const settle = () => {
       if (!settled) {
-        settled = true; active--; pending.delete(response);
+        settled = true; active--; pending.delete(response); heldBodies.delete(response);
         if (timer) { clearTimeout(timer); timers.delete(timer); }
       }
     };
     response.once("finish", () => { entry.finished = true; settle(); });
-    response.once("close", settle);
+    response.once("close", () => { entry.closedBeforeFinish = !entry.finished; settle(); });
     response.writeHead(200, { "Content-Type": style ? "application/json" : "image/png", "Content-Length": body.length, "Cache-Control": "no-store" });
     const sendBody = () => {
-      if (settled) return;
+      if (settled || response.destroyed) return;
+      heldBodies.delete(response);
       response.end(body);
       entry.bytesWritten = body.length; // Accepted by Node, not OS-delivered bytes.
     };
-    if (multiTile) {
+    if (heldTile && !heldReleased) {
+      response.flushHeaders();
+      heldBodies.set(response, sendBody);
+    } else if (multiTile) {
       response.flushHeaders();
       timer = setTimeout(() => { timers.delete(timer); sendBody(); }, 120);
       timers.add(timer);
@@ -122,6 +136,7 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
       closed = true;
       for (const timer of timers) clearTimeout(timer);
       timers.clear();
+      heldBodies.clear();
       for (const response of pending) response.destroy();
       await new Promise((resolve, reject) => {
         server.close(error => error ? reject(error) : resolve());
