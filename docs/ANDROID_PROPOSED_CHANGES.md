@@ -1,5 +1,18 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
+## 11월 2일 후속: controller writer를 실제 구현
+
+문서만 정리한 응답 뒤 사용자가 실제 진행을 재요청했습니다. Android `c693c5b`에서 **`qa/map-transport/android/bounded_controller.py`와 회귀·README를 구현**했습니다. 공통 파일은 수정하지 않았으며 자동 동기화·병합·push/PR은 없습니다.
+
+- `ControllerArtifacts.create()`가 유한한 파일 cap/논리 예산을 **생성 전** 검증하고 새 소유 run과 descriptor를 고정합니다. `write()`/`write_json()`은 그 descriptor로만 쓰며 cap 초과를 bytes 변경 전에 거절합니다.
+- 허용 목록은 기본 여섯 파일276KiB, 전체 논리 예산 최대1MiB입니다. inode·디렉터리·링크·외부 수정/추가 파일을 감지하면 실패 상태를 유지합니다. 열린 삭제 파일을 사용량에서 빼거나 예약을 환급하지 않습니다.
+- `close()`는 파일을 보존합니다. 정리 실패를 공개 보고서와 예외에 전달하고, FD 재사용 위험 때문에 무조건적인 재닫기는 하지 않습니다. 독립 검토가 찾은 이 오류를 회귀2개로 보완했습니다.
+- 작은 합성 일반 파일을 쓰는 **새 host34개 PASS**입니다. 검사 명령과 관측 조건은 [진행 기록](ANDROID_PROGRESS.md)과 새 도구 README를 따릅니다. 기존 공통64개, 실제 제한 볼륨/버전 구성요소와 합산하지 않습니다.
+
+이 모듈은 신뢰하는 controller의 **논리 cap** 구성요소입니다. 임의 child/native 쓰기의 OS 강제나 할당량·mount 수명·실제 producer를 검증한 결과가 아닙니다. `allocationBoundProven=false`, `nativeAdmissionEnabled=false`이며 공통 native gate는 그대로입니다. 기존65MiB는 전체 backend 설계 상한으로만 남습니다. backing 생성·형식화 제한과 기존 도구 통합은 아직 미구현입니다. 다음에는 이 writer로 보고·출력 경로를 연결하고 별도 backing backend를 준비해야 합니다.
+
+실제 SDK/AVD/emulator/ADB/native·이미지/마운트·기기 조회·설치/다운로드·개인 자료/기존 캐시·백업 작업은 없습니다. 새 app 전체 verifier/CI도 실행하지 않았습니다. 전체24/54, P3-02 부분 완료와 G1~G4 미완료를 유지합니다.
+
 ## 11월 2일 재개: controller부터 구현할 구체적 계약
 
 새 사용자 재개로 Android `96aeb23`의 다음 준비를 진행했습니다. 현재 공통 `01eedd6`까지 Android 보호 도구는 검토 기준 `eaa88af`와 같습니다. 역할 분담에 따라 공통 코드는 수정하지 않고 이 문서와 `ANDROID_PROGRESS.md`만 갱신합니다. iPhone 연결은 이 준비에 필요하지 않습니다.

@@ -2,6 +2,20 @@
 
 마지막 갱신: 2026-11-02, Asia/Seoul.
 
+## 11월 2일 후속 구현: controller 파일 제한과 host 회귀 34개
+
+사용자가 “이어서 해달라고”라고 정정해 문서 검토에서 실제 Android 코드 구현으로 이어갔습니다. 시작점은 `c693c5bbdbf83f17ac9e0913d2241fe3234b6eea`입니다. 새 `qa/map-transport/android/bounded_controller.py`, 대응 `test_bounded_controller.py`와 `README.md`를 추가했습니다. 공통 checkout의 Android 도구·제품·루트 문서와 의존성은 수정하거나 복사하지 않았습니다.
+
+**구현:** 신뢰하는 준비 controller가 쓰는 메타데이터 파일 여섯 개의 허용 목록과 논리 cap을 생성 전에 검증합니다. 기본 예약 합은276KiB, 전체 논리 예산 최대1MiB이며 cap을 낮추거나 허용 목록을 줄일 수 있습니다. 새 고유 소유 디렉터리와 파일을 exclusive하게 생성하고 열린 descriptor를 유지합니다. cap 초과는 bytes를 바꾸기 전에 거절하며 append·짧은 write·부분 실패를 처리합니다. 링크·inode/디렉터리 교체·같은 크기의 외부 수정·미등록 파일을 감지하면 그 run의 추가 쓰기를 막습니다. 삭제했지만 열린 파일도 사용량과 기존 예약에 남습니다.
+
+close는 근거 파일을 삭제하지 않습니다. 독립 검토에서 발견한 정리 오류의 은폐를 수정해, 불확실한 close는 공개 `cleanup_report`와 `ControllerError`로 전달하고 같은 FD 번호를 무조건 다시 닫지 않습니다. 생성 중 실패와 context 종료에도 정리 실패의 근거를 전달합니다. JSON 직렬화 실패도 이전 보고서를 보존하고 실패 상태로 끝납니다.
+
+**이번 실제 검사 PASS:** 저장소 루트에서 `python3 -B -m unittest discover -s qa/map-transport/android -p 'test_*.py'`를 실행해 **새 host 회귀34개**가 통과했습니다. 테스트는 임시 디렉터리의 작은 합성 일반 파일만 만들며 실제 cap 경계/append/truncate, 초과 전 보존, symlink/hardlink/교체·변조, 열린 삭제 파일의 비용 유지, 동시 기록, 짧은/중단된 write, 생성·close 실패와 실패 후 재사용 거절을 확인했습니다. EIO·불확실한 close는 정확한 합성 호출에만 주입했습니다. 실제 디스크 공간 부족이나 OS I/O 장애 결과가 아닙니다. 기존 공통64개와 합쳐 native/통합 통과 수로 세지 않습니다.
+
+**한계:** 이것은 controller API를 통한 **논리 파일 크기 제한**입니다. 임의 native process의 직접 쓰기, mount·inode 교체와 동시인 race의 원자적 차단이나 filesystem 할당량 상한은 증명하지 않습니다. `audit()`는 `allocationBoundProven=false`, `nativeAdmissionEnabled=false`를 항상 유지합니다. backing 이미지 생성·형식화/backend, 모든 native 자식/임시 파일의 OS 강제, cached producer 진입 경계와 최소 용량·fresh boot는 미구현/NOT RUN입니다. 이전65MiB는 전체 backend의 미구현 설계 ceiling입니다.
+
+다음 구현은 이 writer를 생성 controller의 보고·출력 경로에 연결하면서 backing 생성/형식화의 별도 제한 backend를 준비하는 일입니다. 공통 기존 도구와의 통합 검토 전에 새 모듈만으로 그 도구의 gate를 열지 않습니다. 이번 이미지·AVD·emulator·ADB·기기 조회·native·설치·다운로드·개인 자료 열기/재해시·캐시/백업 삭제는 없습니다. 앱/서버/JS-Hermes 전체 verifier는 제품·의존성 변경이 없는 이번 Python 구성요소 검사로 반복하지 않았으며 새 통과로 표시하지 않습니다. Android 전용 코드·회귀·README와 진행/제안 두 문서만 로컬 저장하고 push/PR/CI는 시작하지 않습니다. 전체24/54와 G1~G4는 유지합니다.
+
 ## 11월 2일 재개: 생성 전 controller 제한을 먼저 준비
 
 사용자가 “이어서 진행해줘 아이폰 연결이 필요하니?”라고 재개했습니다. **현재 Android 준비에는 iPhone이 필요하지 않습니다.** 기기 연결·조회 없이 Android `96aeb23d41ab5f41aa8418636bdf5c3754879c88`과 공통 `01eedd67327564999f0ab155280cf76b4fe03833`의 저장 상태를 확인했습니다. 공통 실행 소스는 `da941fc`, 마지막 커밋은 중단 문서이며 `eaa88af..01eedd6` 사이 Android 준비 코드 diff는 없습니다. 공통 `docs/RESUME.md`와 `docs/PARALLEL_DEVELOPMENT.md`의 역할에 따라 이번에도 공통은 읽기 전용, Android 변경은 진행·제안 두 문서뿐입니다.
