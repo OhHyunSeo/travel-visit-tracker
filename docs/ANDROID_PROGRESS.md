@@ -2,6 +2,26 @@
 
 마지막 갱신: 2026-11-02, Asia/Seoul.
 
+## 11월 2일 재개: 생성 전 controller 제한을 먼저 준비
+
+사용자가 “이어서 진행해줘 아이폰 연결이 필요하니?”라고 재개했습니다. **현재 Android 준비에는 iPhone이 필요하지 않습니다.** 기기 연결·조회 없이 Android `96aeb23d41ab5f41aa8418636bdf5c3754879c88`과 공통 `01eedd67327564999f0ab155280cf76b4fe03833`의 저장 상태를 확인했습니다. 공통 실행 소스는 `da941fc`, 마지막 커밋은 중단 문서이며 `eaa88af..01eedd6` 사이 Android 준비 코드 diff는 없습니다. 공통 `docs/RESUME.md`와 `docs/PARALLEL_DEVELOPMENT.md`의 역할에 따라 이번에도 공통은 읽기 전용, Android 변경은 진행·제안 두 문서뿐입니다.
+
+이전의 “producer 하나”를 바로 실행하기보다 **이미지를 만들기 전의 controller 파일 제한이 첫 구현 단위**여야 합니다. `bounded_storage_fixture.py:250–256`은 `hdiutil create`를 worker 제한 밖에서 실행한 뒤 크기를 확인합니다. mount가 아직 없는 이 단계의 임시 파일을 그 mount로 돌릴 수는 없습니다. 생성 단계부터 바깥 쓰기를 제한할 방법과 형식화 도구가 그 조건에서 동작하는지는 아직 미확인입니다.
+
+공통 담당이 구현할 수 있도록 다음 계약을 구체화했습니다. 아래는 제안이며 구현·실행 PASS가 아닙니다.
+
+| 순서 | 최소 구현 계약 | 허용할 수 없는 대체 근거 |
+| --- | --- | --- |
+| 1. 생성 controller | backing 한 개와 유한한 바깥 진단 파일만 생성. 경로뿐 아니라 inode·열린 FD까지 고정하고, 파일별 사전 cap과 전체 바깥 예산을 함께 강제. 예상 밖 temp가 필요하면 생성 전/즉시 실패 | `RLIMIT_FSIZE`만 추가하거나 생성 후 폴더 크기가 작다는 결과. 파일별 limit은 파일 수를 제한하지 않음 |
+| 2. writer 수명 | 가능하면 producer profile에서 fork를 허용하지 않고 wrapper→고정 producer를 exec. fork가 필요하면 그 사실을 blocker로 남기고 전체 자식 감독을 별도 구현 | `killpg`만으로 새 session으로 이탈한 자식도 종료됐다고 간주 |
+| 3. producer 연결 | cached 경로와 동일한 생성기라는 출처, 고정 인자, guest 초기화 전 반환을 먼저 증명한 뒤 새 출력 한 개만 준비 | `-version`, 임의 `mkfs.ext4`, 전체 emulator를 시작하고 파일 생성 직후 중단 |
+
+**바깥 파일 배분 예시:** backing의 cap 64MiB와 별도로 `controller.sb` 16KiB, `attach.plist`/`controller-events.json`/`result.json`/`output.txt` 각 64KiB, canary 4KiB를 제안합니다. 진단 여섯 파일의 논리 cap 합은 **276KiB**이며 이전 바깥 예산 1MiB 안에 둡니다. 추가 임시 파일·atomic-replace 사본·삭제했지만 열린 파일도 예산에서 사라진 것으로 처리하면 안 됩니다. 허용 경로를 반복 교체해 새 inode를 만드는 우회도 거절해야 합니다. 파일시스템별 실제 할당량과 생성 도구의 쓰기를 강제할 backend는 미구현이므로 **65MiB는 여전히 설계 ceiling**입니다. 같은 제한 안으로 옮길 수 있는 profile·출력은 mount 안에 두어 바깥 허용 목록을 더 줄이는 편을 우선합니다.
+
+다음 host 회귀의 관측 조건도 제안 문서에 남겼습니다. 초과·미등록 temp·열린 삭제 파일·링크/교체·자식 이탈은 거절하고, 보고서 기록/cleanup 실패도 성공으로 바꾸지 않아야 합니다. host mock은 계약 거절만 증명하며 실제 제한된 생성·형식화·할당량과 mount 수명은 별도 구성요소 관측이 필요합니다. 현재 존재하는 `-version` 전용 API와 unconditional native 거절 경로는 그대로 유지합니다.
+
+이번 새 결과는 **읽기 전용 검토와 구현 순서·관측 조건의 구체화**입니다. subagent의 독립 검토도 소스 읽기만 했습니다. host 64개와 32MiB/버전 구성요소는 이전 기록이며 재실행하지 않았고 새 통과 수는 0개입니다. 실제 생성기/최소 용량/fresh AVD/QEMU/ADB/host-guest guard는 모두 NOT RUN입니다. 개인 이미지·DB·사진·인증, SDK·캐시·빌드·백업은 열거나 재해시·삭제하지 않았습니다. 두 문서만 로컬 커밋하고 push/PR/CI는 시작하지 않습니다. 전체 24/54와 수용 게이트는 변경하지 않습니다.
+
 ## 11월 2일: fresh QA userdata 준비의 정적 검토 완료, 실행 차단 유지
 
 Android 시작점은 **`90318b4853439c79a76d2526034835e47d1e3b4d`**, 읽기 전용 공통 기준은 **`eaa88af9f96dc937370cec28f7dce5b79bb459d7`**입니다. 공통 `AGENTS.md`, `docs/RESUME.md`, `qa/map-transport/android/README.md`와 준비·보호 도구를 읽었습니다. 이번 변경은 이 문서와 `docs/ANDROID_PROPOSED_CHANGES.md`뿐이며 기존 Android 제품 소스와 10월 28일까지의 근거는 보존합니다. 공통 checkout에는 쓰지 않았고 merge/rebase/cherry-pick, 설치·다운로드·새 빌드는 하지 않았습니다.

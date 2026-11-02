@@ -1,5 +1,28 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
+## 11월 2일 재개: controller부터 구현할 구체적 계약
+
+새 사용자 재개로 Android `96aeb23`의 다음 준비를 진행했습니다. 현재 공통 `01eedd6`까지 Android 보호 도구는 검토 기준 `eaa88af`와 같습니다. 역할 분담에 따라 공통 코드는 수정하지 않고 이 문서와 `ANDROID_PROGRESS.md`만 갱신합니다. iPhone 연결은 이 준비에 필요하지 않습니다.
+
+**첫 수정 단위는 `bounded_storage_fixture.py`의 생성 controller와 대응 host 회귀입니다.** 현재 `hdiutil create`는 worker 제한 밖에서 실행되며 크기는 생성 후 확인합니다. 따라서 `userdata_producer_probe.py`를 먼저 추가해도 전체 파일 제한 결손은 해결되지 않습니다. 다음 순서를 제안합니다.
+
+1. backing 한 개와 바깥 파일의 유한한 목록을 생성 전에 고정합니다. pre-open한 FD/identity를 유지하고 예상 밖 create/link/rename·교체를 거절합니다. `RLIMIT_FSIZE`는 파일별 보조 수단일 뿐 전체 예산 강제가 아닙니다. mount 이전에 임시 파일을 요구하는 생성·형식화 도구를 같은 제한으로 실행할 수 없으면 실패로 남깁니다.
+2. 바깥 진단 파일 후보는 `controller.sb` 16KiB, `attach.plist`/`controller-events.json`/`result.json`/`output.txt` 각 64KiB, canary 4KiB입니다. 논리 cap 합 276KiB를 바깥 1MiB 예산 안에 둡니다. backing ≤64MiB를 합한 ≤65MiB 설계 ceiling과 실제 할당량은 구분합니다. mount 안으로 옮길 수 있는 profile·출력은 옮기고, cap이 없는 `tool-temp`를 남기지 않습니다. 경로 수만으로 열린 삭제 inode나 atomic-replace 사본을 누락하지 않습니다.
+3. producer profile은 fork 불허가 가능한지 먼저 확인합니다. wrapper가 직접 exec하는 한 process로 줄일 수 없다면 전체 자식·daemon·열린 writer 수명 감독을 미완성으로 남깁니다. 기존 process-group 종료를 그 증거로 확대하지 않습니다.
+4. 위 controller가 실제 구성요소에서 증명된 뒤, cached 생성기와 동일한 producer-only 진입 경계를 확인합니다. 그 전에는 생성 adapter 실행을 열지 않습니다. 크기가 맞지 않거나 경계가 없으면 중단하며 자동 용량 확대·full emulator 우회는 없습니다.
+
+아래는 **아직 작성·실행하지 않은 회귀 계약**입니다. host와 실제 OS 구성요소 결과를 별도 기록해야 합니다.
+
+| 관측 대상 | 요구 결과 |
+| --- | --- |
+| cap 합/파일 수 초과, 미등록 temp, 경로·링크·inode 교체 | 생성 또는 해당 쓰기 전 거절. 파일별 limit만으로 전체 통과 처리 금지 |
+| 삭제했지만 열린 FD, atomic replace의 옛 inode, 남은 writer | 크기 합계에서 제외하지 않음. identity 상실·미확인 writer는 실패이며 mount 해제/성공 보고를 강행하지 않음 |
+| fork 불허와 자식 이탈 | host 설정 검사만으로 실제 거절을 증명하지 않음. 실제 profile 아래 거절/종료가 관측되기 전 NOT RUN 유지 |
+| 출력·보고서 초과, 실패 중 cleanup | 합계 pipe 64KiB·보고서 cap을 넘으면 실패. cleanup이 불명확하면 근거·소유 파일을 보존하며 성공 marker를 만들지 않음 |
+| 정상 모양 marker/숫자/임의 옵션 | 기존 `require_bounded_launch()`와 `-version` 전용 계약을 그대로 유지. controller/producer의 일부 통과도 native admission으로 연결하지 않음 |
+
+검토 중 실제 코드·SDK·기기·이미지에는 변경이 없습니다. 생성 controller의 제한 backend, producer 호출 경계·최소 용량, 실제 full boot는 미구현/미확인입니다. 새 host/native 테스트·이미지/마운트·기기 조회·설치·다운로드·삭제는 0입니다. 이번 산출물은 공통 담당이 다음 제한된 구현을 시작할 수 있는 계약이며 두 문서만 로컬 저장합니다. 과거 QCOW2 원인 UNCONFIRMED, 전체24/54, P3-02 부분 완료/G1~G4 미완료를 유지합니다.
+
 ## 11월 2일: userdata producer 한 단위의 준비 결손
 
 Android **`90318b4853439c79a76d2526034835e47d1e3b4d`**를 보존하고 공통 **`eaa88af9f96dc937370cec28f7dce5b79bb459d7`**의 Android 준비 도구만 읽었습니다. 변경 파일은 이 문서와 `docs/ANDROID_PROGRESS.md` 두 개입니다. 제품·설정·의존성·공통 checkout 수정, 병합과 새 실행은 없습니다. 로컬 커밋만 남기며 push/PR은 하지 않습니다.
