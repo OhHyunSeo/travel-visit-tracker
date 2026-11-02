@@ -4,8 +4,8 @@
 
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
-        if (argc != 5 && argc != 6) return 2;
-        NSUInteger count = argc == 6 ? strtoul(argv[5], NULL, 10) : 1;
+        if (argc != 5 && argc != 6 && argc != 7) return 2;
+        NSUInteger count = argc >= 6 ? strtoul(argv[5], NULL, 10) : 1;
         if (count < 1 || count > 16) return 2;
         NSURL *url = [NSURL URLWithString:[NSString stringWithUTF8String:argv[1]]];
         double timeout = strtod(argv[2], NULL), cancellation = strtod(argv[3], NULL);
@@ -17,9 +17,17 @@ int main(int argc, const char *argv[]) {
         NSURLSession *outer;
         if (![ledgerPath isEqual:@"-"]) {
             NSURLComponents *parts = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
-            NSString *origin = [NSString stringWithFormat:@"http://%@:%@", parts.host, parts.port];
+            NSString *origin = [NSString stringWithFormat:@"%@://%@:%@", parts.scheme, parts.host, parts.port];
             NSUInteger maximum = count > 1 ? 16 : 2;
-            if (![TPTransport configureOrigin:origin ledgerURL:[NSURL fileURLWithPath:ledgerPath] maxRequests:maximum maxTiles:maximum maxReservedBytes:maximum * 256]) return 3;
+            BOOL configured;
+            if (argc == 7) configured = [TPTransport configureFixtureTLSOrigin:origin ledgerURL:[NSURL fileURLWithPath:ledgerPath] maxRequests:maximum maxTiles:maximum maxReservedBytes:maximum * 256 certificate:[NSData dataWithContentsOfFile:[NSString stringWithUTF8String:argv[6]]]];
+            else configured = [TPTransport configureOrigin:origin ledgerURL:[NSURL fileURLWithPath:ledgerPath] maxRequests:maximum maxTiles:maximum maxReservedBytes:maximum * 256];
+            if (!configured) {
+                if (argc != 7) return 3;
+                NSData *json = [NSJSONSerialization dataWithJSONObject:@{@"configured": @NO, @"native": TPTransport.snapshot} options:NSJSONWritingSortedKeys error:nil];
+                fwrite(json.bytes, 1, json.length, stdout); fputc('\n', stdout);
+                return 0;
+            }
             NSURLSessionConfiguration *configuration = NSURLSessionConfiguration.ephemeralSessionConfiguration;
             configuration.protocolClasses = @[TPTransport.class];
             outer = [NSURLSession sessionWithConfiguration:configuration];

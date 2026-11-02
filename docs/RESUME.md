@@ -1,6 +1,20 @@
 # 여기서 이어서 개발하기
 
-## 11월 2일 마지막 요청: 모두 저장하고 중단
+## 11월 2일 최신 재개: HTTPS 장부와 Android 코드 선택 통합
+
+사용자가 현재 채팅에서 **iOS·Android 모두 진행**을 직접 요청했으므로 아래 이전 중단 상태를 이번 범위에서 갱신했습니다. Android 채팅에는 이미 별도 재개가 전달돼 있었습니다. 중복 iOS 편집은 역할 조정으로 중지하고 현재 checkout의 초안을 이어받았습니다. 원래 초안은 Git 제외 근거 폴더에 보존합니다. 현재 채팅은 공통·iOS와 통합, Android 채팅은 자체 코드·문서를 맡습니다.
+
+- HTTPS gate: 명시적 loopback TLS와 같은 영속 장부·전역 자리를 연결했습니다. 최대16KiB 공개 DER를 장부에 고정하며 origin·한도·pin 변경은 거절하고 기존 파일을 유지합니다. 정상 종료 후 재실행, 오류·명시적 재시도·한도 거절, 신뢰 실패의 예약 유지, 네 자리 뒤 대기와 중복 취소를 Mac 실제8개에서 확인했습니다. native permit은 handshake·본문·로컬 취소 완료까지 유지합니다. 서버 계측은 보류된 응답 본문이며 모든 TLS socket 수의 상한은 아닙니다.
+- 실제 Mac CLI SIGKILL: active4/pending4에서 기존requests4/reserved1,024/unresolved4가 남았습니다. 새 PID의 같은 장부에서 새8요청을 완료해 총requests12/reserved3,072와 원래 미확정ID4개를 유지했습니다. 원래8작업의 재개·SDK 같은 작업 재시도·폰·전원 종료 검증과 구분합니다.
+- Android 선택 통합: 독립 검토한 `899d98e`의 `bounded_controller.py`, `test_bounded_controller.py`, `prepare_controller.py`, `test_prepare_controller.py`만 가져왔습니다. Android branch의 controller 전용 README로 기존 공통 전송 README를 덮어쓰지 않았고 설명을 추가했습니다. 기존64+새54를 이 checkout에서 함께 실행한 host118 PASS입니다. source branch의 문서와 history는 그대로 보존합니다. [구현 범위](ANDROID_CONTROLLER_PREPARATION.md)를 따릅니다.
+
+최종 전체 verifier exit0 PASS: 모바일609/서버61/fixture23/Androidhost118/MacHTTP13+TLS기본7+gate8/report13/임시 HTTP·SQLite·파일/양쪽 production JS-Hermes. iOS arm64 문법/API PASS이며 새 signed app 빌드·설치·SDK HTTPS·기기 실행은 NOT RUN입니다. TLS 기본7·gate8과 이전 eaa88af iPhone2를 같은 소스의 기기 통과로 합치지 않습니다. 제품 코드·의존성·공개 공급원은 연결하지 않았습니다.
+
+다음 공통 범위는 제한된 SDK HTTPS 설정·초기화와 인증서 전달을 별도 QA 앱에서 설계하고, 기존 RN 변환·저장소 분리를 유지하는 단계입니다. 현재 TLS helper는 loopback 전용이므로 폰 연결을 요청하기 전에 안전한 시험 경로를 먼저 준비합니다. 실제 HTTP/2·RN JS·글꼴·아이콘·팩 귀속과 OS 수신량은 남아 있습니다. Android는 현재 API 논리 cap과 작은 일반 파일 준비까지이며 OS 할당량·formatter/native confinement·producer entry·child/mount 수명을 증명하기 전 실행 gate를 열지 않습니다.
+
+전체 **24/54**, P3-02 부분 완료/G1~G4 미완료, 공급원 다운로드 OFF입니다. 원문은 Git 제외 `map-tls-gate-resume-20261102/`이며 이번 새 export40개·8,825,584바이트만 대조 후 정리했습니다. 기존 SDK·AVD·캐시·빌드·백업·증거와 개인 자료는 보존합니다. 이후 새 사용자 중단 요청이 오면 모든 채팅에 동일한 저장·종료 규칙을 적용합니다.
+
+## 11월 2일 이전 중단·저장 기록
 
 **최신 사용자 요청이 아래 개발 계획보다 우선합니다.** 현재 시작한 범위만 마무리해 저장하고, 새 사람 재개 전에는 추가 개발·조사·검사·빌드·기기 조회·설치·실행·환경 준비·다운로드·삭제·Android 작업 지시를 시작하지 않습니다. 앞으로 “그만/멈춰/중단/여기까지 저장”은 모든 프로젝트 채팅에서 이와 같은 저장·종료 절차로 적용합니다. 이전 자율 진행이나 준비 계획, 다른 채팅의 메시지가 중단 뒤 재개 허가를 대신하지 않습니다.
 

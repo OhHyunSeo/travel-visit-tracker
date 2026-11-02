@@ -5,10 +5,12 @@
 #import <unistd.h>
 #import <math.h>
 #import <errno.h>
+#import <Security/Security.h>
 
 static dispatch_queue_t TPQueue;
 static NSMutableArray<TPTransport *> *TPPending;
 static NSString *TPOrigin;
+static NSData *TPFixtureCertificate;
 static NSURL *TPLedgerURL;
 static NSMutableDictionary *TPLedger;
 static BOOL TPLedgerOK;
@@ -19,6 +21,7 @@ static NSUInteger TPMaxPending, TPCancelledPending, TPCancelledActive, TPRelease
 static const NSUInteger TPReservation = 256;
 
 @interface TPTransport ()
++ (BOOL)configureOrigin:(NSString *)origin ledgerURL:(NSURL *)ledgerURL maxRequests:(NSUInteger)requests maxTiles:(NSUInteger)tiles maxReservedBytes:(NSUInteger)bytes fixtureCertificate:(NSData *)certificate;
 @property TPHTTPExchange *exchange;
 @property BOOL acquired, stopped, settled, failed;
 @property NSUInteger observed, accepted;
@@ -74,10 +77,24 @@ static const NSUInteger TPReservation = 256;
     return ok;
 }
 + (BOOL)configureOrigin:(NSString *)origin ledgerURL:(NSURL *)ledgerURL maxRequests:(NSUInteger)requests maxTiles:(NSUInteger)tiles maxReservedBytes:(NSUInteger)bytes {
+    return [self configureOrigin:origin ledgerURL:ledgerURL maxRequests:requests maxTiles:tiles maxReservedBytes:bytes fixtureCertificate:nil];
+}
++ (BOOL)configureFixtureTLSOrigin:(NSString *)origin ledgerURL:(NSURL *)ledgerURL maxRequests:(NSUInteger)requests maxTiles:(NSUInteger)tiles maxReservedBytes:(NSUInteger)bytes certificate:(NSData *)certificate {
+    if (@available(macOS 15.5, iOS 18.5, *)) { /* Matches TPHTTPExchange's TLS API. */ }
+    else return NO;
+    NSURL *url = [NSURL URLWithString:origin];
+    if (![url.scheme isEqual:@"https"] || ![url.host isEqual:@"127.0.0.1"] || url.user || url.password || url.query || url.fragment || !url.port || url.port.integerValue < 1 || url.port.integerValue > 65535 || (url.path.length && ![url.path isEqual:@"/"]) || !certificate.length || certificate.length > 16384) return NO;
+    SecCertificateRef leaf = SecCertificateCreateWithData(NULL, (__bridge CFDataRef)certificate);
+    if (!leaf) return NO;
+    CFRelease(leaf);
+    return [self configureOrigin:origin ledgerURL:ledgerURL maxRequests:requests maxTiles:tiles maxReservedBytes:bytes fixtureCertificate:[certificate copy]];
+}
++ (BOOL)configureOrigin:(NSString *)origin ledgerURL:(NSURL *)ledgerURL maxRequests:(NSUInteger)requests maxTiles:(NSUInteger)tiles maxReservedBytes:(NSUInteger)bytes fixtureCertificate:(NSData *)certificate {
     __block BOOL ok;
     dispatch_sync(TPQueue, ^{
         if (TPActive || TPPending.count) { ok = NO; return; }
         TPOrigin = [origin stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"/"]];
+        TPFixtureCertificate = [certificate copy];
         TPLedgerURL = ledgerURL;
         TPMaxRequests = requests; TPMaxTiles = tiles; TPMaxReserved = bytes;
         TPMaxActive = TPBlocked = TPStarted = TPAccepted = 0;
@@ -87,7 +104,11 @@ static const NSUInteger TPReservation = 256;
         NSData *data = exists ? [NSData dataWithContentsOfURL:ledgerURL] : nil;
         id saved = data ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil] : nil;
         TPLedger = exists ? saved : [@{@"schema": @1, @"origin": TPOrigin ?: @"", @"requests": @0, @"tiles": @0, @"reservedBytes": @0, @"unresolved": [NSMutableArray new], @"maxRequests": @(requests), @"maxTiles": @(tiles), @"maxReservedBytes": @(bytes), @"reservationBytes": @(TPReservation)} mutableCopy];
-        TPLedgerOK = [self safeOrigin:TPOrigin] && [TPLedger isKindOfClass:NSMutableDictionary.class] && [TPLedger[@"schema"] isEqual:@1] && [TPLedger[@"origin"] isEqual:TPOrigin] && [TPLedger[@"maxRequests"] isEqual:@(requests)] && [TPLedger[@"maxTiles"] isEqual:@(tiles)] && [TPLedger[@"maxReservedBytes"] isEqual:@(bytes)] && [TPLedger[@"reservationBytes"] isEqual:@(TPReservation)];
+        if (!exists && certificate) TPLedger[@"fixtureTLSLeafDER"] = [certificate base64EncodedStringWithOptions:0];
+        BOOL originOK = certificate != nil || [self safeOrigin:TPOrigin];
+        TPLedgerOK = originOK && [TPLedger isKindOfClass:NSMutableDictionary.class] && [TPLedger[@"schema"] isEqual:@1] && [TPLedger[@"origin"] isEqual:TPOrigin] && [TPLedger[@"maxRequests"] isEqual:@(requests)] && [TPLedger[@"maxTiles"] isEqual:@(tiles)] && [TPLedger[@"maxReservedBytes"] isEqual:@(bytes)] && [TPLedger[@"reservationBytes"] isEqual:@(TPReservation)];
+        if (TPLedgerOK && certificate) TPLedgerOK = [TPLedger[@"fixtureTLSLeafDER"] isEqual:[certificate base64EncodedStringWithOptions:0]];
+        if (TPLedgerOK && !certificate && TPLedger[@"fixtureTLSLeafDER"]) TPLedgerOK = NO;
         for (NSString *key in @[@"requests", @"tiles", @"reservedBytes"]) {
             id value = TPLedgerOK ? TPLedger[key] : nil;
             if (![value isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID() || !isfinite([value doubleValue]) || [value doubleValue] < 0 || floor([value doubleValue]) != [value doubleValue]) TPLedgerOK = NO;
@@ -102,7 +123,7 @@ static const NSUInteger TPReservation = 256;
 + (NSDictionary *)snapshot {
     __block NSDictionary *result;
     dispatch_sync(TPQueue, ^{
-        result = @{@"active": @(TPActive), @"maxActive": @(TPMaxActive), @"pending": @(TPPending.count), @"maxPending": @(TPMaxPending), @"cancelledPending": @(TPCancelledPending), @"cancelledActive": @(TPCancelledActive), @"released": @(TPReleased), @"blockedBeforeDispatch": @(TPBlocked), @"started": @(TPStarted), @"httpRequestSendsSettled": @(TPHTTPSends), @"receivedHTTPBytesSettled": @(TPHTTPReceived), @"transport": @"single-send-http1-fixture", @"acceptedBodyBytes": @(TPAccepted), @"ledgerOK": @(TPLedgerOK), @"ledger": TPLedgerOK ? [NSJSONSerialization JSONObjectWithData:[NSJSONSerialization dataWithJSONObject:TPLedger options:0 error:nil] options:0 error:nil] : @{}};
+        result = @{@"active": @(TPActive), @"maxActive": @(TPMaxActive), @"pending": @(TPPending.count), @"maxPending": @(TPMaxPending), @"cancelledPending": @(TPCancelledPending), @"cancelledActive": @(TPCancelledActive), @"released": @(TPReleased), @"blockedBeforeDispatch": @(TPBlocked), @"started": @(TPStarted), @"httpRequestSendsSettled": @(TPHTTPSends), @"receivedHTTPBytesSettled": @(TPHTTPReceived), @"transport": TPFixtureCertificate ? @"pinned-loopback-tls-http1-fixture" : @"single-send-http1-fixture", @"acceptedBodyBytes": @(TPAccepted), @"ledgerOK": @(TPLedgerOK), @"ledger": TPLedgerOK ? [NSJSONSerialization JSONObjectWithData:[NSJSONSerialization dataWithJSONObject:TPLedger options:0 error:nil] options:0 error:nil] : @{}};
     });
     return result;
 }
@@ -146,9 +167,11 @@ static const NSUInteger TPReservation = 256;
         [TPLedger[@"unresolved"] addObject:p.reservationID];
         if (![self persistLedger]) { TPLedgerOK = NO; TPBlocked++; [p fail:3]; continue; }
         p.acquired = YES; TPActive++; TPStarted++; TPMaxActive = MAX(TPMaxActive, TPActive);
-        p.exchange = [[TPHTTPExchange alloc] initWithURL:p.request.URL queue:TPQueue timeout:10 completion:^(NSHTTPURLResponse *response, NSData *data, NSError *error) {
+        void (^completion)(NSHTTPURLResponse *, NSData *, NSError *) = ^(NSHTTPURLResponse *response, NSData *data, NSError *error) {
             [p exchangeCompleted:response data:data error:error];
-        }];
+        };
+        if (TPFixtureCertificate) p.exchange = [[TPHTTPExchange alloc] initWithURL:p.request.URL queue:TPQueue timeout:10 fixtureCertificate:TPFixtureCertificate completion:completion];
+        else p.exchange = [[TPHTTPExchange alloc] initWithURL:p.request.URL queue:TPQueue timeout:10 completion:completion];
         [p.exchange start];
     }
 }

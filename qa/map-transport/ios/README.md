@@ -1,5 +1,19 @@
 # iPhone 지도 통신 시험 앱
 
+## 2026-11-02 후속: HTTPS 장부와 전역 자리 수명
+
+`configureFixtureTLSOrigin`이 연결별 TLS를 기존 `TPTransport`의 장부와 대기열에 묶습니다. 명시적 loopback HTTPS와 최대16KiB DER만 허용하며, 같은 origin·한도·leaf DER가 저장 장부와 일치해야 다시 열립니다. pin 변경과 잘못된 입력은 기존 파일을 바꾸지 않습니다. 기본 HTTP 생성자와 `safeOrigin`은 유지하고, SDK 앱이나 제품에 HTTPS를 자동으로 열지 않습니다.
+
+Mac 실제 TLS gate8개가 통과했습니다. 정상 요청·정상 종료 후 새 process의 장부 재개와 세 번째 한도 거절, 잘린 응답의 명시적 재시도, HTTP를 쓰기 전 신뢰 실패의 예약 유지, pin 변경 거절, 네 자리 뒤의 대기와 대기/전송 중 중복 취소를 대조했습니다. 첫 네 응답을 보류했을 때 native active4/pending4와 서버 도착4를 확인했습니다. 서버 peak는 보류된 응답 본문 수이며 동시에 살아 있는 TLS socket 수의 보장은 아닙니다. native 자리는 handshake부터 응답·로컬 취소 완료까지 유지됩니다.
+
+추가 사례는 Mac CLI를 실제 SIGKILL한 뒤 새 process에서 같은 장부를 읽었습니다. 전송4·대기4에서 남은 기존 예약1,024바이트와 미확정 ID4개가 보존됐고, 새 요청8개 완료 후3,072바이트와 기존 미확정4개가 남았습니다. 서버는 총12회 도착, 새 process는 시작/반환/송신8회입니다. 원래 작업의 자동 재개, iPhone·Release·전원 종료나 같은 SDK 작업 재시도의 결과는 아닙니다.
+
+```sh
+python3 -B -m unittest discover -s qa/map-transport/ios -p 'test_tls_transport.py'
+```
+
+저장된 DER는 시험 인증서의 공개 bytes이며 private key는 장부에 넣지 않습니다. suite의 임시 키·인증서·장부·binary와 소유 process는 종료 때 정리합니다. 같은 소스의 iOS arm64 문법·API 확인은 통과했지만 새 signed app/SDK HTTPS/기기 실행은 NOT RUN입니다. 이전 iPhone 근거를 이 helper 변경의 기기 통과로 옮기지 않습니다. 공개 공급원·HTTP2 구현·팩 귀속과 OS 수신량 상한은 남아 있습니다.
+
 ## 2026-11-02 Mac 안에서만 확인한 TLS 기본 경로
 
 `TPHTTPExchange`에 별도 TLS 시험 생성자를 추가했습니다. `127.0.0.1`의 명시적 HTTPS 포트와 최대 16KiB의 DER 인증서만 받으며, 기존 생성자와 `TPTransport`의 HTTP 전용 동작은 유지합니다. MapLibre나 영속 장부에 HTTPS를 연결하지 않았고 제품 소스·의존성도 바꾸지 않았습니다.
@@ -16,7 +30,7 @@ python3 -B -m unittest discover -s qa/map-transport/ios -p 'test_tls_exchange.py
 
 임시 키·인증서·실행 파일은 이 suite가 새로 만든 폴더 안에만 두고 종료 때 정리합니다. 일반 검사와 Cloud CI에서는 Apple framework가 없는 환경의 7개를 명시적으로 건너뜁니다. iOS arm64 문법·API 확인과 QA 프로젝트의 Security.framework 연결은 별도로 점검하며, 새 iPhone 앱 빌드·설치·실행과 SDK HTTPS 검증은 NOT RUN입니다. 이전 `eaa88af` iPhone 취소 두 사례를 새 TLS 소스의 기기 통과로 바꾸지 않습니다.
 
-이 TLS 생성자는 `TPTransport`의 대기열·영속 예약을 우회하는 작은 호스트 시험입니다. 이전 HTTP의 최대 동시 4와 예약 유지 근거를 HTTPS에 그대로 적용하지 않습니다. 다음은 이 안전한 TLS 연결과 장부를 함께 묶는 작은 시험이며 공개 공급원과 OS 수신량 상한은 미완료입니다.
+위 직접 TLS 생성자의7개는 gate를 우회한 기본 시험입니다. 후속의 gate8개는 별도 구간에서 장부·전역 자리를 함께 확인하며, 두 결과를 구분합니다. 공개 공급원과 OS 수신량 상한은 미완료입니다.
 
 구현 근거는 Apple의 [TLS 검증 콜백](https://developer.apple.com/documentation/security/sec_protocol_options_set_verify_block(_:_:_:)), [비동기 신뢰 평가](https://developer.apple.com/documentation/security/sectrustevaluateasyncwitherror(_:_:_:))와 로컬 SDK 헤더입니다. 임시 서버의 TLS·ALPN은 Python의 [ssl 문서](https://docs.python.org/3/library/ssl.html)를 따릅니다.
 

@@ -12,6 +12,12 @@ import unittest
 
 ROOT = Path(__file__).resolve().parent
 
+def make_certificate(directory, name, san):
+    config = directory / (name + ".cnf")
+    config.write_text("[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=Loopback QA\n[ext]\nsubjectAltName=" + san + "\nbasicConstraints=critical,CA:false\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n")
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-config", str(config), "-keyout", str(directory / (name + ".key")), "-out", str(directory / (name + ".pem"))], check=True, capture_output=True)
+    subprocess.run(["openssl", "x509", "-in", str(directory / (name + ".pem")), "-outform", "DER", "-out", str(directory / (name + ".der"))], check=True, capture_output=True)
+
 
 class TLSFixture:
     def __init__(self, certificate, key, protocols=("http/1.1",), response=None, handshake_hold=False):
@@ -119,10 +125,7 @@ class TLSExchangeTests(unittest.TestCase):
 
     @classmethod
     def make_certificate(cls, name, san):
-        config = cls.directory / (name + ".cnf")
-        config.write_text("[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=Loopback QA\n[ext]\nsubjectAltName=" + san + "\nbasicConstraints=critical,CA:false\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n")
-        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-config", str(config), "-keyout", str(cls.directory / (name + ".key")), "-out", str(cls.directory / (name + ".pem"))], check=True, capture_output=True)
-        subprocess.run(["openssl", "x509", "-in", str(cls.directory / (name + ".pem")), "-outform", "DER", "-out", str(cls.directory / (name + ".der"))], check=True, capture_output=True)
+        make_certificate(cls.directory, name, san)
 
     @classmethod
     def make_issued_certificate(cls):

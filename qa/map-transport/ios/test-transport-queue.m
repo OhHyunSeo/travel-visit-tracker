@@ -16,12 +16,15 @@ static BOOL Write(NSDictionary *value, NSString *path) {
 }
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
-        if (argc != 4) return 2;
+        if (argc != 4 && argc != 5) return 2;
         NSString *origin = [NSString stringWithUTF8String:argv[1]];
         NSString *ledger = [NSString stringWithUTF8String:argv[2]];
         NSString *mode = [NSString stringWithUTF8String:argv[3]];
-        if (![@[@"queue", @"pending-cancel", @"active-cancel"] containsObject:mode] ||
-            ![TPTransport configureOrigin:origin ledgerURL:[NSURL fileURLWithPath:ledger] maxRequests:16 maxTiles:16 maxReservedBytes:4096]) return 3;
+        if (![@[@"queue", @"pending-cancel", @"active-cancel"] containsObject:mode]) return 3;
+        BOOL configured;
+        if (argc == 5) configured = [TPTransport configureFixtureTLSOrigin:origin ledgerURL:[NSURL fileURLWithPath:ledger] maxRequests:16 maxTiles:16 maxReservedBytes:4096 certificate:[NSData dataWithContentsOfFile:[NSString stringWithUTF8String:argv[4]]]];
+        else configured = [TPTransport configureOrigin:origin ledgerURL:[NSURL fileURLWithPath:ledger] maxRequests:16 maxTiles:16 maxReservedBytes:4096];
+        if (!configured) return 3;
         NSURLSessionConfiguration *config = NSURLSessionConfiguration.ephemeralSessionConfiguration;
         config.protocolClasses = @[TPTransport.class]; config.URLCache = nil;
         config.HTTPCookieStorage = nil; config.URLCredentialStorage = nil;

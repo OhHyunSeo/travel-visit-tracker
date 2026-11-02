@@ -1,5 +1,13 @@
 # 오프라인 지도 요청 제어 검토
 
+## 2026-11-02 최신: HTTPS 장부와 대기열 확인
+
+선택적 loopback TLS를 같은 영속 장부·전역 자리 수명에 연결했고 Mac 실제 gate8개를 통과했습니다. 기존 TLS기본7과 구분하며, pin/한도/origin 고정·실패/명시적 재시도·대기/취소 및 실제 CLI SIGKILL 뒤 기존 미확정4개·예약 보존을 확인했습니다. [세부 범위](../qa/map-transport/ios/README.md)를 따릅니다. native permit과 보류 응답 본문 수를 관측했으며 모든 TLS socket 수나 OS 전체 수신량을 보장한 결과는 아닙니다.
+
+Android 준비 코드 네 파일도 `899d98e`에서 선택 통합해 같은 소스로118개를 실행했습니다. 실제 작은 일반 파일의 논리 cap·부분 실패·예약과 정리 보고까지이며 formatter/mount/producer/AVD/native gate는 계속 닫혀 있습니다. [준비 범위](ANDROID_CONTROLLER_PREPARATION.md)에 적었습니다.
+
+새 signed app/SDK HTTPS·기기 실행, HTTP/2·RN JS·글꼴·아이콘·팩 귀속과 OS 수신량은 미완료입니다. 전체24/54/P3-02 부분 완료/G1~G4 미완료와 공급원 다운로드 OFF를 유지합니다.
+
 ## 2026-11-02 TLS 기본 경로의 호스트 확인
 
 별도 Mac loopback TLS 검사 7개가 정상 인증서·호스트·leaf, ALPN과 한 번 송신, 잘못된 인증서·호스트·입력과 실제 h2 선택의 전송 전 거절, handshake 대기 중 취소·제한 시간과 잘린/추가 HTTP 본문을 확인했습니다. 시스템 신뢰 설정은 바꾸지 않고 연결별 임시 leaf만 사용합니다. [실행 범위와 원문 근거](../qa/map-transport/ios/README.md)를 확인해 주세요.

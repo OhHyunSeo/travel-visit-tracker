@@ -1,5 +1,13 @@
 # Android 지도 전송 시험 앱
 
+## 11월 2일 선택 통합: controller 기록과 준비 흐름
+
+Android worktree `899d98e`의 Python 네 파일만 검토해 공통 checkout에 가져왔습니다. 기존 이 README와 전송 도구는 보존하고 설명을 추가했습니다. 이 소스에서 기존64개와 새54개를 함께 실행한 **118개 host 검사**가 통과했습니다. 별도 branch의 결과를 단순 합산한 수치가 아닙니다.
+
+`bounded_controller.py`는 준비 controller의 유한한 파일 목록과 논리 cap, 소유 descriptor와 변경 감지를 다룹니다. `prepare_controller.py`는 events/canary/output/result를 기록하고 실제 close 상태를 반환합니다. 선택적 `capacity.raw`는512-byte 배수·최대64MiB를 생성 전에 검증하고, 최대64KiB zero buffer로 한 번만 초기화합니다. 실패한 부분 파일과 예약을 보존하며 정상 준비도 BLOCKED/exit2입니다.
+
+실제 positive 검사는512/1024-byte **합성 일반 파일**을 사용했습니다. 이미지 형식화·mount·userdata 생성기·AVD·emulator·ADB/native는 실행하지 않았습니다. 이 trusted API의 논리 한도를 OS 할당량·임의 native process의 쓰기 차단으로 확대하지 않습니다. 기존 native admission은 계속 닫혀 있습니다. 자세한 범위는 [준비 도구 설명](../../../docs/ANDROID_CONTROLLER_PREPARATION.md)에 있습니다.
+
 ## 11월 1일 fresh 생성 표식의 읽기 전용 확인
 
 `bounded_avd_storage.py`가 `data/empty_data_disk`도 최대 64KiB로 읽고 크기와 SHA-256을 남깁니다. 빈 표식은 허용하되 링크·FIFO·초과 크기와 읽기 전후 변경은 거절합니다. 큰 이미지 본문은 읽거나 복사하지 않습니다. 현재 cached 표식은 107바이트였고 host 회귀는 64개 PASS입니다.
