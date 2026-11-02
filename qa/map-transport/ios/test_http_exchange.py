@@ -140,7 +140,7 @@ class SingleExchangeTests(unittest.TestCase):
         subprocess.run([
             "xcrun", "clang", "-fobjc-arc", "-fblocks", "-Wall", "-Wextra",
             "-Wno-unused-parameter", "-Wno-incompatible-pointer-types", "-Werror",
-            "-isysroot", sdk, "-framework", "Foundation", "-framework", "Network",
+            "-isysroot", sdk, "-framework", "Foundation", "-framework", "Network", "-framework", "Security",
             str(ROOT / "test-http-exchange.m"), str(ROOT / "TPHTTPExchange.m"),
             str(ROOT / "TPTransport.m"), "-o", str(cls.binary),
         ], check=True, capture_output=True, text=True)
@@ -148,7 +148,7 @@ class SingleExchangeTests(unittest.TestCase):
         subprocess.run([
             "xcrun", "clang", "-fobjc-arc", "-fblocks", "-Wall", "-Wextra",
             "-Wno-unused-parameter", "-Wno-incompatible-pointer-types", "-Werror",
-            "-isysroot", sdk, "-framework", "Foundation", "-framework", "Network",
+            "-isysroot", sdk, "-framework", "Foundation", "-framework", "Network", "-framework", "Security",
             str(ROOT / "test-transport-queue.m"), str(ROOT / "TPHTTPExchange.m"),
             str(ROOT / "TPTransport.m"), "-o", str(cls.queue_binary),
         ], check=True, capture_output=True, text=True)

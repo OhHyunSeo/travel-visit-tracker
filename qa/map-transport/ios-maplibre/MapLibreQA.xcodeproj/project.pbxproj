@@ -16,9 +16,11 @@
         C30000000000000000000001 = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 10; files = (C10000000000000000000002); name = "Embed MapLibre"; runOnlyForDeploymentPostprocessing = 0; };
         B10000000000000000000001 = {isa = PBXBuildFile; fileRef = B20000000000000000000001; };
         B10000000000000000000002 = {isa = PBXBuildFile; fileRef = B20000000000000000000003; };
+        B10000000000000000000003 = {isa = PBXBuildFile; fileRef = B20000000000000000000004; };
         B20000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "../ios/TPHTTPExchange.m"; sourceTree = "<group>"; };
         B20000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "../ios/TPHTTPExchange.h"; sourceTree = "<group>"; };
         B20000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
+        B20000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		A10000000000000000000001 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* main.m */; };
 		A10000000000000000000002 /* TPTransport.m in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* TPTransport.m */; };
 		A10000000000000000000003 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* UIKit.framework */; };
@@ -33,7 +35,7 @@
 		A30000000000000000000001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
-			files = (C10000000000000000000001, B10000000000000000000002, A10000000000000000000003, A10000000000000000000004);
+			files = (C10000000000000000000001, B10000000000000000000002, B10000000000000000000003, A10000000000000000000003, A10000000000000000000004);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A40000000000000000000001 = {
@@ -41,7 +43,7 @@
 			children = (D20000000000000000000001, D20000000000000000000002, C20000000000000000000001, C20000000000000000000002, B20000000000000000000001, B20000000000000000000002, A20000000000000000000001, A20000000000000000000002, A20000000000000000000003, A20000000000000000000004, A40000000000000000000002, A40000000000000000000003);
 			sourceTree = "<group>";
 		};
-		A40000000000000000000002 /* Frameworks */ = {isa = PBXGroup; children = (B20000000000000000000003, A20000000000000000000005, A20000000000000000000006); name = Frameworks; sourceTree = "<group>"; };
+		A40000000000000000000002 /* Frameworks */ = {isa = PBXGroup; children = (B20000000000000000000003, B20000000000000000000004, A20000000000000000000005, A20000000000000000000006); name = Frameworks; sourceTree = "<group>"; };
 		A40000000000000000000003 /* Products */ = {isa = PBXGroup; children = (A20000000000000000000007); name = Products; sourceTree = "<group>"; };
 		A50000000000000000000001 /* MapLibreQA */ = {
 			isa = PBXNativeTarget;

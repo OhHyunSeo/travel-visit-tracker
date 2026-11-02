@@ -1,5 +1,25 @@
 # iPhone 지도 통신 시험 앱
 
+## 2026-11-02 Mac 안에서만 확인한 TLS 기본 경로
+
+`TPHTTPExchange`에 별도 TLS 시험 생성자를 추가했습니다. `127.0.0.1`의 명시적 HTTPS 포트와 최대 16KiB의 DER 인증서만 받으며, 기존 생성자와 `TPTransport`의 HTTP 전용 동작은 유지합니다. MapLibre나 영속 장부에 HTTPS를 연결하지 않았고 제품 소스·의존성도 바꾸지 않았습니다.
+
+인증서는 해당 연결의 trust 객체에만 적용합니다. 지정한 anchor만 사용하고 호스트 이름, 인증서 체인과 실제 leaf DER를 함께 대조하며 인증서 검증의 네트워크 가져오기를 끕니다. Keychain이나 시스템 신뢰 설정은 바꾸지 않습니다. 신뢰 평가는 비동기로 수행해 전송 제한 시간의 큐를 막지 않으며, 취소 뒤 완료되는 평가에는 전송을 허용하지 않도록 했습니다. 이 마지막 분기는 소스 검토 범위이며 실제 늦은 trust callback을 관찰한 결과는 아닙니다.
+
+시험은 `http/1.1`과 `h2`를 제안하되 선택 결과가 정확히 `http/1.1`일 때만 HTTP를 씁니다. 실제 `h2` 선택과 ALPN 없음은 HTTP 쓰기 전에 거절했습니다. HTTP/2 구현이나 수용 통과로 세지 않습니다. ALPN 문자열을 복사하는 API 때문에 이 선택적 TLS 시험은 macOS 15.5/iOS 18.5 이상에서만 허용하며, 더 이른 환경에서는 거절합니다. 기존 HTTP 경로의 지원 범위는 바꾸지 않습니다.
+
+Mac의 실제 loopback TLS 검사 7개가 통과했습니다. 정상 인증서·호스트의 한 번 송신, 다른 인증서·호스트 거절, 신뢰 체인이 맞아도 다른 leaf인 경우 거절, ALPN 정책, 잘못된 DER·공개/DNS/LAN·평문 입력의 접속 전 거절, 미완료 handshake의 제한 시간·중복 취소와 100ms 내 단일 완료, TLS 후 잘린/추가 HTTP 본문 거절입니다. 서버 도착 수와 native 결과를 함께 대조합니다.
+
+```sh
+python3 -B -m unittest discover -s qa/map-transport/ios -p 'test_tls_exchange.py'
+```
+
+임시 키·인증서·실행 파일은 이 suite가 새로 만든 폴더 안에만 두고 종료 때 정리합니다. 일반 검사와 Cloud CI에서는 Apple framework가 없는 환경의 7개를 명시적으로 건너뜁니다. iOS arm64 문법·API 확인과 QA 프로젝트의 Security.framework 연결은 별도로 점검하며, 새 iPhone 앱 빌드·설치·실행과 SDK HTTPS 검증은 NOT RUN입니다. 이전 `eaa88af` iPhone 취소 두 사례를 새 TLS 소스의 기기 통과로 바꾸지 않습니다.
+
+이 TLS 생성자는 `TPTransport`의 대기열·영속 예약을 우회하는 작은 호스트 시험입니다. 이전 HTTP의 최대 동시 4와 예약 유지 근거를 HTTPS에 그대로 적용하지 않습니다. 다음은 이 안전한 TLS 연결과 장부를 함께 묶는 작은 시험이며 공개 공급원과 OS 수신량 상한은 미완료입니다.
+
+구현 근거는 Apple의 [TLS 검증 콜백](https://developer.apple.com/documentation/security/sec_protocol_options_set_verify_block(_:_:_:)), [비동기 신뢰 평가](https://developer.apple.com/documentation/security/sectrustevaluateasyncwitherror(_:_:_:))와 로컬 SDK 헤더입니다. 임시 서버의 TLS·ALPN은 Python의 [ssl 문서](https://docs.python.org/3/library/ssl.html)를 따릅니다.
+
 ## 2026-11-01 Mac에서 대기와 중복 취소 확인
 
 `test-transport-queue.m`은 첫 네 응답 본문을 보류한 실제 loopback 서버와 함께 여덟 요청을 검사합니다. native 대기 4개와 서버 도착 4개를 대조한 뒤 본문을 풀어 다섯 번째가 먼저 전송되지 않는지 확인합니다. 대기 요청의 두 번 취소는 전송·예약 없이 빠지고, 전송 중 두 번 취소는 native 종료 callback 뒤 한 번만 자리를 반환하며 이전 예약은 남깁니다. 원본 자료 대신 임시 장부와 합성 본문을 사용합니다.

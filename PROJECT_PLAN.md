@@ -2,7 +2,7 @@
 
 작성일: 2026-10-11, Asia/Seoul  
 목표 플랫폼: Android, iOS  
-현재 상태: 2026-11-02 후속. 별도 물리 iPhone에서 실제 SDK 전송·대기 취소와 같은 경로의 수동 재로딩 두 사례를 확인했습니다. 예약 장부와 서버 도착을 대조했고 제품 코드·의존성은 그대로입니다. RN JS 초기화, 글꼴·아이콘, TLS/HTTP2·영속 팩과 OS 수신량, 제한된 Android fresh 환경은 남아 있습니다. 전체 24/54, P3-02 부분 완료와 G1~G4 미완료입니다. [재개 순서](docs/RESUME.md)에서 이어갑니다.
+현재 상태: 2026-11-02 후속. 별도 iPhone의 SDK 취소·수동 재로딩 두 사례에 이어 Mac loopback TLS 기본 검사 7개와 전체 공통 검사가 통과했습니다. Android 개발·검증 채팅도 기존 worktree에서 안전한 fresh 시험 환경 준비를 재개했습니다. HTTPS의 장부·전역 제한과 SDK 연결, HTTP/2·RN JS·글꼴·아이콘·OS 수신량은 남았습니다. 전체 24/54, P3-02 부분 완료와 G1~G4 미완료입니다. [재개 순서](docs/RESUME.md)에서 이어갑니다.
 추천 개발 방식: React Native + Expo 개발 빌드 + TypeScript
 
 ## 1. 제품 목표와 첫 버전의 범위

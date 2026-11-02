@@ -1,5 +1,6 @@
 #import "TPHTTPExchange.h"
 #import <Network/Network.h>
+#import <Security/Security.h>
 #import <arpa/inet.h>
 #import <math.h>
 
@@ -17,13 +18,22 @@ static const NSUInteger TPHeaderLimit = 8192, TPBodyLimit = 256;
 @property NSError *failure;
 @property NSUInteger contentLength, requestSendCount, receivedHTTPBytes;
 @property BOOL started, finishing, completed;
+@property BOOL fixtureTLS, trustAccepted, chainTrusted;
+@property NSData *fixtureCertificate;
+@property NSString *negotiatedProtocol;
 @end
 
 @implementation TPHTTPExchange
 - (instancetype)initWithURL:(NSURL *)url queue:(dispatch_queue_t)queue timeout:(NSTimeInterval)timeout completion:(void (^)(NSHTTPURLResponse *, NSData *, NSError *))completion {
     if ((self = [super init])) {
         _url = url; _queue = queue; _timeout = timeout; _completion = [completion copy];
-        _header = [NSMutableData new]; _body = [NSMutableData new];
+        _header = [NSMutableData new]; _body = [NSMutableData new]; _negotiatedProtocol = @"none";
+    }
+    return self;
+}
+- (instancetype)initWithURL:(NSURL *)url queue:(dispatch_queue_t)queue timeout:(NSTimeInterval)timeout fixtureCertificate:(NSData *)certificate completion:(void (^)(NSHTTPURLResponse *, NSData *, NSError *))completion {
+    if ((self = [self initWithURL:url queue:queue timeout:timeout completion:completion])) {
+        _fixtureTLS = YES; _fixtureCertificate = [certificate copy];
     }
     return self;
 }
@@ -47,9 +57,17 @@ static const NSUInteger TPHeaderLimit = 8192, TPBodyLimit = 256;
 - (BOOL)validURL {
     NSURLComponents *parts = [NSURLComponents componentsWithURL:self.url resolvingAgainstBaseURL:NO];
     struct in_addr address;
-    if (![parts.scheme isEqual:@"http"] || !parts.port || parts.port.integerValue < 1 || parts.port.integerValue > 65535 || parts.user || parts.password || parts.fragment || inet_pton(AF_INET, parts.host.UTF8String, &address) != 1) return NO;
+    if (![parts.scheme isEqual:self.fixtureTLS ? @"https" : @"http"] || !parts.port || parts.port.integerValue < 1 || parts.port.integerValue > 65535 || parts.user || parts.password || parts.fragment || inet_pton(AF_INET, parts.host.UTF8String, &address) != 1) return NO;
     uint32_t ip = ntohl(address.s_addr);
     if ((ip >> 24) != 127 && (ip >> 24) != 10 && (ip >> 20) != 0xac1 && (ip >> 16) != 0xc0a8) return NO;
+    if (self.fixtureTLS) {
+        if (ip != 0x7f000001 || !self.fixtureCertificate.length || self.fixtureCertificate.length > 16384) return NO;
+        if (@available(macOS 15.5, iOS 18.5, *)) { /* Modern, copied ALPN metadata. */ }
+        else return NO;
+        SecCertificateRef certificate = SecCertificateCreateWithData(NULL, (__bridge CFDataRef)self.fixtureCertificate);
+        if (!certificate) return NO;
+        CFRelease(certificate);
+    }
     NSString *target = [self requestTarget];
     NSData *bytes = [target dataUsingEncoding:NSASCIIStringEncoding allowLossyConversion:NO];
     if (!bytes || ![target hasPrefix:@"/resource/"] || bytes.length > 1024) return NO;
@@ -61,18 +79,77 @@ static const NSUInteger TPHeaderLimit = 8192, TPBodyLimit = 256;
     NSURLComponents *parts = [NSURLComponents componentsWithURL:self.url resolvingAgainstBaseURL:NO];
     return parts.percentEncodedQuery ? [NSString stringWithFormat:@"%@?%@", parts.percentEncodedPath, parts.percentEncodedQuery] : parts.percentEncodedPath;
 }
+- (void)configureFixtureTLS:(nw_protocol_options_t)tls {
+    sec_protocol_options_t options = nw_tls_copy_sec_protocol_options(tls);
+    sec_protocol_options_set_min_tls_protocol_version(options, tls_protocol_version_TLSv12);
+    sec_protocol_options_set_peer_authentication_required(options, true);
+    sec_protocol_options_set_tls_resumption_enabled(options, false);
+    sec_protocol_options_set_tls_tickets_enabled(options, false);
+    sec_protocol_options_set_tls_false_start_enabled(options, false);
+    // Offer h2 only to observe and refuse its selection before any HTTP write.
+    sec_protocol_options_add_tls_application_protocol(options, "http/1.1");
+    sec_protocol_options_add_tls_application_protocol(options, "h2");
+    NSData *certificateBytes = self.fixtureCertificate;
+    NSString *host = self.url.host;
+    __weak TPHTTPExchange *weakSelf = self;
+    sec_protocol_options_set_verify_block(options, ^(sec_protocol_metadata_t metadata, sec_trust_t peer, sec_protocol_verify_complete_t complete) {
+        TPHTTPExchange *owner = weakSelf;
+        if (!owner || owner.finishing) { complete(false); return; }
+        SecTrustRef trust = sec_trust_copy_ref(peer);
+        SecCertificateRef anchor = SecCertificateCreateWithData(NULL, (__bridge CFDataRef)certificateBytes);
+        SecPolicyRef policy = SecPolicyCreateSSL(true, (__bridge CFStringRef)host);
+        BOOL configured = trust && anchor && policy;
+        if (configured) configured = SecTrustSetPolicies(trust, policy) == errSecSuccess && SecTrustSetAnchorCertificates(trust, (__bridge CFArrayRef)@[(__bridge id)anchor]) == errSecSuccess && SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess && SecTrustSetNetworkFetchAllowed(trust, false) == errSecSuccess;
+        if (anchor) CFRelease(anchor);
+        if (policy) CFRelease(policy);
+        if (!configured) { if (trust) CFRelease(trust); complete(false); return; }
+        // Evaluate off the timer path; each invocation completes once, even if
+        // trust finishes after cancellation. No system trust changes or network fetching.
+        OSStatus status = SecTrustEvaluateAsyncWithError(trust, owner.queue, ^(SecTrustRef evaluated, bool trusted, CFErrorRef error) {
+            CFArrayRef chain = SecTrustCopyCertificateChain(evaluated);
+            CFDataRef leaf = chain && CFArrayGetCount(chain) ? SecCertificateCopyData((SecCertificateRef)CFArrayGetValueAtIndex(chain, 0)) : NULL;
+            BOOL exactLeaf = leaf && [certificateBytes isEqual:(__bridge NSData *)leaf];
+            if (leaf) CFRelease(leaf);
+            if (chain) CFRelease(chain);
+            TPHTTPExchange *current = weakSelf;
+            BOOL accepted = trusted && exactLeaf && current && !current.finishing;
+            if (current && !current.finishing) { current.chainTrusted = trusted; current.trustAccepted = accepted; }
+            complete(accepted);
+            CFRelease(trust);
+        });
+        if (status != errSecSuccess) { CFRelease(trust); complete(false); }
+    }, self.queue);
+}
+- (BOOL)fixtureProtocolAllowed {
+    if (@available(macOS 15.5, iOS 18.5, *)) {
+        nw_protocol_metadata_t metadata = nw_connection_copy_protocol_metadata(self.connection, nw_protocol_copy_tls_definition());
+        if (!metadata) return NO;
+        sec_protocol_metadata_t security = nw_tls_copy_sec_protocol_metadata(metadata);
+        char *protocol = security ? sec_protocol_metadata_copy_negotiated_protocol(security) : NULL;
+        NSString *selected = protocol ? [NSString stringWithUTF8String:protocol] : nil;
+        self.negotiatedProtocol = selected ?: (protocol ? @"invalid" : @"none");
+        free(protocol);
+        return self.trustAccepted && [self.negotiatedProtocol isEqual:@"http/1.1"];
+    }
+    return NO;
+}
 - (void)start {
     if (self.started || self.finishing) return;
     self.started = YES;
     if (![self validURL]) { [self finish:1]; return; }
-    nw_parameters_t parameters = nw_parameters_create_secure_tcp(NW_PARAMETERS_DISABLE_PROTOCOL, NW_PARAMETERS_DEFAULT_CONFIGURATION);
+    nw_parameters_t parameters;
+    if (self.fixtureTLS) parameters = nw_parameters_create_secure_tcp(^(nw_protocol_options_t tls) { [self configureFixtureTLS:tls]; }, NW_PARAMETERS_DEFAULT_CONFIGURATION);
+    else parameters = nw_parameters_create_secure_tcp(NW_PARAMETERS_DISABLE_PROTOCOL, NW_PARAMETERS_DEFAULT_CONFIGURATION);
     nw_endpoint_t endpoint = nw_endpoint_create_host(self.url.host.UTF8String, self.url.port.stringValue.UTF8String);
     self.connection = nw_connection_create(endpoint, parameters);
     nw_connection_set_queue(self.connection, self.queue);
     nw_connection_set_state_changed_handler(self.connection, ^(nw_connection_state_t state, nw_error_t error) {
         if (state == nw_connection_state_cancelled) { [self deliver]; return; }
         if (self.finishing) return;
-        if (state == nw_connection_state_ready) [self sendOnce];
+        if (state == nw_connection_state_ready) {
+            if (self.fixtureTLS && ![self fixtureProtocolAllowed]) [self finish:11];
+            else [self sendOnce];
+        }
         else if (state == nw_connection_state_failed || state == nw_connection_state_waiting) [self finish:2];
     });
     self.timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, self.queue);

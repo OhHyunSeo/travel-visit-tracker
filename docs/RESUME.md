@@ -1,5 +1,19 @@
 # 여기서 이어서 개발하기
 
+## 11월 2일 후속: TLS 기본 경로와 병렬 역할
+
+사용자가 개발 재개와 별도 Android 채팅의 사용 여부를 확인했습니다. **Android 개발·검증** 채팅을 기존 worktree에서 다시 진행하고, 현재 채팅은 공통·iOS를 맡습니다. Android는 공통 `eaa88af`의 준비 코드를 읽기 전용으로 검토하고 자체 진행·제안 문서만 수정합니다. 자동 worktree 동기화나 동시 공통 코드 수정, SDK·의존성 설치와 새 emulator/ADB 실행은 하지 않습니다. [현재 역할](PARALLEL_DEVELOPMENT.md)을 따릅니다.
+
+Mac의 TLS 실제 검사 7개 PASS입니다. 별도 생성자는 `https://127.0.0.1:PORT`와 최대 16KiB DER leaf만 허용합니다. 해당 연결에만 anchor를 설정하고 SSL 호스트·체인과 정확한 leaf를 확인하며 네트워크 인증서 가져오기를 끕니다. ALPN은 http/1.1과 h2를 제안하되 정확히 http/1.1 선택일 때만 HTTP를 씁니다. 실제 h2 선택·ALPN 없음, 다른 인증서·호스트와 유효한 CA의 다른 leaf는 전송 전에 거절됐습니다. 미완료 handshake의 제한 시간·중복 취소, 100ms 안의 단일 완료, TLS 후 부분/추가 본문도 확인했습니다. 시스템 인증서·Keychain 설정 변경은 없으며 임시 키·인증서·binary는 suite 종료 때 정리합니다.
+
+최종 전체 verifier exit0 PASS: 모바일 609/서버 61/합성 서버 23/Android 호스트 64/Mac HTTP13·TLS7/합성 보고서13/임시 HTTP·SQLite·파일/Android+iOS JS-Hermes. iOS arm64 문법·API와 QA 프로젝트 Security.framework 연결 설정은 확인했지만 새 signed app 빌드·설치·기기 실행은 NOT RUN입니다. 새로운 shared helper 소스의 기기 통과로 이전 `eaa88af`의 결과를 옮기지 않습니다. 공급원과 제품 소스·의존성은 그대로입니다.
+
+이 TLS probe는 `TPTransport` 대기열·장부를 우회합니다. 현재 `TPTransport`와 SDK 앱의 origin은 HTTP 전용이며 아직 HTTPS를 열지 않습니다. 이전 global4/영속 예약 근거를 TLS에 적용하지 않습니다. ALPN 문자열 복사 API를 쓰므로 이 선택적 probe는 macOS15.5/iOS18.5 이상에서만 허용합니다. 미완료 handshake 검사를 실제 늦은 SecTrust callback 검증으로 확대하지 않습니다.
+
+다음 공통 항목은 TLS 설정을 같은 영속 장부·전역 자리 수명에 묶는 작은 host 검사입니다. 실패·명시적 재시도·재실행 뒤 예산 유지와 HTTP 쓰기 수를 확인한 뒤 SDK/iPhone을 별도로 준비합니다. 실제 HTTP/2 구현, RN JS·글꼴·아이콘과 팩 귀속·OS 수신량은 미완료입니다. Android는 fresh 생성의 최소 용량과 모든 파일·자식·FD 제한을 증명하기 전 native 진입을 열지 않습니다. 전체 **24/54**, P3-02 부분 완료와 G1~G4 미완료를 유지합니다.
+
+원문은 Git 제외 `map-tls-host-20261102/`입니다. 새 export40개·8,825,583바이트만 해시 대조 후 정리했고 이전 SDK·AVD·캐시·빌드·백업·증거는 보존했습니다. 이번 기기 조회·설치·실행과 개인 DB·사진·인증 열기는 0입니다.
+
 ## 11월 2일 재개: SDK 취소와 같은 경로 재로딩 확인
 
 사용자가 다시 진행하도록 요청해 아래 중단 지점에서 이어갔습니다. 이번 signed Debug 물리 iPhone의 새 소스 두 사례 PASS입니다. 로컬 `styleJSON` 전환으로 native active 4/pending 2가 취소됐고, 네 서버 응답은 본문 없이 닫혔습니다. 자리 반환은 시작 수와 같고 기존 예약 1,280바이트는 유지됐습니다. 같은 장부로 원래 스타일을 수동 재로딩해 이전 네 경로를 포함한 여섯 타일을 다시 받았습니다. 최종 시작·반환·송신 12회, 본문 1,040바이트, 예약 3,072바이트, native/server 최대 동시 4와 마지막 active/pending 0을 대조했습니다.
