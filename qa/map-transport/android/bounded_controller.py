@@ -3,7 +3,8 @@
 All writes through this API have a predeclared logical size limit. Descriptors
 stay pinned and non-inheritable; unlinking a file does not release its charge.
 This does not constrain arbitrary native processes or prove allocated storage.
-It never creates, formats or mounts a disk image, or issues an AVD marker.
+An optional flat backing reservation can be densely zero-initialized. It never
+formats or mounts an image, launches a tool, or issues an AVD marker.
 """
 from __future__ import annotations
 
@@ -20,6 +21,8 @@ from collections.abc import Mapping
 
 
 MAX_OUTSIDE_BYTES = 1024 * 1024
+MAX_BACKING_BYTES = 64 * 1024 * 1024
+BACKING_NAME = 'capacity.raw'
 DEFAULT_LIMITS = types.MappingProxyType({
     'controller.sb': 16 * 1024,
     'attach.plist': 64 * 1024,
@@ -31,9 +34,11 @@ DEFAULT_LIMITS = types.MappingProxyType({
 
 
 class ControllerError(RuntimeError):
-    def __init__(self, message: str, *, cleanup_report: dict | None = None):
+    def __init__(self, message: str, *, cleanup_report: dict | None = None,
+                 controller_root: str | None = None):
         super().__init__(message)
         self.cleanup_report = copy.deepcopy(cleanup_report)
+        self.controller_root = controller_root
 
 
 def _stamp(value: os.stat_result) -> tuple:
@@ -79,8 +84,15 @@ class ControllerArtifacts:
     @classmethod
     def create(cls, android_root: pathlib.Path, *,
                limits: Mapping[str, int] | None = None,
-               budget_bytes: int = MAX_OUTSIDE_BYTES) -> ControllerArtifacts:
+               budget_bytes: int = MAX_OUTSIDE_BYTES,
+               backing_bytes: int | None = None) -> ControllerArtifacts:
         declared = _limits(limits, budget_bytes)  # Before any filesystem writes.
+        outside_reservation = sum(declared.values())
+        if backing_bytes is not None:
+            if (type(backing_bytes) is not int or not 0 < backing_bytes <= MAX_BACKING_BYTES
+                    or backing_bytes % 512):
+                raise ControllerError('Backing reservation must be 512-byte aligned and at most 64MiB')
+            declared[BACKING_NAME] = backing_bytes
         path = pathlib.Path(android_root)
         if not path.is_absolute() or '..' in path.parts:
             raise ControllerError('An absolute existing workspace is required')
@@ -94,7 +106,12 @@ class ControllerArtifacts:
         self._failure: str | None = None
         self._cleanup_report: dict | None = None
         self._limits = declared
-        self._budget = budget_bytes
+        self._budget = budget_bytes + (backing_bytes or 0)
+        self._outside_budget = budget_bytes
+        self._outside_reservation = outside_reservation
+        self._backing_bytes = backing_bytes or 0
+        self._backing_started = False
+        self._backing_initialized = False
         self._directories: list[int] = []
         self._edges: list[tuple[int, str, int, tuple]] = []
         self._artifacts: dict[str, _Artifact] = {}
@@ -126,8 +143,8 @@ class ControllerArtifacts:
             current = descend(current, 'controller-artifacts', create=True)
             run_name = 'run_' + uuid.uuid4().hex[:12]
             os.mkdir(run_name, 0o700, dir_fd=current)  # Never reuse an old run.
-            self._root_fd = descend(current, run_name)
             self.root = path / '.build/controller-artifacts' / run_name
+            self._root_fd = descend(current, run_name)
             file_flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
                           | os.O_CLOEXEC | os.O_NONBLOCK)
             for name in declared:
@@ -139,14 +156,21 @@ class ControllerArtifacts:
             os.fsync(self._root_fd)
             return self
         except BaseException as error:
+            root = str(self.root) if hasattr(self, 'root') else None
             try:
                 self.close()
             except ControllerError as cleanup_error:
                 raise ControllerError(
                     'Preparation failed and descriptor cleanup is unconfirmed',
-                    cleanup_report=cleanup_error.cleanup_report) from error
+                    cleanup_report=cleanup_error.cleanup_report,
+                    controller_root=root) from error
             if isinstance(error, OSError):
-                raise ControllerError('Could not exclusively prepare controller artifacts') from error
+                raise ControllerError('Could not exclusively prepare controller artifacts',
+                                      cleanup_report=self.cleanup_report,
+                                      controller_root=root) from error
+            if isinstance(error, ControllerError):
+                error.cleanup_report = self.cleanup_report
+                error.controller_root = root
             raise
 
     def _fail(self, message: str) -> None:
@@ -198,6 +222,8 @@ class ControllerArtifacts:
             if (type(name) is not str or name not in self._artifacts
                     or type(body) is not bytes or type(append) is not bool):
                 self._fail('Unknown artifact or invalid write arguments')
+            if name == BACKING_NAME:
+                self._fail('Backing may only be written by its one-time initializer')
             artifact = self._artifacts[name]
             previous = os.fstat(artifact.descriptor).st_size
             final_size = (previous if append else 0) + len(body)
@@ -227,6 +253,40 @@ class ControllerArtifacts:
                 self._fail('Controller JSON serialization failed: ' + type(error).__name__)
             self.write(name, body)
 
+    def initialize_backing(self) -> None:
+        """Densely write the exact reservation using a bounded zero buffer.
+
+        No sparse truncate, formatting, external writer or mount is involved.
+        The resulting regular file is not proof of an OS-enforced native cap.
+        """
+        with self._lock:
+            self._check()
+            if not self._backing_bytes or self._backing_started:
+                self._fail('A fresh, unused backing reservation is required')
+            self._backing_started = True
+            artifact = self._artifacts[BACKING_NAME]
+            try:
+                if os.fstat(artifact.descriptor).st_size:
+                    self._fail('Backing must start as an empty owned regular file')
+                os.lseek(artifact.descriptor, 0, os.SEEK_SET)
+                remaining = self._backing_bytes
+                zeros = bytes(min(64 * 1024, remaining))
+                while remaining:
+                    chunk = memoryview(zeros)[:min(len(zeros), remaining)]
+                    count = os.write(artifact.descriptor, chunk)
+                    if count <= 0 or count > len(chunk):
+                        self._fail('Backing write made invalid progress')
+                    remaining -= count
+                os.fsync(artifact.descriptor)
+                value = os.fstat(artifact.descriptor)
+                if value.st_size != self._backing_bytes:
+                    self._fail('Backing did not reach its exact reserved size')
+                artifact.stamp = _stamp(value)
+                self._check()
+                self._backing_initialized = True
+            except OSError as error:
+                self._fail('Backing initialization failed: ' + type(error).__name__)
+
     def audit(self) -> dict:
         """Report pinned FDs, including unlinked ones; never issue launch proof."""
         with self._lock:
@@ -250,6 +310,11 @@ class ControllerArtifacts:
                 'status': 'FAILED' if self._failure else 'READY',
                 'failure': self._failure,
                 'budgetBytes': self._budget,
+                'outsideBudgetBytes': self._outside_budget,
+                'outsideReservedLogicalBytes': self._outside_reservation,
+                'backingReservedLogicalBytes': self._backing_bytes,
+                'backingInitialized': self._backing_initialized,
+                'imageFormatted': False,
                 'reservedLogicalBytes': sum(self._limits.values()),
                 'observedOwnedLogicalBytes': sum(x['logicalBytes'] for x in files.values()),
                 'observedOwnedAllocatedBytes': sum(x['allocatedBytes'] for x in files.values()),

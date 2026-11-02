@@ -1,5 +1,18 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
+## 11월 2일 양쪽 다음 구현: 실제 controller 준비 흐름
+
+사용자의 iOS/Android 동시 재개 요청으로 Android `b5c7f61`의 다음 구현을 진행했습니다. iOS TLS/장부 초안은 공통·iOS 채팅이 이어받아 검토·검증하며 이 채팅의 추가 iOS 편집은 보류합니다. Android는 실제 `prepare_controller.py` 흐름과 선택적 flat backing 초기화를 완성했습니다.
+
+- 제한된 writer가 events/canary/output/result를 기록합니다. 마지막 audit는 result.json을 기록한 뒤 반환하고 저장 보고서의 cleanup PENDING과 실제 종료 결과를 구분합니다.
+- backing은 별도 cap,512-byte 배수/최대64MiB로 미리 예약하고64KiB 이하 zero buffer로 한 번만 기록합니다. 임의 쓰기·append·재초기화 및 실패 후 재사용을 거절하며 부분 파일·예약을 보존합니다.
+- 중간 실패도 정확한 `controllerRoot`와 실제 cleanup을 예외/CLI로 전달합니다. 독립 검토가 찾은 경로·정리 상태 누락을 회귀로 보완했습니다.
+- 기존34개+새20개, **Android host54개 PASS**입니다. 새 파일은512/1024 bytes 합성 일반 파일뿐이며 형식화·마운트·AVD/native가 아닙니다. 공통64개와 합산하지 않습니다.
+
+공통으로 명시적 검토·통합할 Python 파일은 `bounded_controller.py`, `prepare_controller.py`, `test_bounded_controller.py`, `test_prepare_controller.py` 네 개입니다. 공통의 기존 Android README는 덮어쓰지 말고 새 기능/한계 절만 추가해야 합니다. root 문서와 역할/전체 검사 기록은 공통 담당이 관리합니다. 이 worktree의 새 명령은 정상 준비도 BLOCKED/exit2이고 실패는 exit1입니다. 임의 native 옵션은 거절하며 기존 common native gate를 열지 않습니다.
+
+전체 native write/할당량 cap, 제한된 formatter, producer-only 경계와 모든 child/mount 수명은 남았습니다. `allocationBoundProven=false`, `imageFormatted=false`, `nativeAdmissionEnabled=false`, 실제 producer/fresh boot NOT RUN,65MiB는 API 논리 예산과 미완성 native 설계 ceiling으로만 유지합니다. Android의 제품·SDK·기기·의존성·기존 개인 자료/캐시/백업 작업과 push/PR/CI는 없습니다. 로컬 코드·회귀·문서를 저장하며 전체24/54와 수용 게이트는 변경하지 않습니다.
+
 ## 11월 2일 후속: controller writer를 실제 구현
 
 문서만 정리한 응답 뒤 사용자가 실제 진행을 재요청했습니다. Android `c693c5b`에서 **`qa/map-transport/android/bounded_controller.py`와 회귀·README를 구현**했습니다. 공통 파일은 수정하지 않았으며 자동 동기화·병합·push/PR은 없습니다.

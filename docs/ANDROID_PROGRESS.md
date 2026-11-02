@@ -2,6 +2,20 @@
 
 마지막 갱신: 2026-11-02, Asia/Seoul.
 
+## 11월 2일 양쪽 재개: Android 준비 흐름 연결과 host54개
+
+사용자가 “다음 단계를 진행해 ios 안드로이드 모두”라고 직접 요청했습니다. Android 시작점은 `b5c7f613e9477ca3ec157563b3ade93a194bd16d`입니다. 현재 채팅이 iOS TLS/장부 초안을 병렬로 준비하던 중, 공통·iOS 담당 채팅이 실제 공통 checkout의 초안6개를 이어받아 검토·검증하겠다고 역할을 조정했습니다. iOS subagent의 새 수정을 보류하고 초안과 staging 근거를 보존했습니다. 이는 전체 중단이 아니며 Android 구현은 계속했습니다. 최종 iOS 결과와 공통 커밋은 공통 `PROGRESS.md`/`docs/RESUME.md`를 따릅니다.
+
+**새 구현:** `prepare_controller.py`가 기존 bounded writer로 실제 events/canary/output/result를 기록하고 마지막 파일 상태와 실제 close 결과를 반환합니다. 선택적인 backing 예약은 메타데이터 예산과 분리하며512-byte 배수, 최대64MiB를 생성 전에 확인합니다. 새 `capacity.raw`는 최대64KiB zero buffer로 정확한 요청 크기를 한 번만 순차 기록하고 임의 쓰기/append/재초기화를 거절합니다. 실패한 부분 파일과 예약을 보존합니다. ext4/HFS 형식화, mount나 native 실행은 하지 않습니다.
+
+보고서가 자기 자신의 최종 크기를 재귀적으로 약속하지 않도록 저장 `result.json`과 마지막 반환 audit를 분리했습니다. 저장본 cleanup은 기록 시점 PENDING, 반환은 실제 CLOSED 또는 실패를 전달합니다. 독립 검토에서 발견한 중간 실패의 근거 경로·실제 cleanup 누락도 수정했습니다. 생성/초기화/기록 오류의 예외와 CLI 결과가 정확한 새 소유 `controllerRoot`와 cleanup을 전달하며 다른 run을 추측하지 않습니다.
+
+**PASS:** `python3 -B -m unittest discover -s qa/map-transport/android -p 'test_*.py'`에서 기존34개+새20개, **Android 전용 host54개**가 통과했습니다.512/1024-byte 합성 일반 파일의 실제 zero 본문·순차 write·정확한 크기, 예약 분리, 중복/임의 쓰기 거절, 부분 EIO·0-progress와 비용 보존, 최종 파일별 logical/allocated 값과 audit의 대조, 실제 close, CLI BLOCKED/exit2와 실패/exit1, 임의 native 옵션의 무쓰기 거절을 확인했습니다. 합성 오류는 실제 OS 디스크 장애 결과가 아닙니다. 공통의 기존64개와 합산하지 않으며 새 mobile/iPhone/native 통과 수도 아닙니다.
+
+정상 controller 준비도 native에는 **BLOCKED**입니다. `allocationBoundProven=false`, `imageFormatted=false`, `nativeAdmissionEnabled=false`와 formatter/native write confinement/producer-only entry/모든 child·mount 수명 blocker를 유지합니다. API를 통한 backing+metadata 논리 예산은 최대65MiB이지만 전체 native 할당량 상한의 증명은 아닙니다. 실제 최소 producer·fresh boot는 NOT RUN입니다.
+
+수정 파일은 Android `bounded_controller.py`, 새 `prepare_controller.py`와 `test_prepare_controller.py`, Android README와 진행/제안 두 문서입니다. 이전 `test_bounded_controller.py`34개도 그대로 회귀에 포함합니다. 공통의 기존 준비 도구나 제품 코드는 이 Android 변경에서 수정하지 않았습니다. 다음 통합은 공통 담당이 이 코드/회귀 네 Python 파일을 명시적으로 검토해 가져오는 단계이며 자동 branch 동기화·merge는 하지 않습니다. 이후 제한된 formatter/native backend와 producer 진입점을 별도로 검증해야 합니다. 개인 자료·기존 SDK/AVD/캐시/빌드/백업 열기·재해시·삭제, 새 기기 조회/설치/실행·다운로드·push/PR/CI는 없습니다. 전체24/54, P3-02 부분 완료와 G1~G4 미완료는 유지합니다.
+
 ## 11월 2일 후속 구현: controller 파일 제한과 host 회귀 34개
 
 사용자가 “이어서 해달라고”라고 정정해 문서 검토에서 실제 Android 코드 구현으로 이어갔습니다. 시작점은 `c693c5bbdbf83f17ac9e0913d2241fe3234b6eea`입니다. 새 `qa/map-transport/android/bounded_controller.py`, 대응 `test_bounded_controller.py`와 `README.md`를 추가했습니다. 공통 checkout의 Android 도구·제품·루트 문서와 의존성은 수정하거나 복사하지 않았습니다.
