@@ -1,5 +1,27 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
+## 11월 2일: userdata producer 한 단위의 준비 결손
+
+Android **`90318b4853439c79a76d2526034835e47d1e3b4d`**를 보존하고 공통 **`eaa88af9f96dc937370cec28f7dce5b79bb459d7`**의 Android 준비 도구만 읽었습니다. 변경 파일은 이 문서와 `docs/ANDROID_PROGRESS.md` 두 개입니다. 제품·설정·의존성·공통 checkout 수정, 병합과 새 실행은 없습니다. 로컬 커밋만 남기며 push/PR은 하지 않습니다.
+
+**결론:** 현재 fail-closed 경로는 정적 검토 PASS입니다. `require_bounded_launch()`가 실제 host/guest 명령 전에 항상 거절하므로 numeric marker로 검사를 열 수 없습니다. 기존 32MiB worker/child와 cached `-version`, host 64개 PASS는 재사용 기록입니다. 실제 producer·fresh boot·QEMU·ADB·실제 host/guest guard와 ≤1GiB admission은 **NOT RUN**입니다. cached 107-byte `empty_data_disk`는 생성 표식 후보이며 SDK 손상 근거가 아닙니다. 과거 QCOW2 해시 차이 원인은 **UNCONFIRMED**입니다.
+
+다음 구현의 최소 범위는 **fresh userdata 출력 한 개의 producer-only 구성요소**입니다. 필요한 수정 후보는 아래와 같으며 이번에 이 파일들을 바꾸지는 않았습니다.
+
+| 파일 | 필요한 수정·관측 조건 |
+| --- | --- |
+| `qa/map-transport/android/bounded_storage_fixture.py` | backing 생성부터 controller의 임시/출력/보고서까지 전체 파일 예산을 사전에 강제. 모든 자식·열린 쓰기 FD와 mount/backing identity의 수명 보호, writer 종료 뒤 소유 mount만 해제. 현재의 사후 검사·process-group kill만으로 증명 완료 처리하지 않음 |
+| 새 `qa/map-transport/android/userdata_producer_probe.py` 후보 | cached producer와 연결되는 고정 진입점·인자 및 guest 진입 전 반환을 먼저 증명. 그 안에서 출력 한 개만 생성. 경계가 미확인인 현재는 실행 불가. `emulator_bootstrap_probe.py`의 `-version` 전용 계약은 유지 |
+| 대응 `test_*.py`, `README.md` | 실행 허용 전 예산 누락·외부 경로·링크/교체·상속 FD·자식 잔존·출력 초과·cleanup 불명확을 거절하는 host 회귀와 실행 조건 기록. host mock 통과와 실제 producer 관측을 구분 |
+
+후보 ceiling은 32MiB 파일시스템에 새 출력 하나, backing(형식 오버헤드 포함)의 논리 크기·할당량 각각 ≤64MiB, 바깥 모든 시험 파일 합 ≤1MiB로 **총 ≤65MiB(68,157,440 bytes)**입니다. 내부 출력은 backing에 포함합니다. 이 값은 아직 구현·측정하지 않은 설계 상한이며 실제 producer의 요청 크기·최소 용량은 미확인입니다. 바깥 생성·임시 파일까지 OS/FD 수준으로 제한할 수 없거나 출력이 들어가지 않으면 실행을 거절하고 자동 확대하지 않습니다. 전체 emulator를 시작해 생성 직후 죽이는 시험과 별도 `mkfs.ext4`는 이 producer 단위의 대체 근거가 아닙니다.
+
+향후 이 단위의 통과에는 새 출력만의 bounded ext4 헤더·크기·소유권, 바깥 쓰기 거절, 모든 writer 종료와 제한 유지가 필요합니다. 통과하더라도 `bounded_avd_storage.py`와 `run-validation.py`의 native 차단은 유지합니다. `qa_avd_guard.py`의 실제 host/guest 대조 및 ADB가 만드는 key/log/temp·수명과 전체 제한을 연결하는 일은 이후 별도 단계입니다. ≤1GiB는 시험 소유 파일 증가 제한이며 Mac 전체 swap/시스템 로그/다른 앱을 포함하는 새 요구가 아닙니다.
+
+정확한 코드 위치와 PASS/NOT RUN 구분은 [진행 기록](ANDROID_PROGRESS.md)의 11월 2일 절을 따릅니다. 이번 host/native 재실행, 이미지·AVD 작업, 개인 이미지 재해시, 캐시·백업 삭제는 없습니다. 공통 최신 24/54, P3-02 부분 완료와 G1~G4 미완료를 유지하고 이 검토 뒤 추가 실험 없이 대기합니다.
+
+사용자 중단 요청에 따라 두 문서의 로컬 커밋으로 여기까지 저장하고 모든 추가 작업을 중지합니다. 이후에도 “그만/멈춰/중단/여기까지 저장”은 현재 작업·미완성·근거·다음 항목 저장 후 중단으로 적용하며, 새 사람 재개 지시가 있어야 작업을 다시 시작합니다.
+
 ## 10월 28일: 통제된 파일 오류와 반복 누적5개 완료
 
 고정 `ef799c490595f2380630d30918870a291c21f45f`, Android019f03e에서 새 고유 QA와 보존 기준을 준비해 승인한 native5개를 마쳤습니다. 기존 API37 Debug APK와 실제 native producer/정상 서버 ACK/SQLite guard를 사용했습니다. 새 빌드/설치/의존성/제품 변경은 없습니다.

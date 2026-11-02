@@ -1,6 +1,42 @@
 # Android 개발·검증 기록
 
-마지막 갱신: 2026-10-28, Asia/Seoul.
+마지막 갱신: 2026-11-02, Asia/Seoul.
+
+## 11월 2일: fresh QA userdata 준비의 정적 검토 완료, 실행 차단 유지
+
+Android 시작점은 **`90318b4853439c79a76d2526034835e47d1e3b4d`**, 읽기 전용 공통 기준은 **`eaa88af9f96dc937370cec28f7dce5b79bb459d7`**입니다. 공통 `AGENTS.md`, `docs/RESUME.md`, `qa/map-transport/android/README.md`와 준비·보호 도구를 읽었습니다. 이번 변경은 이 문서와 `docs/ANDROID_PROPOSED_CHANGES.md`뿐이며 기존 Android 제품 소스와 10월 28일까지의 근거는 보존합니다. 공통 checkout에는 쓰지 않았고 merge/rebase/cherry-pick, 설치·다운로드·새 빌드는 하지 않았습니다.
+
+### 확인 결과와 실행 구분
+
+| 항목 | 상태와 근거 |
+| --- | --- |
+| 숫자 marker로 native 검사 허용 방지 | 정적 검토 PASS. `bounded_avd_storage.py:180–191`은 인자·환경 우회 없이 항상 거절하며 `run-validation.py:35–41`은 host/guest 명령 전에 이를 호출 |
+| 32MiB Python worker/child, cached emulator `-version` | 기존 구성요소 PASS 기록 재사용. 이번에 재실행하지 않음. `-version` 고정 호출은 userdata 생성·QEMU 초기화·ADB를 실행한 근거가 아님 |
+| Android host 회귀 64개 | 공통 기준의 기존 PASS 기록 재사용. 문서 검토이므로 이번 새 실행·통과 수는 0개 |
+| fresh userdata producer, fresh AVD 생성·부팅, full QEMU, ADB, 실제 host/guest guard | 모두 NOT RUN. ≤1GiB native admission도 계속 차단 |
+
+cached `data/empty_data_disk`의 **107 bytes**는 앞선 공통 점검의 작은 생성 표식 기록입니다. `bounded_avd_storage.py:118–127,153–161`은 이를 제한된 메타데이터로 다루고 internal empty-ext4를 후보로만 표시합니다. `userdata.img` 부재나 표식 크기를 SDK 손상으로 해석하지 않습니다. cached binary의 실제 producer와 최소 생성·부팅 용량은 미확인입니다. 과거 개인 AVD QCOW2 해시 차이의 원인은 계속 **UNCONFIRMED**이며 이번에 개인 이미지 본문을 읽거나 재해시하지 않았습니다.
+
+### 남은 결손
+
+1. **producer 호출 경계:** `emulator_bootstrap_probe.py:89–119`에는 `-version`만 있습니다. cached producer에 도달하면서 machine/guest 초기화 전에 반드시 반환하는 별도 진입점이 확인되지 않았습니다. 전체 emulator를 시작해 파일이 생기는 순간 종료하는 방식이나 별도 `mkfs.ext4` 성공을 installed QEMU `createUserData()`의 통과로 바꿀 수 없습니다.
+2. **controller까지 포함한 파일 상한:** `bounded_storage_fixture.py:220–266,331–333`은 mount 밖에서 backing 이미지 생성, `tool-temp`, attach 기록·profile·보고서를 다룹니다. 현재의 이미지 사후 크기 검사와 64KiB pipe 한도는 이 바깥 파일들의 합계에 대한 사전 강제가 아닙니다. `emulator_bootstrap_probe.py:122–164`의 바깥 profile/version 출력도 같은 예산에 포함해야 합니다.
+3. **자식·FD·마운트 수명:** `command():141–195`의 `close_fds`, 읽기 전용 stdin, 출력·시간 한도와 process-group 종료는 기반입니다. 실제 producer의 모든 자식, 새 session으로 이탈한 자식, 열린 쓰기 FD에 대한 보호·종료와 해제 전 writer 부재는 아직 증명하지 않았습니다. mount/backing의 전후 identity 확인도 전체 실행 중 교체 방지의 증거는 아닙니다.
+4. **나중의 native 연결:** `qa_avd_guard.py:214–277`은 host PID/포트/시작 시각과 guest명·transport를 대조하지만 전체 파일 제한을 구현하지 않습니다. 향후 시험이 만드는 ADB key/log/temp와 server 수명도 제한에 결합해야 합니다. marker의 `verifiedIncrementalBoundBytes`는 여전히 선언값입니다.
+
+제한 대상은 **시험 때문에 만들어지는 파일·임시 파일·출력과 자식/열린 쓰기 FD의 파일 쓰기**입니다. Mac 전체의 swap, 시스템 로그, 다른 앱 증가량을 새 수용 조건으로 요구하지 않습니다.
+
+### 다음 최소 단위와 설계 예산
+
+다음 단위는 **별도 producer-only adapter로 새 userdata 출력 한 개를 만들고 종료하는 구성요소**입니다. AVD 생성·선택, boot, ADB, 앱 검사는 포함하지 않습니다. 먼저 cached producer와의 출처·호출 경계 및 guest 진입 전 반환을 증명해야 하며, 그런 경계가 없으면 실행하지 않고 결손으로 남깁니다. 별도 helper 빌드는 그 helper의 근거일 뿐 installed binary의 producer 통과가 아닙니다.
+
+후보 예산은 기존 **32MiB 파일시스템** 안의 새 출력 하나, backing 파일의 논리 크기·할당량 각각 **64MiB 이하**, 바깥 controller/임시/로그/보고서 전체 **1MiB 이하**, 합계 **65MiB(68,157,440 bytes) 이하**입니다. 내부 출력은 backing과 중복 합산하지 않습니다. 이는 다음 도구의 **설계 ceiling**이며 현재 강제되거나 실제 producer가 들어간다는 결과가 아닙니다. 생성 요청 크기·최소 크기는 미확인이고, 수용되지 않으면 자동 확대나 full emulator 우회 없이 중단합니다.
+
+실행 전에는 backing 생성·형식화 단계부터 바깥 임시 파일까지 이 ceiling을 OS/FD 수준에서 강제해야 합니다. 사후 합산이나 polling만으로 허용하지 않습니다. 관측 조건은 고정 producer 인자·출처, mount/backing identity, 새 출력의 bounded ext4 헤더·크기·소유권, 바깥 쓰기·상속 FD 거절, 모든 자식 종료, writer 부재 뒤 소유 mount만 해제, 불명확한 cleanup 시 보존입니다. 이 구성요소가 나중에 통과해도 native gate는 열지 않습니다. full fresh boot와 ≤1GiB 전체 제한은 별도 단계입니다.
+
+이번에는 emulator/ADB, 이미지 생성·마운트·디스크 채우기, native 실행, SDK/AVD/cache/백업 삭제를 모두 하지 않았습니다. 추가 AOSP 조사나 새 실험도 하지 않았습니다. 문서 diff와 공백 오류를 확인해 두 문서만 로컬 커밋하며 push/PR은 하지 않습니다. 공통 최신 **24/54, P3-02 부분 완료, G1~G4 미완료**를 유지합니다.
+
+**중단·재개 규칙:** 사용자의 “그만/멈춰/중단/여기까지 저장” 요청은 항상 현재 작업까지만 마무리하고 진행 상황·미완성 내용·근거·다음 항목을 저장한 뒤 모든 추가 작업을 중지하는 뜻으로 적용합니다. 이번 검토도 문서 두 개의 로컬 커밋 뒤 중단합니다. 새 사람 재개 지시 전 자동으로 다시 시작하지 않습니다. 다음 재개 항목은 위 producer-only 진입 경계와 전체 파일 ceiling의 구현 가능성 확인이며, 실제 producer 실행은 아직 허용할 수 있는 상태가 아닙니다.
 
 ## 10월 28일: 통제된 파일 오류와 반복 사본 누적5개 완료
 
