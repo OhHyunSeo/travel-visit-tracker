@@ -2,6 +2,16 @@
 
 마지막 갱신: 2026-11-02, Asia/Seoul.
 
+## 11월 2일 최신 요청: 여기까지 저장하고 전체 중단
+
+공통·iOS 채팅의 최신 사용자 요청 **“여기까지”**를 전달받아 프로젝트 공통 중단 규칙을 적용합니다. Android 실행 소스는 **`899d98e053ad125b227b570ada31f6f5f94199ba`**, 선택 통합한 공통 실행 소스는 로컬 **`6c0921e`**입니다. Android 코드·기존 근거는 보존하고 이 중단 기록만 두 문서에 로컬 저장합니다. 새 개발·조사·검사·빌드·기기/formatter/이미지/mount/native·설치·다운로드·삭제·push/PR/CI는 시작하지 않습니다.
+
+중단 전 공통은 Android Python 네 파일을 명시적으로 선택 통합했고 이 worktree와 bytes가 같은 것도 확인했습니다. 같은 공통 checkout의 Android118개, Mac TLS 장부8개(실제 SIGKILL/새process 예약 유지 포함)와 기존 HTTP13/TLS기본7, 모바일609/서버61/fixture23/report13 및 양쪽 JS-Hermes를 포함한 최종 verifier exit0 PASS를 확인했습니다. 물리 iPhone·새 signed app/SDK HTTPS·Android formatter/부팅의 결과로 확대하지 않습니다. 새 공통 소스의 push/CI는 NOT RUN입니다.
+
+Android 작업 폴더는 중단 기록 추가 전 깨끗했습니다. 이 채팅은 Android용 지속 서버·Metro·emulator를 시작하지 않았고 실행 중인 소속 subagent도 없습니다. 공통 시험 process/서버/키/인증서/장부/binary는 suite 종료 때 정리됐다는 공통 저장 기록을 따릅니다. 이 중단 요청 뒤 추가 삭제·검사를 하지 않으며 개인 자료와 기존 SDK·AVD·캐시·빌드·백업·근거를 보존합니다.
+
+다음 **새 사람 재개** 때 두 Git checkpoint와 local/remote 차이를 먼저 확인합니다. 공통은 제한된 SDK HTTPS 설정·인증서 전달을 안전한 QA 경로에서 설계하고, Android는 OS 강제 formatter/native backend·producer 진입·child/mount 수명 준비를 검토합니다. 논리 cap/작은 일반 파일 준비를 전체 native 할당량 제한으로 바꾸지 않습니다. 새 재개 요청 전에는 위 다음 항목이나 이전 자율 진행으로 다시 시작하지 않습니다. 전체24/54, P3-02 부분 완료/G1~G4 미완료와 공급원 다운로드 OFF를 유지합니다.
+
 ## 11월 2일 양쪽 재개: Android 준비 흐름 연결과 host54개
 
 사용자가 “다음 단계를 진행해 ios 안드로이드 모두”라고 직접 요청했습니다. Android 시작점은 `b5c7f613e9477ca3ec157563b3ade93a194bd16d`입니다. 현재 채팅이 iOS TLS/장부 초안을 병렬로 준비하던 중, 공통·iOS 담당 채팅이 실제 공통 checkout의 초안6개를 이어받아 검토·검증하겠다고 역할을 조정했습니다. iOS subagent의 새 수정을 보류하고 초안과 staging 근거를 보존했습니다. 이는 전체 중단이 아니며 Android 구현은 계속했습니다. 최종 iOS 결과와 공통 커밋은 공통 `PROGRESS.md`/`docs/RESUME.md`를 따릅니다.

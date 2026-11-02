@@ -1,5 +1,11 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
+## 11월 2일 최신: 여기까지 저장·중단
+
+최신 사람 요청 **“여기까지”**에 따라 현재 저장만 마치고 전체 작업을 중지합니다. Android 실행 소스 `899d98e`와 공통 선택 통합 실행 소스 로컬 `6c0921e`를 보존합니다. 공통 Android118/Mac TLS장부8 및 최종 전체 verifier exit0 PASS를 확인했으며, 새 push/CI와 물리 기기·formatter/이미지/mount/native 실행은 하지 않았습니다. Android의 자체54개와 공통118개를 다시 합산하지 않습니다.
+
+현재 남은 항목은 공통의 제한된 SDK HTTPS QA 설계와 Android의 OS 강제 backend/producer 진입/child·mount 수명입니다. 진행·근거·한계·정확한 다음 항목은 [진행 기록](ANDROID_PROGRESS.md)의 최신 중단 절에 저장했습니다. 실행 중인 소속 subagent와 이 채팅이 띄운 Android 지속 서비스는 없습니다. 새 사람 재개 전에는 개발·조사·검사·빌드·기기 작업·다운로드·삭제·push/PR/CI를 다시 시작하지 않습니다. 코드와 기존 증거·개인 자료는 보존하고 이번에는 중단 문서 두 개만 로컬 저장합니다.
+
 ## 11월 2일 양쪽 다음 구현: 실제 controller 준비 흐름
 
 사용자의 iOS/Android 동시 재개 요청으로 Android `b5c7f61`의 다음 구현을 진행했습니다. iOS TLS/장부 초안은 공통·iOS 채팅이 이어받아 검토·검증하며 이 채팅의 추가 iOS 편집은 보류합니다. Android는 실제 `prepare_controller.py` 흐름과 선택적 flat backing 초기화를 완성했습니다.
