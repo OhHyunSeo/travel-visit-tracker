@@ -1,5 +1,9 @@
 # 개발 체크리스트
 
+## 11월 2일 마지막 중단·저장
+
+사용자의 “여기까지”에 따라 양쪽 모두 저장 후 중단합니다. 실행 소스는 로컬 `6c0921e`, 전체 local 검증 PASS이며 새 push·GitHub CI는 시작하지 않았습니다. SDK/기기 HTTPS와 Android native 실행은 미완료입니다. [정확한 재개 지점](RESUME.md)을 먼저 읽고 새 사람 재개 전에는 추가 작업하지 않습니다. 전체 **24/54**, P3-02 부분 완료/G1~G4 미완료입니다.
+
 ## 11월 2일 최신 재개: HTTPS gate와 Android 선택 통합
 
 Mac HTTPS 장부·대기열8개와 Android 선택 통합118개가 통과했습니다. 실제 Mac SIGKILL 뒤 미확정 예약 보존도 확인했으며 폰·전원 종료 근거로 세지 않습니다. 전체 verifier와 iOS 문법/API도 PASS지만 새 앱 빌드·기기·SDK HTTPS는 NOT RUN입니다. Android는 작은 일반 파일 준비까지이고 native gate는 닫혀 있습니다. **24/54**, P3-02 부분 완료/G1~G4 미완료를 유지하며 [최신 재개 범위](RESUME.md)를 따릅니다.

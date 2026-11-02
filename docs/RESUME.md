@@ -1,5 +1,18 @@
 # 여기서 이어서 개발하기
 
+## 11월 2일 마지막 요청: 여기까지 저장·전체 중단
+
+**최신 사용자 요청 “여기까지”를 적용합니다.** 현재 항목의 저장만 마치고 모든 추가 개발·조사·검사·빌드·기기 작업·이미지/mount/native·다운로드·삭제·push·새 CI를 중단합니다. Android 채팅에도 동일하게 전달했습니다. 새 사람 재개 요청 전에는 아래 다음 항목이나 이전 자율 진행으로 다시 시작하지 않습니다.
+
+- 공통 실행 소스는 로컬 `6c0921e`입니다. iOS HTTPS 장부·대기열8개와 Android `899d98e`의 Python 네 파일 선택 통합을 포함합니다. 최종 local verifier exit0: 모바일609/서버61/fixture23/Android118/MacHTTP13+TLS기본7+gate8/report13/임시 HTTP·SQLite·파일/양쪽 production JS-Hermes PASS. iOS arm64 문법·API도 PASS이며 새 앱 빌드·기기 조회·설치·실행은 0입니다.
+- `6c0921e`는 아직 push하지 않았고 이 소스의 GitHub CI는 NOT RUN입니다. 마지막 원격 기준은 `da941fc`와 CI41380201193 PASS입니다. 이전 로컬 중단 문서 `01eedd6`도 이번 실행 소스의 history에 포함돼 있지만, 저장만을 위해 push나 새 CI를 만들지 않습니다.
+- Android source는 자체 branch의 `899d98e`를 보존합니다. 공통은 네 Python 파일만 선택 통합했고 전체 branch나 Android 전용 README·과거 진행 문서는 덮어쓰지 않았습니다. 기존 native admission은 닫혀 있습니다. Android 중단 문서는 로컬 `e1312c9`에 저장됐고 작업 폴더가 깨끗하며 채팅은 대기 상태입니다. 이 문서 커밋도 푸시하지 않았습니다.
+- 중단 전에 새 export40개·8,825,584바이트만 해시 대조 후 정리했습니다. 임시 시험 process·서버·인증서·장부·binary는 suite 종료 때 정리됐습니다. 이 중단 요청 뒤 추가 삭제는 하지 않습니다. 기존 SDK·AVD·캐시·빌드·백업·증거와 개인 DB·사진·인증은 보존합니다.
+
+미완료 항목: SDK/iPhone HTTPS 연결과 인증서·초기화 경로, 실제 HTTP2/RN JS/글꼴·아이콘/팩 귀속·OS 수신량, Android OS-enforced formatter/native backend·producer entry·child/mount 수명입니다. Mac SIGKILL/새process 결과는 폰·전원 종료·같은 SDK 작업 재개를 증명하지 않습니다. Android118개도 작은 일반 파일과 trusted API 논리 cap의 host 근거이며 allocation/형식화/부팅 검증은 아닙니다.
+
+다음 새 사람 재개 때는 두 Git 상태와 local/remote 차이, 기존 근거를 먼저 확인합니다. 이후 공통은 제한된 SDK HTTPS 설계, Android는 OS 강제 backend 준비를 검토합니다. 둘 다 지금 새로 시작하지 않습니다. 전체 **24/54**, P3-02 부분 완료/G1~G4 미완료와 공급원 다운로드 OFF입니다. 원문은 Git 제외 `map-tls-gate-resume-20261102/`입니다.
+
 ## 11월 2일 최신 재개: HTTPS 장부와 Android 코드 선택 통합
 
 사용자가 현재 채팅에서 **iOS·Android 모두 진행**을 직접 요청했으므로 아래 이전 중단 상태를 이번 범위에서 갱신했습니다. Android 채팅에는 이미 별도 재개가 전달돼 있었습니다. 중복 iOS 편집은 역할 조정으로 중지하고 현재 checkout의 초안을 이어받았습니다. 원래 초안은 Git 제외 근거 폴더에 보존합니다. 현재 채팅은 공통·iOS와 통합, Android 채팅은 자체 코드·문서를 맡습니다.
