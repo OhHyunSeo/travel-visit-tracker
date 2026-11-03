@@ -217,6 +217,45 @@ test("opt-in TLS serves a trusted HTTP/1.1 style and tile with HTTPS paths and s
   assert.ok(stats.requests.every(entry => entry.receivedAuthHeader === false && entry.cookieHeader === false));
 });
 
+test("TLS multi-tile fixture keeps four bodies open after headers then finishes within the request deadline", async t => {
+  const fixture = await createSDKFixture({ tls: tlsMaterials() }); t.after(() => fixture.close());
+  const paths = ["2_0_0", "2_0_1", "2_1_0", "2_1_1"].map(id => `/resource/tile/${id}`);
+  const started = performance.now();
+  const responses = await Promise.all(paths.map(path => openHTTPS(fixture.origin, path,
+    { headers: { "User-Agent": "TripPaintingMapTransportQA/1.0" } })));
+  assert.ok(responses.every(response => response.alpn === "http/1.1"
+    && ["TLSv1.2", "TLSv1.3"].includes(response.protocol)));
+  assert.equal(fixture.stats().active, 4);
+  assert.equal(fixture.stats().maxActive, 4);
+  assert.ok(fixture.stats().requests.every(entry => entry.bytesWritten === 0 && entry.finished === false));
+  // Observe beyond the unchanged HTTP 120ms delay, without a fixture release.
+  await new Promise(resolve => setTimeout(resolve, 200));
+  assert.equal(fixture.stats().active, 4);
+  assert.ok(fixture.stats().requests.every(entry => entry.bytesWritten === 0 && entry.finished === false));
+  const bodies = await Promise.all(responses.map(response => response.body));
+  assert.ok(performance.now() - started >= 450);
+  assert.ok(bodies.every(body => body.equals(syntheticRasterTile())));
+  // The client can receive EOF before Node dispatches every server finish event.
+  // Wait for that independent lifecycle observation, retaining a hard deadline.
+  const finishDeadline = performance.now() + 1000;
+  let stats = fixture.stats();
+  while ((stats.active !== 0 || stats.requests.length !== 4
+      || !stats.requests.every(entry => entry.finished === true)) && performance.now() < finishDeadline) {
+    await new Promise(resolve => setTimeout(resolve, 5));
+    stats = fixture.stats();
+  }
+  assert.equal(stats.active, 0);
+  assert.equal(stats.maxActive, 4);
+  assert.equal(stats.resourceCount, 4);
+  assert.equal(stats.heldActive, 0);
+  assert.equal(stats.heldReleased, false);
+  assert.deepEqual(stats.requests.map(entry => entry.path).sort(), paths.sort());
+  assert.ok(stats.requests.every(entry => entry.finished === true && entry.closedBeforeFinish === false
+    && entry.bytesWritten === entry.bytes && entry.held === false
+    && entry.ua === "TripPaintingMapTransportQA/1.0"
+    && entry.receivedAuthHeader === false && entry.cookieHeader === false));
+});
+
 test("TLS held-body cancellation, release and same-path retry preserve cancelled response evidence", async t => {
   const fixture = await createSDKFixture({ tls: tlsMaterials() }); t.after(() => fixture.close());
   const path = "/resource/tile/h_2_0_0";

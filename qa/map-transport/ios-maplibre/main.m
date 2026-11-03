@@ -80,7 +80,7 @@ static NSDictionary *TPControl(NSString *path) {
               @"transforms": @(transforms), @"rewrittenStyles": @(rewrites), @"externalTileRequests": @(self.externalTileRequests),
               @"delegatePreserved": @(self.transform && MLNNetworkConfiguration.sharedManager.delegate == self.transform),
               @"delegateClass": self.transform ? NSStringFromClass(self.transform.class) : @"none",
-              @"scope": [self.stage isEqual:@"tls-render"] ? @"isolated pinned private-fixture HTTPS HTTP1 SDK render; no HTTP2, RN JS bridge, provider or OS-byte acceptance" : @"isolated MapLibre6.31.0 with actual RN11.5 native transform class; no JS/TurboModule bridge, TLS/HTTP2/provider/OS-byte acceptance"});
+              @"scope": [@[@"tls-render", @"tls-queue"] containsObject:self.stage] ? @"isolated pinned private-fixture HTTPS HTTP1 SDK; no cancel/restart, HTTP2, RN JS bridge, provider or OS-byte acceptance" : @"isolated MapLibre6.31.0 with actual RN11.5 native transform class; no JS/TurboModule bridge, TLS/HTTP2/provider/OS-byte acceptance"});
     self.label.text = pass ? @"지도 엔진 시험을 마쳤습니다.\n결과를 Mac에서 확인하고 있습니다." : @"지도 시험 결과를 확인하고 있습니다.\nMac 안내를 확인해 주세요.";
     self.map.delegate = nil;
     self.transform.logCallback = nil;
@@ -93,7 +93,7 @@ static NSDictionary *TPControl(NSString *path) {
     NSDictionary *env = NSProcessInfo.processInfo.environment;
     TPOrigin = env[@"QA_SERVER_ORIGIN"];
     self.stage = env[@"QA_STAGE"] ?: @"queue";
-    BOOL tlsTrial = [self.stage isEqual:@"tls-render"];
+    BOOL tlsTrial = [@[@"tls-render", @"tls-queue"] containsObject:self.stage];
     self.fixtureCertificate = [TPTransport fixtureCertificateFromBase64:env[@"QA_TLS_LEAF_DER_BASE64"]];
     NSString *runID = env[@"QA_RUN_ID"];
     NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9_-]{1,64}$" options:0 error:nil];
@@ -102,7 +102,7 @@ static NSDictionary *TPControl(NSString *path) {
     TPRunDirectory = [documents URLByAppendingPathComponent:valid ? runID : @"invalid-input"];
     BOOL fresh = ![[NSFileManager defaultManager] fileExistsAtPath:TPRunDirectory.path];
     BOOL originOK = tlsTrial ? [TPTransport safePrivateFixtureTLSOrigin:TPOrigin] && self.fixtureCertificate : [TPTransport safeOrigin:TPOrigin] && !env[@"QA_TLS_LEAF_DER_BASE64"];
-    if (!valid || !fresh || ![@[@"queue", @"cancel-retry", @"tls-render"] containsObject:self.stage] || !originOK) { TPRunDirectory = nil; [self finish:NO reason:@"unsafe or reused inputs"]; return; }
+    if (!valid || !fresh || ![@[@"queue", @"cancel-retry", @"tls-render", @"tls-queue"] containsObject:self.stage] || !originOK) { TPRunDirectory = nil; [self finish:NO reason:@"unsafe or reused inputs"]; return; }
     [[NSFileManager defaultManager] createDirectoryAtURL:TPRunDirectory withIntermediateDirectories:YES attributes:nil error:nil];
     self.cases = [NSMutableArray new];
     TPWrite(@{@"complete": @NO, @"phase": @"waiting-for-local-fixture"});
@@ -136,6 +136,7 @@ static NSDictionary *TPControl(NSString *path) {
     };
     NSString *match = [@"^" stringByAppendingString:[NSRegularExpression escapedPatternForString:[TPOrigin stringByAppendingString:@"/resource/"]]];
     [self.transform addUrlTransform:@"qa-entry" match:match find:@"/resource/style/entry$" replace:@"/resource/style/sdk"];
+    if ([self.stage isEqual:@"tls-queue"]) [self.transform addUrlTransform:@"qa-multi-entry" match:match find:@"/resource/style/multi-entry$" replace:@"/resource/style/multi"];
     [self.transform addHeader:@"qa-auth" match:match name:@"Authorization" value:@"synthetic-sdk-secret-must-not-forward"];
     [self.transform addHeader:@"qa-cookie" match:match name:@"Cookie" value:@"synthetic-sdk-cookie-must-not-forward=1"];
     NSURLSessionConfiguration *configuration = NSURLSessionConfiguration.ephemeralSessionConfiguration;
@@ -145,18 +146,21 @@ static NSDictionary *TPControl(NSString *path) {
     network.sessionConfiguration = configuration;
     if (network.delegate != self.transform) { [self finish:NO reason:@"session configuration replaced delegate"]; return; }
     BOOL cancelTrial = [self.stage isEqual:@"cancel-retry"];
-    BOOL tlsTrial = [self.stage isEqual:@"tls-render"];
+    BOOL tlsTrial = [@[@"tls-render", @"tls-queue"] containsObject:self.stage];
+    BOOL tlsQueue = [self.stage isEqual:@"tls-queue"];
     NSURL *ledgerURL = [TPRunDirectory URLByAppendingPathComponent:tlsTrial ? @"tls-ledger.json" : (cancelTrial ? @"cancel-ledger.json" : @"render-ledger.json")];
     BOOL configured = tlsTrial ? [TPTransport configurePrivateFixtureTLSOrigin:TPOrigin ledgerURL:ledgerURL maxRequests:32 maxTiles:16 maxReservedBytes:8192 certificate:self.fixtureCertificate] : [TPTransport configureOrigin:TPOrigin ledgerURL:ledgerURL maxRequests:cancelTrial ? 64 : 32 maxTiles:cancelTrial ? 32 : 16 maxReservedBytes:cancelTrial ? 16384 : 8192];
     if (!configured) { [self finish:NO reason:@"ledger not ready"]; return; }
-    self.phase = cancelTrial ? 10 : 1;
+    self.phase = cancelTrial ? 10 : (tlsQueue ? 2 : 1);
     // Explicit style avoids constructing a default network style before the gate.
-    self.map = [[MLNMapView alloc] initWithFrame:CGRectMake(0, 120, cancelTrial ? 1024 : self.view.bounds.size.width, cancelTrial ? 1024 : 300) styleURL:[NSURL URLWithString:[TPOrigin stringByAppendingString:cancelTrial ? @"/resource/style/held" : @"/resource/style/entry"]]];
+    BOOL largeViewport = cancelTrial || tlsQueue;
+    NSString *stylePath = cancelTrial ? @"/resource/style/held" : (tlsQueue ? @"/resource/style/multi-entry" : @"/resource/style/entry");
+    self.map = [[MLNMapView alloc] initWithFrame:CGRectMake(0, 120, largeViewport ? 1024 : self.view.bounds.size.width, largeViewport ? 1024 : 300) styleURL:[NSURL URLWithString:[TPOrigin stringByAppendingString:stylePath]]];
     self.map.delegate = self; self.map.prefetchesTiles = NO;
     self.map.shouldRequestAuthorizationToUseLocationServices = NO;
     self.map.showsUserLocation = NO; self.map.scrollEnabled = NO; self.map.zoomEnabled = NO;
     self.map.rotateEnabled = NO; self.map.pitchEnabled = NO;
-    [self.map setCenterCoordinate:CLLocationCoordinate2DMake(0, 0) zoomLevel:cancelTrial ? 2 : 0 animated:NO];
+    [self.map setCenterCoordinate:CLLocationCoordinate2DMake(0, 0) zoomLevel:largeViewport ? 2 : 0 animated:NO];
     [self.view insertSubview:self.map belowSubview:self.label]; [self.view setNeedsLayout];
     self.label.text = @"합성 지도를 확인하고 있습니다.\n기존 여행 기록은 사용하지 않습니다.";
     self.timer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) { [self inspectProgress]; }];
@@ -165,7 +169,7 @@ static NSDictionary *TPControl(NSString *path) {
 - (void)observedTransformURL:(NSString *)url {
     @synchronized(self) {
         self.transforms++;
-        if ([url isEqual:[TPOrigin stringByAppendingString:@"/resource/style/sdk"]]) self.rewrittenStyles++;
+        if ([url isEqual:[TPOrigin stringByAppendingString:[self.stage isEqual:@"tls-queue"] ? @"/resource/style/multi" : @"/resource/style/sdk"]]) self.rewrittenStyles++;
         NSURLComponents *parts = [NSURLComponents componentsWithString:url];
         if (self.phase == 3 && [parts.scheme isEqual:@"http"] && [parts.host isEqual:@"example.invalid"] && (!parts.port || parts.port.integerValue == 80) && [parts.path isEqual:@"/resource/tile/0_0_0"] && !parts.query && !parts.fragment) self.externalTileRequests++;
     }
@@ -283,6 +287,15 @@ static NSDictionary *TPControl(NSString *path) {
             [self.cases addObject:@{@"name": @"SDK pinned HTTPS raster render", @"pass": @YES, @"native": native, @"styleLoaded": @YES, @"fullyRendered": @YES}];
             NSUInteger rewrites; @synchronized(self) { rewrites = self.rewrittenStyles; }
             [self finish:rewrites >= 1 && MLNNetworkConfiguration.sharedManager.delegate == self.transform reason:@"SDK pinned HTTPS single-raster check completed"];
+        }
+        return;
+    }
+    if ([self.stage isEqual:@"tls-queue"]) {
+        if (!self.waitingSnapshot && [native[@"active"] isEqual:@4] && [native[@"pending"] integerValue] >= 1 && [native[@"released"] isEqual:@1] && [native[@"tlsVerifiedExchanges"] isEqual:@1]) self.waitingSnapshot = native;
+        if (self.phase == 2 && self.styleLoaded && self.fullyRendered && self.waitingSnapshot && [self idleNative:native] && [native[@"maxActive"] isEqual:@4] && [native[@"maxPending"] integerValue] >= 1 && [native[@"started"] isEqual:@7] && [native[@"httpRequestSendsSettled"] isEqual:@7] && [native[@"tlsVerifiedExchanges"] isEqual:@7] && [native[@"ledger"][@"tiles"] isEqual:@6]) {
+            [self.cases addObject:@{@"name": @"SDK pinned HTTPS fifth request waits", @"pass": @YES, @"native": native, @"waitingSnapshot": self.waitingSnapshot, @"styleLoaded": @YES, @"fullyRendered": @YES}];
+            NSUInteger rewrites; @synchronized(self) { rewrites = self.rewrittenStyles; }
+            [self finish:rewrites >= 1 && MLNNetworkConfiguration.sharedManager.delegate == self.transform reason:@"SDK pinned HTTPS queue check completed"];
         }
         return;
     }

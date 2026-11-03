@@ -158,7 +158,9 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
       heldBodies.set(response, sendBody);
     } else if (multiTile) {
       response.flushHeaders();
-      timer = setTimeout(() => { timers.delete(timer); sendBody(); }, 120);
+      // Keep the existing HTTP window; TLS handshakes and the SDK main-thread
+      // observer need a larger, still bounded window to see four open bodies.
+      timer = setTimeout(() => { timers.delete(timer); sendBody(); }, tlsOptions ? 500 : 120);
       timers.add(timer);
     } else sendBody();
   };

@@ -1,5 +1,11 @@
 # 실제 지도 엔진을 연결한 iPhone 시험
 
+## HTTPS에서 추가 요청 대기 준비
+
+`QA_STAGE=tls-queue`는 같은 private origin·DER와 `tls-ledger.json`을 사용합니다. 지도 생성 전에 실제 RN native 변환 규칙이 `multi-entry`를 `multi`로 바꿉니다. 1024pt·zoom2에서 active4/pending1~2의 스냅샷과 최종7요청·6타일·예약1792·TLS 확인7·렌더·빈 대기를 모두 요구합니다. TLS 단계는 신뢰가 고정되지 않은 TPControl과 후속 HTTP 재설정을 사용하지 않습니다. `tls_queue_result.py`의 독립 합성 회귀30개가 장부·PID·pin·서버 TLS·경로·본문·수명을 대조합니다.
+
+실제 TLS fixture의 네 본문은500ms 보류하며 HTTP120ms는 그대로입니다. 서버 peak는 응답 본문의 수명이며 모든 TLS socket 수를 뜻하지 않습니다. 전체 verifier와 signed Debug 빌드는 통과했지만, 현재 사용자 환경은 iPhone cellular/Mac이 같은 iPhone hotspot이고 폰→Mac 경로가 확인되지 않아 **기기0통과**입니다. 준비 앱은 `.build/pinned-sdk-tls-queue-prepared-20261103/`, 제외 결과·장부2개는 로컬 근거에 보관했습니다. SDK TLS 취소/재시작·HTTP2·공급원·OS 수신량의 근거로 확대하지 않습니다.
+
 ## 11월 3일: 아이폰의 작은 합성 지도를 HTTPS로 확인했습니다
 
 기존 여행색칠과 분리된 시험 앱에서 **물리 iPhone 1개 사례**를 통과했습니다. 실제 RN native 주소 변환 클래스를 유지한 채 스타일과 타일 2개 요청을 정확한 사설 IPv4·포트와 공개 DER에 고정했습니다. TLS·HTTP/1.1 확인 2회, 시작·반환·송신 2회, 본문307바이트, 장부 requests2/tiles1/reserved512와 마지막 active/pending/unresolved0을 서버와 대조했습니다. 서버의 두 응답도 HTTP/1.1·TLS1.3, 인증·쿠키 없음으로 일치했습니다. 실제 최대 동시는1이며, TLS에서의 네 자리 대기·SDK 취소/재실행·HTTP2·제품 JS·공급원·OS 수신량 검증으로 세지 않습니다.
