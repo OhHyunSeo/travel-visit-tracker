@@ -10,6 +10,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) BOOL trustAccepted;
 @property (nonatomic, readonly) BOOL chainTrusted;
 @property (nonatomic, readonly) NSString *negotiatedProtocol;
+// Same serial queue as callbacks. State/codes only: no URL, headers or body.
+@property (nonatomic, readonly) NSDictionary *diagnostics;
 // Canonical exact origin for an explicitly configured private QA server only.
 + (BOOL)safePrivateFixtureTLSOrigin:(NSString *)origin;
 - (instancetype)initWithURL:(NSURL *)url

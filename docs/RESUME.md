@@ -1,5 +1,17 @@
 # 여기서 이어서 개발하기
 
+## 11월 3일 최신: 아이폰 없이 통신 진단까지 확인했습니다
+
+사용자가 iPhone 연결을 해제해도 되는지 물었고 가능하다고 안내했습니다. 그 뒤 기기 조회·설치·실행은 0회입니다. 지금 끝낸 범위는 Mac의 진단 보완이며 아이폰이 다시 준비됐다는 안내 전까지 기기에 접근하지 않습니다.
+
+`TPHTTPExchange`의 마지막 live state·state callback 오류 번호·경로 상태·TLS/ALPN·로컬 종료 코드를 관측하고 `TPTransport.snapshot.lastExchange`에 마지막 완료 한 건만 담습니다. URL·헤더·본문이나 오류 설명은 남기지 않고 장부에도 추가하지 않습니다. 기본 전송·제한 시간·예약·취소 동작은 유지합니다. 오류 번호 0은 native 오류를 관측하지 못했다는 뜻이며 연결에 문제가 없다는 증거가 아닙니다.
+
+새 Mac 실제 연결 3개가 handshake 대기의 제한 시간, 인증서 host 거절, h2 거절을 구분했습니다. private TLS 전체 10개와 전체 verifier exit0 PASS: 모바일 609, 서버 61, fixture 30, Android host 175, Mac native 66, 보고서 61, 임시 HTTP·SQLite·파일, 양쪽 JS/Hermes입니다. iOS arm64 syntax PASS이며 새 진단 소스의 signed build·실제 기기 실행은 NOT RUN입니다. 첫 닫힌 listener 즉시 실패 가정의 검사 실패와 실제 preparing/deadline 관측은 원문에 보존하며 제품 결함이나 앞선 iPhone 실패 원인으로 바꾸지 않습니다.
+
+다음 기기 항목은 앞선 신호 전달 준비의 same-PID 검증입니다. `4a5cb06`의 pinned-action-delivery-prepared 앱은 새 진단 소스를 포함하지 않는 정확한 경계로 보존했습니다. 그 앱을 그대로 쓸지 새 소스로 빌드할지 명시한 뒤 fresh 원본 설치 정보·QA 파일 점검부터 시작합니다. 현재 scene에서 정상 취소 신호→같은 신호 중복 거절→정상 재로딩 신호를 대조하며, 실제 SDK TLS 취소·재로딩 구현/검사는 그 뒤입니다. `19656af`의 실제 HTTPS 대기 1개와 CI41647235124 SUCCESS는 해당 소스의 별도 근거입니다.
+
+Android는 로컬 `82c41b5` clean/idle이며 이번에는 새 dispatch·native/AVD 실행을 하지 않았습니다. 이번 verifier의 새 export 파일만 크기·SHA 확인 후 정리하고 기존 pin·SDK·AVD·캐시·빌드·백업·증거는 보존합니다. 전체 24/54, P3-02 부분, G1~G4 미완료와 공급원 다운로드 OFF를 유지합니다. 300분 잔여 20% 미만이면 현재 항목만 저장하고 중지한다는 규칙도 계속 적용합니다.
+
 ## 11월 3일 후속: 취소·재로딩을 위한 검사 신호 준비
 
 전송이 진행 중인 상태에서 검사 도구가 앱에 정확한 신호를 줄 수 있도록 별도 `TPFixtureActionGate`를 추가했습니다. 현재 run ID·실제 PID·서로 다른 두64자리 nonce와 정확히 일치하는 QA URL만 phase10→12 순서로 한 번씩 받습니다. 다른 검사·PID·값·단계·중복/변형 URL은 상태를 소비하지 않습니다. 실제 Mac Foundation11개가 통과했고 일반 인증·실행 권한을 주는 도구로 사용하지 않습니다.

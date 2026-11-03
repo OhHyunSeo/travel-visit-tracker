@@ -20,6 +20,7 @@ static NSUInteger TPActive, TPMaxActive, TPBlocked, TPStarted, TPAccepted;
 static NSUInteger TPMaxRequests, TPMaxTiles, TPMaxReserved;
 static NSUInteger TPHTTPSends, TPHTTPReceived;
 static NSUInteger TPVerifiedTLS;
+static NSDictionary *TPLastExchangeDiagnostics;
 static NSUInteger TPMaxPending, TPCancelledPending, TPCancelledActive, TPReleased;
 static const NSUInteger TPReservation = 256;
 static const NSUInteger TPLedgerReadLimit = 64 * 1024;
@@ -223,6 +224,7 @@ static BOOL TPValidLedger(NSMutableDictionary *ledger, NSString *origin, NSUInte
         TPMaxRequests = requests; TPMaxTiles = tiles; TPMaxReserved = bytes;
         TPMaxActive = TPBlocked = TPStarted = TPAccepted = 0;
         TPHTTPSends = TPHTTPReceived = TPVerifiedTLS = 0;
+        TPLastExchangeDiagnostics = @{};
         TPMaxPending = TPCancelledPending = TPCancelledActive = TPReleased = 0;
         TPLedger = candidate; TPLedgerOK = YES;
         ok = YES;
@@ -232,7 +234,7 @@ static BOOL TPValidLedger(NSMutableDictionary *ledger, NSString *origin, NSUInte
 + (NSDictionary *)snapshot {
     __block NSDictionary *result;
     dispatch_sync(TPQueue, ^{
-        result = @{@"active": @(TPActive), @"maxActive": @(TPMaxActive), @"pending": @(TPPending.count), @"maxPending": @(TPMaxPending), @"cancelledPending": @(TPCancelledPending), @"cancelledActive": @(TPCancelledActive), @"released": @(TPReleased), @"blockedBeforeDispatch": @(TPBlocked), @"started": @(TPStarted), @"httpRequestSendsSettled": @(TPHTTPSends), @"receivedHTTPBytesSettled": @(TPHTTPReceived), @"tlsVerifiedExchanges": @(TPVerifiedTLS), @"transport": TPFixtureCertificate ? (TPPrivateFixtureTLS ? @"pinned-private-tls-http1-fixture" : @"pinned-loopback-tls-http1-fixture") : @"single-send-http1-fixture", @"acceptedBodyBytes": @(TPAccepted), @"ledgerOK": @(TPLedgerOK), @"ledger": TPLedgerOK ? [NSJSONSerialization JSONObjectWithData:[NSJSONSerialization dataWithJSONObject:TPLedger options:0 error:nil] options:0 error:nil] : @{}};
+        result = @{@"active": @(TPActive), @"maxActive": @(TPMaxActive), @"pending": @(TPPending.count), @"maxPending": @(TPMaxPending), @"cancelledPending": @(TPCancelledPending), @"cancelledActive": @(TPCancelledActive), @"released": @(TPReleased), @"blockedBeforeDispatch": @(TPBlocked), @"started": @(TPStarted), @"httpRequestSendsSettled": @(TPHTTPSends), @"receivedHTTPBytesSettled": @(TPHTTPReceived), @"lastExchange": TPLastExchangeDiagnostics ?: @{}, @"tlsVerifiedExchanges": @(TPVerifiedTLS), @"transport": TPFixtureCertificate ? (TPPrivateFixtureTLS ? @"pinned-private-tls-http1-fixture" : @"pinned-loopback-tls-http1-fixture") : @"single-send-http1-fixture", @"acceptedBodyBytes": @(TPAccepted), @"ledgerOK": @(TPLedgerOK), @"ledger": TPLedgerOK ? [NSJSONSerialization JSONObjectWithData:[NSJSONSerialization dataWithJSONObject:TPLedger options:0 error:nil] options:0 error:nil] : @{}};
     });
     return result;
 }
@@ -307,6 +309,7 @@ static BOOL TPValidLedger(NSMutableDictionary *ledger, NSString *origin, NSUInte
 - (void)exchangeCompleted:(NSHTTPURLResponse *)response data:(NSData *)data error:(NSError *)error {
     if (self.settled) return;
     self.settled = YES;
+    TPLastExchangeDiagnostics = [self.exchange.diagnostics copy];
     TPHTTPSends += self.exchange.requestSendCount;
     TPHTTPReceived += self.exchange.receivedHTTPBytes;
     if (!error && self.exchange.trustAccepted && [self.exchange.negotiatedProtocol isEqual:@"http/1.1"]) TPVerifiedTLS++;

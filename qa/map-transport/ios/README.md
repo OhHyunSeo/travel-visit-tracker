@@ -1,5 +1,11 @@
 # iPhone 지도 통신 시험 앱
 
+## 11월 3일: 요청 전 실패의 진단
+
+`TPHTTPExchange.diagnostics`는 마지막 live 연결 상태, state callback의 native 오류 domain/code, 관측한 경로 상태와 unsatisfied reason, TLS/ALPN, 로컬 finish code와 송신·수신량을 돌려줍니다. completion과 같은 serial queue에서만 읽습니다. `TPTransport.snapshot.lastExchange`는 마지막 완료 한 건의 복사본이며 장부에 저장하지 않습니다. URL·헤더·본문·오류 설명은 제외합니다. 0인 native 오류 값은 오류 미관측이며 성공 판정이 아닙니다. 전송·대기·제한 시간·취소 정책은 바꾸지 않았습니다.
+
+Mac의 제어된 실제 TLS 연결 3개가 preparing/deadline(3), 인증서 host 거절(2, native 오류 있음), h2 거절(11, ready)을 구분했고 private TLS 전체 10개가 통과했습니다. 앞선 실제 iPhone 요청 0건의 원인은 여전히 미확정입니다. 이 변경의 iOS arm64 syntax만 확인했으며 새 signed build·기기 실행은 NOT RUN입니다. 이전 `4a5cb06`의 action-delivery 준비 앱에는 새 진단이 포함되지 않습니다.
+
 ## 2026-11-02 후속: HTTPS 장부와 전역 자리 수명
 
 `configureFixtureTLSOrigin`이 연결별 TLS를 기존 `TPTransport`의 장부와 대기열에 묶습니다. 명시적 loopback HTTPS와 최대16KiB DER만 허용하며, 같은 origin·한도·leaf DER가 저장 장부와 일치해야 다시 열립니다. pin 변경과 잘못된 입력은 기존 파일을 바꾸지 않습니다. 기본 HTTP 생성자와 `safeOrigin`은 유지하고, SDK 앱이나 제품에 HTTPS를 자동으로 열지 않습니다.

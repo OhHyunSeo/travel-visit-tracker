@@ -22,9 +22,21 @@ static const NSUInteger TPHeaderLimit = 8192, TPBodyLimit = 256;
 @property NSData *fixtureCertificate;
 @property NSString *privateFixtureOrigin;
 @property NSString *negotiatedProtocol;
+@property (copy) NSString *observedState;
+@property NSInteger networkErrorDomain, networkErrorCode;
+@property BOOL pathObserved;
+@property NSUInteger pathStatus;
+@property NSNumber *unsatisfiedReason;
 @end
 
 @implementation TPHTTPExchange
+- (NSDictionary *)diagnostics {
+    return @{@"schema": @1, @"finishCode": @(self.failure.code), @"networkState": self.observedState ?: @"not-exposed",
+             @"networkErrorDomain": @(self.networkErrorDomain), @"networkErrorCode": @(self.networkErrorCode),
+             @"pathObserved": @(self.pathObserved), @"pathStatus": @(self.pathStatus), @"unsatisfiedReason": self.unsatisfiedReason ?: NSNull.null,
+             @"tls": @(self.fixtureTLS), @"chainTrusted": @(self.chainTrusted), @"trustAccepted": @(self.trustAccepted),
+             @"alpn": self.negotiatedProtocol, @"requestSends": @(self.requestSendCount), @"receivedHTTPBytes": @(self.receivedHTTPBytes)};
+}
 + (BOOL)safePrivateFixtureTLSOrigin:(NSString *)origin {
     NSURLComponents *parts = [NSURLComponents componentsWithString:origin];
     struct in_addr address;
@@ -164,6 +176,24 @@ static const NSUInteger TPHeaderLimit = 8192, TPBodyLimit = 256;
     nw_connection_set_state_changed_handler(self.connection, ^(nw_connection_state_t state, nw_error_t error) {
         if (state == nw_connection_state_cancelled) { [self deliver]; return; }
         if (self.finishing) return;
+        // Observe the last live state before terminal cancellation, without
+        // retaining an error description that may contain addresses or URLs.
+        switch (state) {
+            case nw_connection_state_invalid: self.observedState = @"invalid"; break;
+            case nw_connection_state_waiting: self.observedState = @"waiting"; break;
+            case nw_connection_state_preparing: self.observedState = @"preparing"; break;
+            case nw_connection_state_ready: self.observedState = @"ready"; break;
+            case nw_connection_state_failed: self.observedState = @"failed"; break;
+            case nw_connection_state_cancelled: break;
+        }
+        if (error) { self.networkErrorDomain = nw_error_get_error_domain(error); self.networkErrorCode = nw_error_get_error_code(error); }
+        nw_path_t path = nw_connection_copy_current_path(self.connection);
+        self.pathObserved = path != nil;
+        self.pathStatus = path ? nw_path_get_status(path) : 0;
+        self.unsatisfiedReason = nil;
+        if (path && self.pathStatus == nw_path_status_unsatisfied) {
+            if (@available(macOS 11.0, iOS 14.2, *)) self.unsatisfiedReason = @(nw_path_get_unsatisfied_reason(path));
+        }
         if (state == nw_connection_state_ready) {
             if (self.fixtureTLS && ![self fixtureProtocolAllowed]) [self finish:11];
             else [self sendOnce];

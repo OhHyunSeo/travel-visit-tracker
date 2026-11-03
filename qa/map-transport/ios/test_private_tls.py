@@ -120,6 +120,56 @@ class PrivateTLSTests(unittest.TestCase):
                 self.assertEqual(native["released"], 1)
                 self.assertEqual(len(server.requests), 0)
 
+    def test_held_handshake_diagnostics_record_deadline_without_native_error(self):
+        with self.fixture(handshake_hold=True) as server:
+            origin = f"https://127.0.0.1:{server.port}"
+            direct = self.run_driver(origin, mode="exchange")
+            info = direct["diagnostics"]
+            self.assertEqual(direct["sends"], 0)
+            self.assertEqual(info["finishCode"], 3)
+            self.assertEqual(info["networkState"], "preparing")
+            self.assertEqual(info["networkErrorDomain"], 0)
+            self.assertEqual(info["networkErrorCode"], 0)
+            self.assertEqual(info["requestSends"], 0)
+            self.assertEqual(info["receivedHTTPBytes"], 0)
+            self.assertNotIn("url", info)
+            self.assertNotIn("headers", info)
+            self.assertNotIn("body", info)
+            self.assertEqual(server.accepted, 1)
+            self.assertEqual(len(server.requests), 0)
+
+    def test_certificate_host_failure_diagnostics_preserve_failure_charge(self):
+        with self.fixture("wronghost") as server:
+            origin = f"https://127.0.0.1:{server.port}"
+            pin = base64.b64encode((self.root / "wronghost.der").read_bytes()).decode()
+            native = self.run_driver(origin, pin=pin)["native"]
+            info = native["lastExchange"]
+            self.assertEqual(native["ledger"]["reservedBytes"], 256)
+            self.assertEqual(native["released"], 1)
+            self.assertEqual(info["finishCode"], 2)
+            self.assertIn(info["networkState"], ("waiting", "failed"))
+            self.assertGreater(info["networkErrorDomain"], 0)
+            self.assertNotEqual(info["networkErrorCode"], 0)
+            self.assertEqual(info["requestSends"], 0)
+            self.assertEqual(info["receivedHTTPBytes"], 0)
+            self.assertIs(info["trustAccepted"], False)
+            self.assertEqual(len(server.requests), 0)
+
+    def test_protocol_refusal_diagnostics_differ_from_connection_failure(self):
+        with self.fixture(protocols=("h2",)) as server:
+            native = self.run_driver(f"https://127.0.0.1:{server.port}")["native"]
+            info = native["lastExchange"]
+            self.assertEqual(info["finishCode"], 11)
+            self.assertEqual(info["networkState"], "ready")
+            self.assertEqual(info["networkErrorDomain"], 0)
+            self.assertEqual(info["networkErrorCode"], 0)
+            self.assertIs(info["trustAccepted"], True)
+            self.assertEqual(info["alpn"], "h2")
+            self.assertEqual(native["httpRequestSendsSettled"], 0)
+            self.assertEqual(native["tlsVerifiedExchanges"], 0)
+            self.assertEqual(native["ledger"]["reservedBytes"], 256)
+            self.assertEqual(len(server.requests), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

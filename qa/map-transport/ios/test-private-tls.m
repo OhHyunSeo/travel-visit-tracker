@@ -19,7 +19,7 @@ int main(int argc, const char *argv[]) {
             dispatch_queue_t queue = dispatch_queue_create("app.trippainting.qa.private-tls-test", DISPATCH_QUEUE_SERIAL);
             dispatch_async(queue, ^{
                 exchange = [[TPHTTPExchange alloc] initWithURL:url queue:queue timeout:1 privateFixtureOrigin:origin fixtureCertificate:certificate completion:^(NSHTTPURLResponse *response, NSData *data, NSError *error) {
-                    result = @{@"error": @(error.code), @"length": @(data.length), @"sends": @(exchange.requestSendCount), @"trustAccepted": @(exchange.trustAccepted)};
+                    result = @{@"error": @(error.code), @"length": @(data.length), @"sends": @(exchange.requestSendCount), @"trustAccepted": @(exchange.trustAccepted), @"diagnostics": exchange.diagnostics};
                     dispatch_semaphore_signal(done);
                 }];
                 [exchange start];
