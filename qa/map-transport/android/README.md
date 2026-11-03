@@ -48,6 +48,20 @@ python3 -B qa/map-transport/android/prepare_controller.py --android-root "$PWD/q
 
 기본 실행은 backing 없이 제한된 events/canary/output/result를 기록합니다. 선택적인 `--backing-bytes 512`는 새512-byte 일반 파일만 초기화합니다. SDK나 AVD를 읽지 않습니다. 정상 controller 준비도 native 실행에는 **BLOCKED/exit2**이며, 실패는 exit1입니다. 임의 native 옵션은 쓰기 전에 거절합니다. 결과 파일의 cleanup은 기록 시점 `PENDING`, 반환 보고서는 그 뒤 실제 close 결과를 담습니다. 반환 `controllerAudit`는 `result.json`을 포함한 마지막 파일 상태이며 저장 보고서는 자기 자신의 최종 크기를 재귀적으로 약속하지 않습니다. 중간 실패의 예외와 CLI 결과는 보존한 `controllerRoot`와 최종 cleanup을 함께 전달하므로 다른 run의 경로를 추측할 필요가 없습니다.
 
+## Producer 요청의 실행 전 검사
+
+`producer_request.py`는 실제 생성기를 호출하지 않고 요청의 형식만 검사합니다. `prepare_controller.py`의 선택적 `--producer-request`로 연결했으며, 요청이 잘못되면 새 controller 디렉터리를 만들기 전에 거절합니다.
+
+```sh
+python3 -B qa/map-transport/android/prepare_controller.py --android-root "$PWD/qa/map-transport/android" --producer-request '{"schema":1,"operation":"create-empty-userdata","requestedBytes":512,"outputName":"userdata.img"}'
+```
+
+입력은 UTF-8 최대4,096 bytes의 JSON이며 위 네 필드만 받습니다. schema는 정수1, operation/outputName은 예시의 고정 문자열, requestedBytes는 bool이 아닌 양의 정수·512-byte 배수·최대32MiB입니다. 중복 키, 비유한 숫자, 임의 경로·실행 파일·argv·환경·호출자가 넣은 승인값은 거절합니다. CLI 옵션 축약도 받지 않습니다. API도 직렬화한 JSON만 새로 검사하며 이전 결과 dict를 승인 자료로 받지 않습니다.
+
+유효한 요청은 bounded events/result에 `producerPreflight` 진단만 추가하고 **BLOCKED/exit2**로 끝납니다. 잘못된 요청은 FAILED/exit1, controllerRoot/cleanup은 null입니다. `userdata.img`를 만들거나 명령·승인 토큰을 반환하지 않습니다. `--backing-bytes`를 별도로 주지 않으면 backing도 만들지 않습니다. 두 크기 값은 독립적이며32MiB 요청+512-byte backing을 기록해도 용량이 맞거나 형식화할 수 있다는 뜻이 아닙니다.512 bytes는 입력 정렬의 하한이며 실제 formatter의 최소 용량은 미확인입니다.
+
+요청 검사를 통과해도 `producerEntryVerified=false`, `allocationBoundProven=false`, `imageFormatted=false`, `nativeAdmissionEnabled=false`입니다. cached 생성기의 출처·고정 호출 인자와 guest 초기화 전 반환, OS 쓰기 보호·모든 child/mount 수명은 별도 검증해야 합니다. 기존 native gate와 버전 전용 도구는 변경하지 않았습니다.
+
 ## 검사
 
 저장소 루트에서 실행합니다.
@@ -56,7 +70,7 @@ python3 -B qa/map-transport/android/prepare_controller.py --android-root "$PWD/q
 python3 -B -m unittest discover -s qa/map-transport/android -p 'test_*.py'
 ```
 
-작은 합성 일반 파일만 쓰며 기기·SDK·형식화한 디스크 이미지를 열지 않습니다. controller/준비54개와 단일 writer helper36개, 총90개 PASS입니다. 일반 회귀는 아래 OS profile을 적용하지 않습니다. backing 사례는512/1024 bytes만 사용하며 합성 쓰기/close 오류는 실제 OS 저장 공간 부족과 구분합니다.
+작은 합성 일반 파일만 쓰며 기기·SDK·형식화한 디스크 이미지를 열지 않습니다. controller/준비54개, 단일 writer helper36개와 요청 검사21개, 총111개 PASS입니다. 일반 회귀는 아래 OS profile을 적용하지 않습니다. backing 사례는512/1024 bytes만 사용하며 합성 쓰기/close 오류는 실제 OS 저장 공간 부족과 구분합니다.
 
 ## 명시적 macOS 단일 writer 구성요소
 

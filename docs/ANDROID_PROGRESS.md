@@ -2,6 +2,22 @@
 
 마지막 갱신: 2026-11-03, Asia/Seoul.
 
+## 11월 3일 후속 재개: producer 요청 사전 검사 구현
+
+사용자의 iOS/Android 동시 재개 지시와 공통의 새 사람 재개 전달로 **`6c165d6326feac02c13ef503172f637824d285b4`**에서 시작했습니다. 공통은 전달 기준d81cba6/실행3b139cd에서 iPhone SDK HTTPS queue를 맡으며, Android는 현재 worktree의 작은 source/host 단위만 맡았습니다. 공통/iOS·제품·의존성은 편집하지 않았습니다.300분 잔여는 시작90%→구현 전85%→검사 후77%였고20% 미만 저장·중지 규칙을 유지합니다.
+
+**구현:** 새 `qa/map-transport/android/producer_request.py`가 직렬화한 JSON 요청을 검사하고 `prepare_controller.py`가 artifact 생성 **전**에 이를 호출합니다. UTF-8 최대4,096 bytes, 정확한 네 키, schema 정수1, 고정 operation `create-empty-userdata`/outputName `userdata.img`, bool을 제외한 양의 정수·512-byte 정렬·최대32MiB만 받습니다. 중복/비유한 숫자·잘못된 인코딩/깊은 JSON, 임의 경로·executable/argv/env·승인값 추가를 거절합니다. CLI의 새 옵션은 `--producer-request`이며 옵션 축약을 받지 않습니다.
+
+유효 요청도 bounded events/result의 `producerPreflight` 진단만 기록하고 BLOCKED/exit2입니다. invalid는 controller 생성 전에 FAILED/exit1, controllerRoot/cleanup null입니다. 명령·실행 가능한 인자·승인 토큰은 만들지 않으며 `producerEntryVerified`, `allocationBoundProven`, `imageFormatted`, `nativeAdmissionEnabled`는 모두false입니다. 요청 크기와 별도 flat backing 크기를 용량 검증으로 해석하지 않습니다.512 bytes는 정렬 하한일 뿐 실제 formatter 최소 크기가 아니며32MiB도 기존 설계 ceiling입니다.
+
+**검사 PASS:** `python3 -B -m unittest discover -s qa/map-transport/android -p 'test_*.py'` — 기존90+새21, **111개**,1.722초/exit0입니다. 새21개는 요청 경계/주입/수정된 dict 재입력 거절, invalid 때 create 미호출·빈 디렉터리 보존, 정상 metadata-only·READY audit/CLOSED cleanup, request32MiB+별도512-byte backing의 독립과 CLI 축약/native 옵션 무생성 거절을 확인했습니다. 각 테스트는 새 소유 temp root만 쓰고 정리했습니다. OS profile·formatter·native·SDK/기기는 실행하지 않았습니다. 독립 읽기 검토에서 차단 필요 결함은 발견되지 않았습니다.
+
+실제 새 userdata 생성, cached producer 출처/고정 argv/guest 진입 전 반환, OS 할당량 상한과 formatter 보호, 전체 자식/열린 FD/mount 수명, 새 image·mount·AVD·emulator/ADB·실제 Android·Release는 **NOT RUN**입니다. 기존 단일 writer의 OS PASS를 이번 native 통과로 재사용하지 않습니다. 공통 전체 verifier·iPhone의 결과도 자체111개와 합산하지 않습니다.
+
+선택 통합 후보는 새 `producer_request.py`, 수정 `prepare_controller.py`, 새 `test_producer_request.py` 세 파일입니다. prepare가 새 module을 import하므로 함께 가져와야 합니다. Android README는 필요한 절만 합치며 전체 branch/README를 덮어쓰지 않습니다. 고정 소스 SHA와 실행 명령/결과는 Git 제외 `docs/test-results/android-producer-request-20261103/completion-summary.json`에 저장합니다. source 외 개인 경로·원시 device 자료는 공유하지 않습니다.
+
+이번 단위에서 새 빌드/다운로드·대형 파일·기존 캐시/SDK/AVD/개인 DB·사진·인증·백업 삭제는 없습니다. 관측한 데이터 볼륨 가용량은20,400,000KiB(약20.9GB)였으며 별도 동시 작업이 있어 이 단위의 확보량으로 표시하지 않습니다. 새 app 전체 verifier/push/PR/CI는 실행하지 않았고 소유 지속 서비스도 없습니다. 로컬 코드·근거·문서를 저장하고 이 단위를 완료합니다. 다음은 실제 cached producer-only entry의 출처·고정 호출과 guest 초기화 전 반환을 증명할 수 있는지 확인하는 별도 범위이며, 확인 전 임의 formatter나 full emulator로 대체 실행하지 않습니다. 전체24/54·P3-02 부분 완료/G1~G4 미완료와 native 차단을 유지합니다.
+
 ## 11월 3일 재재개: 단일 writer 코드와 작은 OS 구성요소 완료
 
 공통에서 전달한 새 사람 “이어서 진행해줘” 요청으로 **`5a8a4ecf0bd8514623ca2b0c1196bd94317b00d4`**부터 재개했습니다. 공통 기준은 중단 문서7fd18eb/실행5063f5e와 그 실행의 CI SUCCESS라는 공통 보고를 따릅니다. 공통/iOS는 별도 담당이며 이 Android 작업에서 그 파일은 편집하지 않았습니다. 전용300분 한도 조회는 단계 전환 때 잔여93%→63%→55%→53%→42%→36%였으며20% 미만 중지 규칙을 유지했습니다. Mac 가용 약21.9GB는 전달받은 값이고 대형 이미지·AVD·빌드 없이 진행했습니다.

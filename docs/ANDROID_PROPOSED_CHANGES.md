@@ -1,5 +1,15 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
+## 11월 3일 후속 재개: producer 요청 검사21개 완료
+
+Android `6c165d6`에서 **실행 능력이 없는 producer 요청 검사**를 구현하고 기존 준비 흐름에 연결했습니다. 새 `producer_request.py`, 수정 `prepare_controller.py`, 새 `test_producer_request.py`가 선택 통합 후보입니다. prepare의 import 의존성 때문에 module도 함께 가져와야 하며 공통 기존 README는 새 설명 절만 합칩니다.
+
+- 최대4,096 UTF-8 bytes/정확한 네 키·고정 operation/outputName·bool 제외 정수/512-byte 정렬/32MiB 설계 ceiling을 artifact 생성 전에 확인합니다. 임의 executable/argv/env/경로/승인값·중복·비유한 JSON과 CLI 축약은 거절합니다.
+- 정상 요청도 bounded metadata에만 남기고 BLOCKED/exit2, invalid는 새 run 없이 FAILED/exit1입니다. 이전 진단 dict를 검증된 입력으로 받지 않으며 명령이나 승인 토큰은 만들지 않습니다.
+- 기존90+새21, **자체 host111개 PASS**입니다. 작은 합성 파일만 쓰며 OS policy를 적용하지 않았습니다. 원본 자료·공통/iOS·SDK/AVD·제품/의존성과 기존 native gate는 변경하지 않았습니다.
+
+`requestedBytes`는 실제 formatter 최소 용량이나 backing 적합성 증명이 아닙니다. 실제 cached producer 출처·고정 argv·guest 초기화 전 반환, OS allocation/formatter·전체 child/mount 수명과 새 image/AVD/native는 NOT RUN입니다. producerEntry/allocation/imageFormatted/nativeAdmission은 계속false입니다. 코드·검사·한계·다음 항목과 로컬 근거는 [진행 기록](ANDROID_PROGRESS.md)의 최신 절에 저장합니다. 공통/iPhone 검사와 자체111개를 합산하지 않으며 전체24/54·수용 게이트를 유지합니다.
+
 ## 11월 3일 재재개: 고정 단일 writer 구성요소
 
 새 사람 재개로 `5a8a4ec`에서 새 `single_writer_component.py`와 대응 helper 회귀를 구현했습니다. 공통/iOS와 기존 제품·SDK·AVD·원본 자료는 수정하지 않았습니다. 한도는 단계 전환마다 확인했고 마지막 저장 전 조회는300분 잔여36%로20% 중지 조건 이상이었습니다.
