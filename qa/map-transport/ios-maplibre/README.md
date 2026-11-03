@@ -1,5 +1,11 @@
 # 실제 지도 엔진을 연결한 iPhone 시험
 
+## 최신 장부 소스의 실제 iPhone HTTPS 대기 통과
+
+`tls-queue`의 새 signed Debug 앱에서1개 사례를 통과했습니다. 대기active4/pending2·장부5/4/1280, 완료7송신/6타일/TLS확인7·본문837·장부7/6/1792·idle를 별도 서버와 대조했습니다. 실제 RN native 변환과 SDK 렌더 콜백도 확인했습니다. 서로 다른 두 peak4는 native permit과 서버 응답 본문의 관측이며 모든 TLS socket 수를 뜻하지 않습니다.
+
+신뢰 거절과 첫0HTTP 준비는 제외해 보관했고 같은 빌드의 새run이 통과했습니다. 처음0HTTP의 원인은 확정하지 않았습니다. 최종/제외 Documents4파일과 소스·앱 해시를 확인한 뒤 QA 앱·캐시·서버·임시 키를 정리했고 원래 앱 설치 정보는 같았습니다. 개인 DB·사진·native 인증은 열지 않았습니다. 통과 앱은 `.build/pinned-sdk-tls-queue-native-ledger-20261103/`, 원문은 Git 제외 `sdk-queue-native-ledger-20261103/`입니다. 아래 예전 준비의 NOT RUN을 이번 정확한 소스·범위에서만 갱신합니다. TLS 취소/재실행·HTTP2·제품 JS·공급원/OS 수신량은 여전히 미완료입니다.
+
 ## HTTPS에서 추가 요청 대기 준비
 
 `QA_STAGE=tls-queue`는 같은 private origin·DER와 `tls-ledger.json`을 사용합니다. 지도 생성 전에 실제 RN native 변환 규칙이 `multi-entry`를 `multi`로 바꿉니다. 1024pt·zoom2에서 active4/pending1~2의 스냅샷과 최종7요청·6타일·예약1792·TLS 확인7·렌더·빈 대기를 모두 요구합니다. TLS 단계는 신뢰가 고정되지 않은 TPControl과 후속 HTTP 재설정을 사용하지 않습니다. `tls_queue_result.py`의 독립 합성 회귀30개가 장부·PID·pin·서버 TLS·경로·본문·수명을 대조합니다.

@@ -1,5 +1,9 @@
 # 개발 체크리스트
 
+## 11월 3일 최신: iPhone HTTPS 대기·Android 요청 검증
+
+실제 iPhone의 HTTPS 전송4/대기2와 최종7회·예약1792를 대조한 새1개 사례가 통과했습니다. Android 요청 검증까지 선택 반영한 전체 verifier609/61·fixture30·Android175·Mac52·보고서61·양쪽 JS/Hermes도 통과했습니다. TLS 취소/재실행·HTTP2·실제 Android/Release·공급원/OS 수신량은 남아 전체24/54/P3-02부분/G1~G4미완료입니다. [최신 재개 범위](RESUME.md)를 따릅니다.
+
 ## 11월 3일 Android 선택 반영·최종 전체 검사
 
 검토한 Android 두 파일만 반영해 공통host154개와 native 장부 보완을 포함한 전체609/61·fixture30·Mac52·보고서61·양쪽 JS/Hermes가 통과했습니다. 새 OS/Android실행은 하지 않았으며 iPhone HTTPS 대기 검사는 같은 네트워크에서 진행 중입니다. [최신 결과와 다음 항목](RESUME.md)을 따르고 전체24/54/P3-02부분/G1~G4미완료를 유지합니다.

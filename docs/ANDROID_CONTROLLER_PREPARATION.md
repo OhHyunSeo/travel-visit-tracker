@@ -32,3 +32,7 @@
 Android6c165d6의 `single_writer_component.py`와 대응 검사만 검토 후 가져왔습니다. 기존 네 controller 파일은 바꾸지 않았습니다. 이 checkout에서 함께 실행한 host154개가 통과했으며 이 검사는 macOS OS profile을 적용하지 않습니다. 명시적 `--run-component`는 macOS의 작은 합성512바이트 일반 파일용입니다. Android branch의 실제 OS14관측은 이전 고정 소스의 근거이고 이번 통합의 새 실험으로 세지 않습니다.
 
 저장 result.json은 최종 정리 전의 COMPONENT_PASS_ONLY/cleanup=PENDING일 수 있습니다. 최종 CLI 반환과 실제 audit/cleanup 보고서가 동반돼야 하며 사전 파일만 성공 근거로 사용하지 않습니다. 일반 파일의 RLIMIT 논리 cap과 관측 할당4096바이트는 전체 할당량·임의 native 프로세스의 제한 증명이 아닙니다. formatter·image/mount·AVD·실제 Android/Release는 실행하지 않으며 세 admission 플래그도false를 유지합니다.
+
+## 실행할 내용을 받기 전에 검증
+
+82c41b5의 요청 검증과 prepare 연결만 추가로 반영했습니다. raw JSON은4096 UTF-8바이트 이하이며 schema1/고정userdata 동작·파일명/512배수·32MiB 설계 상한만 받습니다. 중복 키·bool/float·경로·임의 명령과 승인 플래그는 파일 생성 전에 거절합니다. 유효해도 BLOCKED이고 실제 formatter 최소 크기·backing 예약·producer 실행 권한이 아닙니다. 반영 후 공통 전체host175개가 통과했습니다. Android 자체111개/앞선 OS14관측은 분리하며 새로운 OS·Android 실행을 하지 않았습니다.

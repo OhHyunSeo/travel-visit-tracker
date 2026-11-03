@@ -2,7 +2,7 @@
 
 작성일: 2026-10-11, Asia/Seoul  
 목표 플랫폼: Android, iOS  
-현재 상태: 2026-11-03 재개. 검토된 Android 두 파일을 선택 반영한 공통154개와 native 장부52개를 포함해 전체 verifier609/61·fixture30·보고서61·양쪽 JS/Hermes가 통과했습니다. 같은 네트워크의 새 iPhone HTTPS 대기 검사는 진행 중이며 실제 Android·formatter/AVD와 전체 수용은 남았습니다. 전체24/54/P3-02부분/G1~G4미완료, [재개 순서](docs/RESUME.md)를 따릅니다.
+현재 상태: 2026-11-03. 최신 장부 소스의 별도 iPhone HTTPS 대기1개(전송4/대기2,7송신/예약1792)와 Android 요청 검증까지 반영한 전체609/61·fixture30·Android175·Mac52·보고서61·양쪽 JS/Hermes가 통과했습니다. TLS 취소/재실행·HTTP2·실제 Android/Release·공급원/OS 수신량은 남아 전체24/54/P3-02부분/G1~G4미완료입니다. [재개 순서](docs/RESUME.md)를 따릅니다.
 추천 개발 방식: React Native + Expo 개발 빌드 + TypeScript
 
 ## 1. 제품 목표와 첫 버전의 범위
