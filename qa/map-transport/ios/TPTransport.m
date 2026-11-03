@@ -5,6 +5,7 @@
 #import <unistd.h>
 #import <math.h>
 #import <errno.h>
+#import <sys/stat.h>
 #import <Security/Security.h>
 
 static dispatch_queue_t TPQueue;
@@ -21,6 +22,88 @@ static NSUInteger TPHTTPSends, TPHTTPReceived;
 static NSUInteger TPVerifiedTLS;
 static NSUInteger TPMaxPending, TPCancelledPending, TPCancelledActive, TPReleased;
 static const NSUInteger TPReservation = 256;
+static const NSUInteger TPLedgerReadLimit = 64 * 1024;
+
+static BOOL TPUnsignedInteger(id value, NSUInteger *result) {
+    if (![value isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID()
+        || CFNumberIsFloatType((__bridge CFNumberRef)value)) return NO;
+    NSString *text = [value stringValue];
+    if (!text.length) return NO;
+    NSUInteger number = 0;
+    for (NSUInteger i = 0; i < text.length; i++) {
+        unichar c = [text characterAtIndex:i];
+        if (c < '0' || c > '9' || number > (NSUIntegerMax - (c - '0')) / 10) return NO;
+        number = number * 10 + (c - '0');
+    }
+    *result = number;
+    return YES;
+}
+
+static BOOL TPLedgerFileURL(NSURL *url) {
+    if (![url isKindOfClass:NSURL.class] || !url.isFileURL || url.host.length || url.user || url.password || url.query || url.fragment
+        || ![url.path hasPrefix:@"/"] || url.path.length < 2) return NO;
+    for (NSUInteger i = 0; i < url.path.length; i++) if ([url.path characterAtIndex:i] == 0) return NO;
+    return YES;
+}
+
+static BOOL TPMatchingLedgerStat(struct stat a, struct stat b) {
+    return S_ISREG(b.st_mode) && b.st_nlink == 1 && a.st_dev == b.st_dev && a.st_ino == b.st_ino && a.st_size == b.st_size
+        && a.st_mtimespec.tv_sec == b.st_mtimespec.tv_sec && a.st_mtimespec.tv_nsec == b.st_mtimespec.tv_nsec
+        && a.st_ctimespec.tv_sec == b.st_ctimespec.tv_sec && a.st_ctimespec.tv_nsec == b.st_ctimespec.tv_nsec;
+}
+
+// A missing file is distinct from an unreadable/unsafe existing file. The size
+// check precedes allocation; one stack byte checks EOF without growing the body.
+static BOOL TPReadLedger(NSURL *url, NSData **data) {
+    *data = nil;
+    int fd = open(url.path.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    if (fd < 0) return errno == ENOENT;
+    struct stat before, after;
+    BOOL ok = fstat(fd, &before) == 0 && S_ISREG(before.st_mode) && before.st_nlink == 1
+        && before.st_size > 0 && before.st_size <= (off_t)TPLedgerReadLimit;
+    NSMutableData *body = ok ? [NSMutableData dataWithLength:(NSUInteger)before.st_size] : nil;
+    NSUInteger offset = 0;
+    while (ok && offset < body.length) {
+        ssize_t n = read(fd, (uint8_t *)body.mutableBytes + offset, body.length - offset);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) { ok = NO; break; }
+        offset += (NSUInteger)n;
+    }
+    uint8_t extra;
+    ssize_t tail = -1;
+    if (ok) do { tail = read(fd, &extra, 1); } while (tail < 0 && errno == EINTR);
+    if (ok) ok = tail == 0 && fstat(fd, &after) == 0 && TPMatchingLedgerStat(before, after);
+    if (close(fd)) ok = NO;
+    if (ok) *data = body;
+    return ok;
+}
+
+static BOOL TPValidLedger(NSMutableDictionary *ledger, NSString *origin, NSUInteger requests, NSUInteger tiles, NSUInteger bytes, NSData *certificate) {
+    if (![ledger isKindOfClass:NSMutableDictionary.class]) return NO;
+    NSMutableSet *keys = [NSMutableSet setWithArray:@[@"schema", @"origin", @"requests", @"tiles", @"reservedBytes", @"unresolved", @"maxRequests", @"maxTiles", @"maxReservedBytes", @"reservationBytes"]];
+    if (certificate) [keys addObject:@"fixtureTLSLeafDER"];
+    if (![[NSSet setWithArray:ledger.allKeys] isEqual:keys] || ![ledger[@"origin"] isKindOfClass:NSString.class] || ![ledger[@"origin"] isEqual:origin]) return NO;
+    NSDictionary *identity = @{@"schema": @1, @"maxRequests": @(requests), @"maxTiles": @(tiles), @"maxReservedBytes": @(bytes), @"reservationBytes": @(TPReservation)};
+    for (NSString *key in identity) {
+        NSUInteger value;
+        if (!TPUnsignedInteger(ledger[key], &value) || value != [identity[key] unsignedIntegerValue]) return NO;
+    }
+    if (certificate && (![ledger[@"fixtureTLSLeafDER"] isKindOfClass:NSString.class]
+        || ![ledger[@"fixtureTLSLeafDER"] isEqual:[certificate base64EncodedStringWithOptions:0]])) return NO;
+    NSUInteger used, tileUsed, reserved;
+    if (!TPUnsignedInteger(ledger[@"requests"], &used) || !TPUnsignedInteger(ledger[@"tiles"], &tileUsed)
+        || !TPUnsignedInteger(ledger[@"reservedBytes"], &reserved) || used > requests || tileUsed > tiles || tileUsed > used
+        || used > NSUIntegerMax / TPReservation || reserved != used * TPReservation || reserved > bytes
+        || ![ledger[@"unresolved"] isKindOfClass:NSMutableArray.class] || [ledger[@"unresolved"] count] > used) return NO;
+    NSMutableSet *seen = [NSMutableSet new];
+    for (id value in ledger[@"unresolved"]) {
+        if (![value isKindOfClass:NSString.class] || [value length] != 36 || [seen containsObject:value]) return NO;
+        NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:value];
+        if (!uuid || ![uuid.UUIDString isEqual:value]) return NO;
+        [seen addObject:value];
+    }
+    return YES;
+}
 
 @interface TPTransport ()
 + (BOOL)configureOrigin:(NSString *)origin ledgerURL:(NSURL *)ledgerURL maxRequests:(NSUInteger)requests maxTiles:(NSUInteger)tiles maxReservedBytes:(NSUInteger)bytes fixtureCertificate:(NSData *)certificate;
@@ -43,6 +126,7 @@ static const NSUInteger TPReservation = 256;
 }
 + (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request { return request; }
 + (BOOL)safeOrigin:(NSString *)origin {
+    if (![origin isKindOfClass:NSString.class]) return NO;
     NSURL *u = [NSURL URLWithString:origin];
     if (![u.scheme isEqual:@"http"] || u.user || u.password || u.query || u.fragment || !u.port || u.port.integerValue < 1 || u.port.integerValue > 65535 || (u.path.length && ![u.path isEqual:@"/"])) return NO;
     struct in_addr a;
@@ -50,13 +134,13 @@ static const NSUInteger TPReservation = 256;
     uint32_t ip = ntohl(a.s_addr);
     return (ip >> 24) == 127 || (ip >> 24) == 10 || (ip >> 20) == 0xac1 || (ip >> 16) == 0xc0a8;
 }
-+ (BOOL)persistLedger {
++ (BOOL)persistLedger:(NSDictionary *)ledger toURL:(NSURL *)ledgerURL {
     NSError *error;
-    NSData *data = [NSJSONSerialization dataWithJSONObject:TPLedger options:NSJSONWritingSortedKeys error:&error];
-    if (!data) return NO;
-    NSURL *directory = TPLedgerURL.URLByDeletingLastPathComponent;
+    NSData *data = [NSJSONSerialization dataWithJSONObject:ledger options:NSJSONWritingSortedKeys error:&error];
+    if (!data || data.length > TPLedgerReadLimit) return NO;
+    NSURL *directory = ledgerURL.URLByDeletingLastPathComponent;
     if (![[NSFileManager defaultManager] createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:nil error:&error]) return NO;
-    NSString *temporary = [TPLedgerURL.path stringByAppendingFormat:@".%@.tmp", NSUUID.UUID.UUIDString];
+    NSString *temporary = [ledgerURL.path stringByAppendingFormat:@".%@.tmp", NSUUID.UUID.UUIDString];
     int fd = open(temporary.fileSystemRepresentation, O_CREAT | O_EXCL | O_WRONLY, 0600);
     if (fd < 0) return NO;
     const uint8_t *bytes = data.bytes;
@@ -70,7 +154,7 @@ static const NSUInteger TPReservation = 256;
     }
     if (ok && fsync(fd)) ok = NO;
     if (close(fd)) ok = NO;
-    if (ok && rename(temporary.fileSystemRepresentation, TPLedgerURL.path.fileSystemRepresentation)) ok = NO;
+    if (ok && rename(temporary.fileSystemRepresentation, ledgerURL.path.fileSystemRepresentation)) ok = NO;
     if (ok) {
         int dirfd = open(directory.path.fileSystemRepresentation, O_RDONLY);
         if (dirfd < 0) ok = NO;
@@ -79,12 +163,14 @@ static const NSUInteger TPReservation = 256;
     if (!ok) unlink(temporary.fileSystemRepresentation);
     return ok;
 }
++ (BOOL)persistLedger { return [self persistLedger:TPLedger toURL:TPLedgerURL]; }
 + (BOOL)configureOrigin:(NSString *)origin ledgerURL:(NSURL *)ledgerURL maxRequests:(NSUInteger)requests maxTiles:(NSUInteger)tiles maxReservedBytes:(NSUInteger)bytes {
     return [self configureOrigin:origin ledgerURL:ledgerURL maxRequests:requests maxTiles:tiles maxReservedBytes:bytes fixtureCertificate:nil];
 }
 + (BOOL)configureFixtureTLSOrigin:(NSString *)origin ledgerURL:(NSURL *)ledgerURL maxRequests:(NSUInteger)requests maxTiles:(NSUInteger)tiles maxReservedBytes:(NSUInteger)bytes certificate:(NSData *)certificate {
     if (@available(macOS 15.5, iOS 18.5, *)) { /* Matches TPHTTPExchange's TLS API. */ }
     else return NO;
+    if (![origin isKindOfClass:NSString.class] || ![certificate isKindOfClass:NSData.class]) return NO;
     NSURL *url = [NSURL URLWithString:origin];
     if (![url.scheme isEqual:@"https"] || ![url.host isEqual:@"127.0.0.1"] || url.user || url.password || url.query || url.fragment || !url.port || url.port.integerValue < 1 || url.port.integerValue > 65535 || (url.path.length && ![url.path isEqual:@"/"]) || !certificate.length || certificate.length > 16384) return NO;
     SecCertificateRef leaf = SecCertificateCreateWithData(NULL, (__bridge CFDataRef)certificate);
@@ -105,7 +191,7 @@ static const NSUInteger TPReservation = 256;
 + (BOOL)configurePrivateFixtureTLSOrigin:(NSString *)origin ledgerURL:(NSURL *)ledgerURL maxRequests:(NSUInteger)requests maxTiles:(NSUInteger)tiles maxReservedBytes:(NSUInteger)bytes certificate:(NSData *)certificate {
     if (@available(macOS 15.5, iOS 18.5, *)) { /* Matches the existing TLS API. */ }
     else return NO;
-    if (![self safePrivateFixtureTLSOrigin:origin] || !certificate.length || certificate.length > 16384) return NO;
+    if (![origin isKindOfClass:NSString.class] || ![certificate isKindOfClass:NSData.class] || ![self safePrivateFixtureTLSOrigin:origin] || !certificate.length || certificate.length > 16384) return NO;
     SecCertificateRef leaf = SecCertificateCreateWithData(NULL, (__bridge CFDataRef)certificate);
     if (!leaf) return NO;
     CFRelease(leaf);
@@ -115,10 +201,22 @@ static const NSUInteger TPReservation = 256;
     return [self configureOrigin:origin ledgerURL:ledgerURL maxRequests:requests maxTiles:tiles maxReservedBytes:bytes fixtureCertificate:certificate privateTLS:NO];
 }
 + (BOOL)configureOrigin:(NSString *)origin ledgerURL:(NSURL *)ledgerURL maxRequests:(NSUInteger)requests maxTiles:(NSUInteger)tiles maxReservedBytes:(NSUInteger)bytes fixtureCertificate:(NSData *)certificate privateTLS:(BOOL)privateTLS {
-    __block BOOL ok;
+    __block BOOL ok = NO;
     dispatch_sync(TPQueue, ^{
-        if (TPActive || TPPending.count) { ok = NO; return; }
-        TPOrigin = [origin stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"/"]];
+        if (TPActive || TPPending.count || ![origin isKindOfClass:NSString.class] || !TPLedgerFileURL(ledgerURL)
+            || !requests || requests > NSUIntegerMax / TPReservation || tiles > requests || bytes < TPReservation) return;
+        NSString *candidateOrigin = [origin stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"/"]];
+        if (!certificate && ![self safeOrigin:candidateOrigin]) return;
+        NSData *data;
+        if (!TPReadLedger(ledgerURL, &data)) return;
+        id candidate = data ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil]
+            : [@{@"schema": @1, @"origin": candidateOrigin, @"requests": @0, @"tiles": @0, @"reservedBytes": @0, @"unresolved": [NSMutableArray new], @"maxRequests": @(requests), @"maxTiles": @(tiles), @"maxReservedBytes": @(bytes), @"reservationBytes": @(TPReservation)} mutableCopy];
+        if (!data && certificate) candidate[@"fixtureTLSLeafDER"] = [certificate base64EncodedStringWithOptions:0];
+        if (!TPValidLedger(candidate, candidateOrigin, requests, tiles, bytes, certificate)) return;
+        if (!data && ![self persistLedger:candidate toURL:ledgerURL]) return;
+        // Publish only after all validation/persistence succeeds. A rejected
+        // reconfiguration keeps the previous configuration and counters intact.
+        TPOrigin = candidateOrigin;
         TPFixtureCertificate = [certificate copy];
         TPPrivateFixtureTLS = privateTLS;
         TPLedgerURL = ledgerURL;
@@ -126,23 +224,8 @@ static const NSUInteger TPReservation = 256;
         TPMaxActive = TPBlocked = TPStarted = TPAccepted = 0;
         TPHTTPSends = TPHTTPReceived = TPVerifiedTLS = 0;
         TPMaxPending = TPCancelledPending = TPCancelledActive = TPReleased = 0;
-        BOOL exists = [[NSFileManager defaultManager] fileExistsAtPath:ledgerURL.path];
-        NSData *data = exists ? [NSData dataWithContentsOfURL:ledgerURL] : nil;
-        id saved = data ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil] : nil;
-        TPLedger = exists ? saved : [@{@"schema": @1, @"origin": TPOrigin ?: @"", @"requests": @0, @"tiles": @0, @"reservedBytes": @0, @"unresolved": [NSMutableArray new], @"maxRequests": @(requests), @"maxTiles": @(tiles), @"maxReservedBytes": @(bytes), @"reservationBytes": @(TPReservation)} mutableCopy];
-        if (!exists && certificate) TPLedger[@"fixtureTLSLeafDER"] = [certificate base64EncodedStringWithOptions:0];
-        BOOL originOK = certificate != nil || [self safeOrigin:TPOrigin];
-        TPLedgerOK = originOK && [TPLedger isKindOfClass:NSMutableDictionary.class] && [TPLedger[@"schema"] isEqual:@1] && [TPLedger[@"origin"] isEqual:TPOrigin] && [TPLedger[@"maxRequests"] isEqual:@(requests)] && [TPLedger[@"maxTiles"] isEqual:@(tiles)] && [TPLedger[@"maxReservedBytes"] isEqual:@(bytes)] && [TPLedger[@"reservationBytes"] isEqual:@(TPReservation)];
-        if (TPLedgerOK && certificate) TPLedgerOK = [TPLedger[@"fixtureTLSLeafDER"] isEqual:[certificate base64EncodedStringWithOptions:0]];
-        if (TPLedgerOK && !certificate && TPLedger[@"fixtureTLSLeafDER"]) TPLedgerOK = NO;
-        for (NSString *key in @[@"requests", @"tiles", @"reservedBytes"]) {
-            id value = TPLedgerOK ? TPLedger[key] : nil;
-            if (![value isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID() || !isfinite([value doubleValue]) || [value doubleValue] < 0 || floor([value doubleValue]) != [value doubleValue]) TPLedgerOK = NO;
-        }
-        if (TPLedgerOK && (![TPLedger[@"unresolved"] isKindOfClass:NSMutableArray.class] || [TPLedger[@"requests"] unsignedIntegerValue] > requests || [TPLedger[@"tiles"] unsignedIntegerValue] > tiles || [TPLedger[@"tiles"] unsignedIntegerValue] > [TPLedger[@"requests"] unsignedIntegerValue] || [TPLedger[@"reservedBytes"] unsignedIntegerValue] != [TPLedger[@"requests"] unsignedIntegerValue] * TPReservation || [TPLedger[@"reservedBytes"] unsignedIntegerValue] > bytes)) TPLedgerOK = NO;
-        if (TPLedgerOK) for (id value in TPLedger[@"unresolved"]) if (![value isKindOfClass:NSString.class]) TPLedgerOK = NO;
-        if (TPLedgerOK && !exists) TPLedgerOK = [self persistLedger];
-        ok = TPLedgerOK;
+        TPLedger = candidate; TPLedgerOK = YES;
+        ok = YES;
     });
     return ok;
 }
