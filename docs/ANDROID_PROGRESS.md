@@ -1,6 +1,28 @@
 # Android 개발·검증 기록
 
-마지막 갱신: 2026-11-02, Asia/Seoul.
+마지막 갱신: 2026-11-03, Asia/Seoul.
+
+## 11월 3일 재개·한도 중단: 단일 writer의 OS 보호 계약
+
+공통 채팅에서 사용자가 “이어서 진행해줘 아이폰은 연결해두었어”라고 직접 재개했습니다. Android 시작점은 **`e1312c9916e3f3068e8644338dbd7f808b6740e8`**(실행 소스899d98e)이며 공통은 전달받은1d710c7/실행6c0921e를 기준으로 iOS를 맡습니다. Android는 기존 worktree에서 소스·작은 host 준비만 맡고 공통/iOS 파일을 편집하지 않았습니다. Mac 가용 공간 약22GB는 공통의 전달값이며 이 채팅에서 새 용량 측정이나 정리를 하지 않았습니다.
+
+**새 운영 조건:** 사용자의 “5시간 한도가20% 미만으로 남으면 하던 작업까지만 하고 저장 후 중지”를 적용합니다. 전용 `get_usage_limits`의 codex primary300분 창을 단계 전환 때 확인했습니다. 최초 확인 used76%/remaining24%, 다음 확인 **used84%/remaining16%**였으므로 새 구현·검사에 착수하지 않고 이미 진행한 읽기 전용 검토만 저장합니다. 계정 공유 한도이며 reset·구매·모델 전환·자동 재개는 하지 않습니다. 새 사람 재개 때도 실제 한도를 확인해야 합니다.
+
+현재 마친 항목은 **고정 Python 단일 writer의 작은 OS 보호 구성요소 계약**입니다. 기존 profile/runner, 로컬 지원 여부와 `sandbox(7)` 설명을 읽었고 독립 검토도 읽기만 했습니다. 이 Mac은 darwin/Python3.11.7이며 sandbox-exec와 RLIMIT_FSIZE/CORE가 존재한다는 지원 조회만 했습니다. 새 profile·worker·launcher 코드는 아직 작성하지 않았고 OS 보호를 적용하거나 실험하지 않았습니다.
+
+| 다음 구현 계약 | 검증해야 할 조건 |
+| --- | --- |
+| 단일 기존512-byte 일반 파일만 쓰기 | profile은 그 파일 literal의 file-write-data만 허용. create/unlink/rename/link/chmod와 process-fork는 허용하지 않음. 실행 파일도 Python literal로 좁히되 argv/코드까지 OS가 보장한다고 주장하지 않음 |
+| exec 전 resource 제한 | RLIMIT_FSIZE soft/hard 모두512, RLIMIT_CORE 모두0. exec 뒤 실제 값을 다시 대조하고 SIGXFSZ 처리를 고정해 확장 시 EFBIG를 관측 |
+| 상속 FD 차단 | close_fds=True/빈 pass_fds, 읽기 전용 stdin, stdout/stderr pipe. 다른 open 전에 시험 canary FD의 EBADF를 확인. 이미 열린 writable FD는 profile 경로 제한만으로 보호됐다고 가정하지 않음 |
+| 수명·identity | 고정 wrapper→고정 worker exec, 제한 시간 안 단일 PID 종료, 전후 dev/inode·링크·크기 및 canary 대조. literal 경로가 inode를 원자적으로 고정한다는 주장은 하지 않음 |
+| 출력·크기 주장 | 보관 출력8KiB cap은 pipe 전체 송신량 상한이 아님.512-byte 논리 cap도 preallocation 등을 포함하는 filesystem 할당량 cap이 아님 |
+
+다음 최소 실제 관측은 exact overwrite, EFBIG와 크기 유지, 지정 외 쓰기·create/unlink/rename/link/chmod/fork 거절, FD 폐쇄와 단일 PID 종료입니다. 작은 합성 일반 파일만 사용하며 formatter·디스크 이미지·mount·SDK·emulator·ADB로 확대하지 않습니다. 그 결과도 `allocationBoundProven=false`, `imageFormatted=false`, `nativeAdmissionEnabled=false`를 유지해야 합니다. producer entry와 전체 child/mount 수명은 별도 미확인입니다.
+
+**이번 상태:** 새 구현/host 회귀/OS 구성요소/formatter/이미지·mount/native는 모두 **NOT RUN/미구현**입니다. 이전 자체54개·공통118개를 새 통과로 재사용하지 않습니다. 코드·개인 DB/사진/인증·기존 SDK/AVD/캐시/빌드/백업/근거를 수정·삭제하지 않았습니다. 이 채팅이 시작한 지속 서비스나 실행 중인 소속 subagent는 없습니다. 진행·제안 두 문서만 로컬 커밋하고 추가 작업을 중지합니다. 다음은 새 사람 재개와 한도 확인 뒤 위 작은 profile/launcher부터 구현하는 것입니다. 전체24/54와 수용 게이트는 유지합니다.
+
+마지막 공통 전달에서 같은300분 창의 후속 잔여12%와 저장·중지 전환을 확인했습니다. 공통iOS는 실행 소스5063f5e의 signed Debug SDK pinnedHTTPS1개와 전체 verifier PASS를 별도 보고했고, 소유 QA앱·서버·임시 키를 정리했으며 원래 설치 정보는 같고 개인 DB/사진/auth는 열지 않았습니다. 이를 Android의 새 결과로 합산하지 않습니다. 공통 source push는12% 조회 직전 이미 시작돼 완료 여부만 확인하고, 이후 중단 문서는 로컬 저장만 한다는 공통 상태를 따릅니다. Android에서는 새 push/CI를 시작하지 않습니다.
 
 ## 11월 2일 최신 요청: 여기까지 저장하고 전체 중단
 

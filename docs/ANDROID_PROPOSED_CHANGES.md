@@ -1,5 +1,17 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
+## 11월 3일: 작은 OS writer 준비 계약과 잔여16% 중단
+
+새 사람 재개로 `e1312c9`에서 기존 보호 코드를 읽고 다음 단위를 좁혔습니다. 공통/iOS는 별도 담당이 유지하며 Android 코드나 공통 파일은 이번에 수정하지 않았습니다. 이후 추가된 **5시간 잔여20% 미만이면 현재 항목 저장 후 중지** 조건을 전용 한도 조회로 적용했습니다. primary300분 used84%/remaining16%이므로 새 코드·검사는 시작하지 않고 이 검토만 로컬 저장합니다.
+
+다음 구현 후보는 고정 Python wrapper/worker의 작은 구성요소입니다. 기존512-byte 합성 일반 파일 literal에 file-write-data만 허용하고 fork·새 파일·unlink/rename/link/chmod를 거절합니다. Python exec도 literal로 좁힙니다. exec 전 RLIMIT_FSIZE의 soft/hard를512, CORE를0으로 고정하고 exec 뒤 대조합니다. 파일 크기 resource와 soft/hard의 의미는 [Python resource 문서](https://docs.python.org/3/library/resource.html)를 따르며 **전체 할당량·모든 native writer를 제한한다는 근거가 아닙니다.**
+
+로컬 sandbox 설명의 이미 열린 FD 제한 때문에 close_fds=True/빈 pass_fds, 읽기 전용 stdin, bounded pipe를 함께 고정하고 다른 open 전에 canary FD의 EBADF를 확인해야 합니다. 최소 관측은 실제 overwrite/EFBIG, 외부 파일·metadata/fork 거절, 전후 동일 identity·크기/canary와 단일 PID 종료입니다.8KiB는 보관 출력 cap이며 송신량 상한이 아니고, literal도 inode 교체를 원자적으로 막지 않습니다. 이를 고정 worker 호출 범위로만 보고해야 합니다.
+
+구현 파일 후보는 새 단일 writer policy/launcher와 대응 host 회귀입니다. **아직 작성하지 않았고 새 회귀·OS 적용·formatter/이미지/mount/producer/native 실행은 NOT RUN**입니다. 기존 원본·SDK/AVD/캐시/빌드/백업/근거를 보존하고 새 사람 재개와 한도 확인 전 추가 작업을 하지 않습니다. 계정 한도 reset/구매/모델 전환이나 push/PR/CI는 하지 않았습니다. 재개점과 한계는 [진행 기록](ANDROID_PROGRESS.md)의11월3일 절을 따릅니다.
+
+후속 공통 전달의 잔여12%도 같은 중지 조건에 해당합니다. 공통iOS의5063f5e/signed Debug SDK pinnedHTTPS1 PASS·전체 verifier PASS와 정리/개인 자료 보존 상태는 공통 기록을 따르며 Android 새 통과로 세지 않습니다. Android는 현재 문서 저장만 마치고 종료합니다.
+
 ## 11월 2일 최신: 여기까지 저장·중단
 
 최신 사람 요청 **“여기까지”**에 따라 현재 저장만 마치고 전체 작업을 중지합니다. Android 실행 소스 `899d98e`와 공통 선택 통합 실행 소스 로컬 `6c0921e`를 보존합니다. 공통 Android118/Mac TLS장부8 및 최종 전체 verifier exit0 PASS를 확인했으며, 새 push/CI와 물리 기기·formatter/이미지/mount/native 실행은 하지 않았습니다. Android의 자체54개와 공통118개를 다시 합산하지 않습니다.
