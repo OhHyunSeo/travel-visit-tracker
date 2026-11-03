@@ -56,7 +56,21 @@ python3 -B qa/map-transport/android/prepare_controller.py --android-root "$PWD/q
 python3 -B -m unittest discover -s qa/map-transport/android -p 'test_*.py'
 ```
 
-작은 합성 일반 파일만 쓰며 기기·SDK·형식화한 디스크 이미지를 열지 않습니다. 기존34개와 새 준비/초기화20개, 총54개 PASS입니다. 새 backing 사례는512/1024 bytes만 사용하며 합성 쓰기/close 오류는 실제 OS 저장 공간 부족과 구분합니다.
+작은 합성 일반 파일만 쓰며 기기·SDK·형식화한 디스크 이미지를 열지 않습니다. controller/준비54개와 단일 writer helper36개, 총90개 PASS입니다. 일반 회귀는 아래 OS profile을 적용하지 않습니다. backing 사례는512/1024 bytes만 사용하며 합성 쓰기/close 오류는 실제 OS 저장 공간 부족과 구분합니다.
+
+## 명시적 macOS 단일 writer 구성요소
+
+`single_writer_component.py`는 새512-byte 일반 파일 하나에만 `file-write-data`를 허용하는 고정 Python wrapper/worker입니다. fork와 다른 쓰기 권한은 추가하지 않으며 Python 실행 파일 literal만 exec 허용합니다. exec 전에 RLIMIT_FSIZE soft/hard512와 CORE0을 고정하고, exec 뒤 값·상속 FD의 EBADF·읽기 전용 stdin을 확인합니다. 고정 worker의 stdout/stderr 보관 합계는8KiB, 실행 기한은5초입니다. 정상 wait 뒤에는 PID 재사용 위험 때문에 신호를 보내지 않고 실패/기한 초과 때만 reap 전 소유 group을 정리합니다.
+
+```sh
+python3 -B qa/map-transport/android/single_writer_component.py --run-component --android-root "$PWD/qa/map-transport/android"
+```
+
+이는 별도의 명시적 macOS 검사입니다. 일반 host 회귀나 Linux CI가 자동으로 실행하지 않습니다. 실행 환경이 `sandbox_apply`를 거절하면 준비 실패로 남기며 통과로 세지 않습니다.2026-11-03의 권한이 허용된 실행에서 exact overwrite, write/ftruncate 확장의 EFBIG, hard limit 상향 거절, 외부 canary 쓰기·create/link/chmod/rename/unlink·fork 거절, 같은 PID 종료를 확인했습니다. 실제 데이터 파일은 논리512 bytes, 관측 할당4,096 bytes였고 controller의 실제 close도 CLOSED였습니다. 초기 적용 거절 시도의 새 파일은 zero512 그대로였고 제외 근거로 보존했습니다.
+
+구성요소는 새 private temp fixture와 `.build/controller-artifacts/`의 소유 기록만 만듭니다. 부분 생성·실패에도 정확한 두 경로와 cleanup을 전달하고, 최종 controller audit가 READY가 아니면 성공을 반환하지 않습니다. 로컬 근거는 Git 제외 `docs/test-results/android-single-writer-20261103/completion-summary.json`에 있습니다. 원시 PID·경로·파일 지문은 커밋하지 않습니다.
+
+이것은 **고정 worker에서 시험한 호출**의 결과입니다. Python exec literal이 argv·코드까지 OS로 강제하는 것은 아니고, literal 경로도 inode를 원자적으로 고정하지 않습니다. 모든 process 생성 수단·임의 formatter/native 자식·mount 수명의 증명이 아니며8KiB는 pipe 전체 송신량 상한이 아닙니다. RLIMIT_FSIZE의 [파일 크기 제한](https://docs.python.org/3/library/resource.html#resource.RLIMIT_FSIZE)도 preallocation 등을 포함한 할당량 상한이 아닙니다. 이 구성요소가 통과해도 native admission은 열리지 않습니다.
 
 ## 아직 증명하지 않은 범위
 

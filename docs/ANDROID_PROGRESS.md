@@ -2,6 +2,24 @@
 
 마지막 갱신: 2026-11-03, Asia/Seoul.
 
+## 11월 3일 재재개: 단일 writer 코드와 작은 OS 구성요소 완료
+
+공통에서 전달한 새 사람 “이어서 진행해줘” 요청으로 **`5a8a4ecf0bd8514623ca2b0c1196bd94317b00d4`**부터 재개했습니다. 공통 기준은 중단 문서7fd18eb/실행5063f5e와 그 실행의 CI SUCCESS라는 공통 보고를 따릅니다. 공통/iOS는 별도 담당이며 이 Android 작업에서 그 파일은 편집하지 않았습니다. 전용300분 한도 조회는 단계 전환 때 잔여93%→63%→55%→53%→42%→36%였으며20% 미만 중지 규칙을 유지했습니다. Mac 가용 약21.9GB는 전달받은 값이고 대형 이미지·AVD·빌드 없이 진행했습니다.
+
+**구현:** 새 `qa/map-transport/android/single_writer_component.py`와 대응 `test_single_writer_component.py`를 추가했습니다. 새 private temp fixture의 일반 파일512 bytes와 소유 canary/contract만 사용합니다. 고정 wrapper가 FSIZE soft/hard512, CORE0을 설정하고 sandbox-exec→고정 Python worker로 exec합니다. profile은 target literal의 file-write-data와 Python literal exec만 추가하며 fork·넓은 쓰기·Mach/socket 예외는 추가하지 않았습니다. 부모는 close_fds/빈 pass_fds, 읽기 전용 stdin, bounded pipe와 기한을 고정합니다.
+
+**이번 실제 OS 구성요소 PASS:** 권한 조건이 허용된 명시 실행에서14개 관측이 모두 true였습니다. exec 후 실제 hard/soft 값, 상속 canary FD의 EBADF, stdin 읽기 전용, core0,512-byte overwrite, write/ftruncate 확장의 EFBIG, hard limit 상향 거절, 외부 canary 쓰기·create/link/chmod/rename/unlink·fork 거절을 확인했습니다. receipt PID와 실행 PID가 같고 wait로 종료를 확인했습니다. target은 같은 dev/inode·단일 링크·소유 권한을 유지했고 내용은 예상한 Q512와 대조했습니다. 논리512 bytes, **관측** 할당4,096 bytes였습니다. 부모 metadata audit READY와 실제 descriptor close CLOSED도 확인했습니다. 이는 공간 부족을 만들거나 디스크 이미지를 형식화한 결과가 아닙니다.
+
+**준비 실패 구분:** 첫 OS 호출은 `sandbox_apply: Operation not permitted`로 restricted worker 전에 거절됐습니다. 그 새 target은 zero512 그대로였고 실패 경로와 근거를 보존해 통과에서 제외했습니다. 권한이 허용된 실행에서만 위 PASS를 확인했습니다. 초기 helper 회귀에서는 이미 끝난 group에 보내는 종료 신호가 거절됐습니다. 정상 wait 뒤 신호를 보내지 않고, 실패/timeout 때만 reap 전 group 정리와 wait를 수행하도록 수정했습니다. 정상 종료 후 PID 재사용 대상에 신호를 보내지 않는 회귀와 leader 종료 뒤 pipe 유지 자식의 timeout 회귀도 통과했습니다.
+
+**Host PASS:** `python3 -B -m unittest discover -s qa/map-transport/android -p 'test_*.py'`의 기존54+새36, **90개**가 통과했습니다. 이 회귀는 OS profile을 적용하지 않고 작은 합성 파일과 고정 Python child만 씁니다. identity/링크/권한·contract, 엄격한 bool/int/PID·중복 JSON 거절, FD/stdin,8KiB 경계·출력 초과·timeout, CLI 무쓰기 거절과 실패 전달을 확인했습니다. 독립 검토가 찾은 부분 fixture 경로 소실, controller constructor의 cleanup 전달 누락, audit FAILED의 PASS 반환을 수정하고 대응 회귀를 추가했습니다. 검토자는 수정 해결도 읽기만으로 확인했습니다.
+
+로컬 전용 근거는 `docs/test-results/android-single-writer-20261103/completion-summary.json`, 소유 `.build/controller-artifacts/` 결과와 새 private fixture입니다. 실제 실행 소스의 SHA가 현재 파일과 같음을 확인했습니다. 원시 PID/경로/지문은 커밋하지 않습니다. 테스트가 만든 소유 임시 파일만 각 테스트가 정리했으며 실제 구성요소의 작은 PASS/제외 근거는 보존했습니다. 지속 서비스·emulator·Metro는 시작하지 않았습니다.
+
+**한계/NOT RUN:** RLIMIT 논리 크기와 실제 시험한 syscall 결과는 filesystem 할당량 cap이 아닙니다. literal도 inode 교체를 원자적으로 막지 않으며 Python exec literal이 argv·코드를 강제하지 않습니다.8KiB는 보관 출력 cap이고 모든 송신량 상한이 아닙니다. 임의 native writer·모든 자식 생성 수단·formatter·이미지/mount 수명·cached producer entry·fresh AVD/실제 Android·Release는 미검증입니다. `allocationBoundProven=false`, `imageFormatted=false`, `nativeAdmissionEnabled=false`를 유지하고 공통 native gate는 열지 않습니다.
+
+이번 변경은 위 Python 두 파일, Android README와 진행/제안 두 문서입니다. 제품·의존성·SDK·원래 AVD·개인 DB/사진/인증·캐시·빌드·백업은 수정·삭제하지 않았습니다. app 전체 verifier/새 CI는 이 Python 단위에서 반복하지 않았습니다. 로컬 커밋을 공통 담당이 읽기 전용 검토하도록 남기고 이번 단위를 완료합니다. 다음 formatter/이미지/AVD/native로는 범위를 넓히지 않습니다. 다음 검토는 제한된 formatter/producer 호출 경계와 전체 writer·mount 수명이며, 전체24/54와 수용 게이트는 유지합니다.
+
 ## 11월 3일 재개·한도 중단: 단일 writer의 OS 보호 계약
 
 공통 채팅에서 사용자가 “이어서 진행해줘 아이폰은 연결해두었어”라고 직접 재개했습니다. Android 시작점은 **`e1312c9916e3f3068e8644338dbd7f808b6740e8`**(실행 소스899d98e)이며 공통은 전달받은1d710c7/실행6c0921e를 기준으로 iOS를 맡습니다. Android는 기존 worktree에서 소스·작은 host 준비만 맡고 공통/iOS 파일을 편집하지 않았습니다. Mac 가용 공간 약22GB는 공통의 전달값이며 이 채팅에서 새 용량 측정이나 정리를 하지 않았습니다.

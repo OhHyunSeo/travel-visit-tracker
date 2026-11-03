@@ -1,5 +1,17 @@
 # Android 검증에서 공통 담당에 전달할 내용
 
+## 11월 3일 재재개: 고정 단일 writer 구성요소
+
+새 사람 재개로 `5a8a4ec`에서 새 `single_writer_component.py`와 대응 helper 회귀를 구현했습니다. 공통/iOS와 기존 제품·SDK·AVD·원본 자료는 수정하지 않았습니다. 한도는 단계 전환마다 확인했고 마지막 저장 전 조회는300분 잔여36%로20% 중지 조건 이상이었습니다.
+
+- wrapper의 FSIZE soft/hard512·CORE0과 고정 Python exec, target literal file-write-data·Python literal exec, fork·지정 외 쓰기 기본 거절을 연결했습니다. FD 폐쇄/읽기 전용 stdin/8KiB 보관 출력/5초와 실제 PID 종료를 함께 다룹니다.
+- 작은 새512-byte 일반 파일의 명시적 macOS 구성요소에서14개 관측 PASS, 실제 논리512/관측 할당4,096 bytes, metadata audit READY/close CLOSED였습니다. 초기 `sandbox_apply` 거절은 target zero512를 보존한 준비 실패로 제외했습니다.
+- 기존54+새36, **자체 host90개 PASS**입니다. 일반 회귀는 OS policy를 적용하지 않습니다. 부분 fixture/controller 생성 실패의 정확한 경로·cleanup 전달, audit 실패의 성공 반환 방지, 정상 wait 뒤 신호 금지와 timeout 자식 정리를 회귀로 검증했습니다.
+
+통합 후보는 Python 두 파일과 설명 절입니다. 공통 기존 Android README를 이 worktree README로 덮어쓰거나 전체 branch를 자동 합치지 않습니다. 고정 소스·실제 command와 로컬 제외 근거·한계는 [진행 기록](ANDROID_PROGRESS.md)의 최신 절을 따릅니다. 원시 PID·경로·지문과 작은 로컬 근거는 Git 제외입니다.
+
+이 결과는 고정 Python worker가 호출한 syscall 범위입니다. 할당량·모든 process 생성 경로·임의 formatter/native·inode/mount 원자적 고정·producer entry·AVD boot 증명은 아니며 native/allocation/imageFormatted는 계속false입니다. 이번 단위의 로컬 저장 뒤 formatter/이미지/AVD/native로 확대하지 않습니다. 실제 Android/Release와 전체24/54·수용 게이트는 그대로입니다.
+
 ## 11월 3일: 작은 OS writer 준비 계약과 잔여16% 중단
 
 새 사람 재개로 `e1312c9`에서 기존 보호 코드를 읽고 다음 단위를 좁혔습니다. 공통/iOS는 별도 담당이 유지하며 Android 코드나 공통 파일은 이번에 수정하지 않았습니다. 이후 추가된 **5시간 잔여20% 미만이면 현재 항목 저장 후 중지** 조건을 전용 한도 조회로 적용했습니다. primary300분 used84%/remaining16%이므로 새 코드·검사는 시작하지 않고 이 검토만 로컬 저장합니다.
