@@ -10,7 +10,9 @@ python3 -m unittest discover -s qa/map-transport/android -p 'test_*.py'
 python3 -m unittest discover -s qa/map-transport/ios -p 'test_http_exchange.py'
 python3 -m unittest discover -s qa/map-transport/ios -p 'test_tls_exchange.py'
 python3 -m unittest discover -s qa/map-transport/ios -p 'test_tls_transport.py'
+python3 -m unittest discover -s qa/map-transport/ios -p 'test_private_tls.py'
 python3 -m unittest discover -s qa/map-transport/ios-maplibre -p 'test_cancel_result.py'
+python3 -m unittest discover -s qa/map-transport/ios-maplibre -p 'test_tls_result.py'
 node --check backend/server.js
 npm --prefix backend test
 (

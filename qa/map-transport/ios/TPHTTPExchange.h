@@ -10,6 +10,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) BOOL trustAccepted;
 @property (nonatomic, readonly) BOOL chainTrusted;
 @property (nonatomic, readonly) NSString *negotiatedProtocol;
+// Canonical exact origin for an explicitly configured private QA server only.
++ (BOOL)safePrivateFixtureTLSOrigin:(NSString *)origin;
 - (instancetype)initWithURL:(NSURL *)url
                       queue:(dispatch_queue_t)queue
                     timeout:(NSTimeInterval)timeout
@@ -19,6 +21,14 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype)initWithURL:(NSURL *)url
                       queue:(dispatch_queue_t)queue
                     timeout:(NSTimeInterval)timeout
+         fixtureCertificate:(NSData *)certificate
+                 completion:(void (^)(NSHTTPURLResponse * _Nullable, NSData * _Nullable, NSError * _Nullable))completion;
+// Separate opt-in: URL must match this origin exactly; existing loopback API
+// remains loopback-only. No DNS, public origins or system trust changes.
+- (instancetype)initWithURL:(NSURL *)url
+                      queue:(dispatch_queue_t)queue
+                    timeout:(NSTimeInterval)timeout
+       privateFixtureOrigin:(NSString *)origin
          fixtureCertificate:(NSData *)certificate
                  completion:(void (^)(NSHTTPURLResponse * _Nullable, NSData * _Nullable, NSError * _Nullable))completion;
 - (void)start;

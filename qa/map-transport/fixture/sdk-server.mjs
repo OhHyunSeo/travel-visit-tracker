@@ -1,7 +1,41 @@
 import http from "node:http";
+import https from "node:https";
+import { constants, openSync, fstatSync, readSync, closeSync } from "node:fs";
 import { deflateSync } from "node:zlib";
 import { pathToFileURL } from "node:url";
 import { isAllowedFixtureHost } from "./server.mjs";
+
+const maxTLSFileBytes = 16384;
+
+// CLI input is read once, before listening. No private key or certificate paths
+// are exposed in the ready record, HTTP routes or resource statistics.
+export function readTLSFixtureFile(path) {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const before = fstatSync(fd, { bigint: true });
+    if (!before.isFile() || before.nlink !== 1n || before.size < 1n || before.size > BigInt(maxTLSFileBytes))
+      throw new Error("TLS fixture input must be a bounded, singly linked regular file");
+    const bytes = Buffer.alloc(Number(before.size) + 1);
+    let size = 0;
+    while (size < bytes.length) {
+      const count = readSync(fd, bytes, size, bytes.length - size, null);
+      if (!count) break;
+      size += count;
+    }
+    const after = fstatSync(fd, { bigint: true });
+    if (size !== Number(before.size) || ["dev", "ino", "size", "mtimeNs", "ctimeNs"].some(key => before[key] !== after[key]))
+      throw new Error("TLS fixture input changed during bounded read");
+    return bytes.subarray(0, size);
+  } finally { closeSync(fd); }
+}
+
+function fixtureTLSOptions(value) {
+  if (value === undefined) return null;
+  if (!value || Object.getPrototypeOf(value) !== Object.prototype || Object.keys(value).sort().join(",") !== "cert,key"
+      || ![value.key, value.cert].every(bytes => Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.length <= maxTLSFileBytes))
+    throw new Error("TLS fixture requires only bounded key and certificate buffers");
+  return { key: Buffer.from(value.key), cert: Buffer.from(value.cert), minVersion: "TLSv1.2", ALPNProtocols: ["http/1.1"] };
+}
 
 function crc32(bytes) {
   let crc = 0xffffffff;
@@ -53,15 +87,19 @@ export function syntheticRasterStyle(origin, blocked = false, multi = false, hel
 }
 
 /** Actual SDK fixture, no proxy, external requests, user files or real map data. */
-export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan = false } = {}) {
+export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan = false, tls } = {}) {
   if (!isAllowedFixtureHost(host, allowLan) || host === "::1" || host === "localhost")
     throw new Error("Use a literal loopback or explicitly allowed private IPv4 address");
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invalid port");
+  const tlsOptions = fixtureTLSOptions(tls);
   const tile = syntheticRasterTile();
   const requests = [], pending = new Set(), timers = new Set(), heldBodies = new Map();
   let origin, active = 0, maxActive = 0, closed = false, heldReleased = false;
   const stats = () => ({ active, maxActive, heldActive: heldBodies.size, heldReleased, resourceCount: requests.length, requests: requests.map(x => ({ ...x })) });
-  const server = http.createServer((request, response) => {
+  const handler = (request, response) => {
+    // https installs its own secureConnection listener before ours. Check again
+    // at the handler boundary so already-buffered HTTP cannot reach any route.
+    if (tlsOptions && request.socket.alpnProtocol !== "http/1.1") { request.socket.destroy(); return; }
     const json = (status, value) => {
       response.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
       response.end(JSON.stringify(value));
@@ -94,6 +132,7 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
       ua: request.headers["user-agent"] ?? null,
       receivedAuthHeader: request.headers.authorization !== undefined,
       cookieHeader: request.headers.cookie !== undefined,
+      ...(tlsOptions ? { tlsProtocol: request.socket.getProtocol(), alpn: request.socket.alpnProtocol } : {}),
     };
     requests.push(entry); pending.add(response);
     active++; maxActive = Math.max(maxActive, active);
@@ -122,12 +161,22 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
       timer = setTimeout(() => { timers.delete(timer); sendBody(); }, 120);
       timers.add(timer);
     } else sendBody();
+  };
+  // TLS is an explicit separate fixture mode; invalid TLS never falls back to HTTP.
+  const server = tlsOptions ? https.createServer(tlsOptions, handler) : http.createServer(handler);
+  const sockets = new Set();
+  server.on("connection", socket => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  });
+  if (tlsOptions) server.on("secureConnection", socket => {
+    if (socket.alpnProtocol !== "http/1.1") socket.destroy();
   });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, resolve);
   });
-  origin = `http://${host}:${server.address().port}`;
+  origin = `${tlsOptions ? "https" : "http"}://${host}:${server.address().port}`;
   if (syntheticRasterStyle(origin).length > 256) { server.close(); throw new Error("Style exceeds fixture reservation"); }
   return {
     origin, stats,
@@ -141,6 +190,7 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
       await new Promise((resolve, reject) => {
         server.close(error => error ? reject(error) : resolve());
         server.closeAllConnections();
+        for (const socket of sockets) socket.destroy();
       });
     },
   };
@@ -151,10 +201,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   for (let index = 0; index < args.length; index++) {
     const key = args[index];
     if (key === "--allow-lan" && options.allowLan === undefined) options.allowLan = true;
-    else if (["--host", "--port"].includes(key) && options[key.slice(2)] === undefined && args[index + 1] !== undefined) options[key.slice(2)] = args[++index];
-    else throw new Error("Usage: sdk-server.mjs [--host IPv4] [--port 0] [--allow-lan]");
+    else if (["--host", "--port", "--tls-key", "--tls-cert"].includes(key) && options[key.slice(2)] === undefined && args[index + 1] !== undefined) options[key.slice(2)] = args[++index];
+    else throw new Error("Usage: sdk-server.mjs [--host IPv4] [--port 0] [--allow-lan] [--tls-key PATH --tls-cert PATH]");
   }
   if (options.port !== undefined) options.port = Number(options.port);
+  if ((options["tls-key"] !== undefined) !== (options["tls-cert"] !== undefined)) throw new Error("Both TLS fixture input paths are required");
+  if (options["tls-key"] !== undefined) {
+    options.tls = { key: readTLSFixtureFile(options["tls-key"]), cert: readTLSFixtureFile(options["tls-cert"]) };
+    delete options["tls-key"]; delete options["tls-cert"];
+  }
   const fixture = await createSDKFixture(options);
   process.stdout.write(`${JSON.stringify({ ready: true, origin: fixture.origin, synthetic: true })}\n`);
   for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, async () => { await fixture.close(); process.exit(0); });

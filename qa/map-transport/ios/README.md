@@ -89,3 +89,7 @@ QA 문서 파일 5개를 보관하고 native 결과와 장부, 변경하지 않�
 `TPTransport`는 이 시험 앱의 외부 NSURLSession에만 등록하는 NSURLProtocol입니다. 주소와 리소스를 검사한 뒤 전역 대기열, 예약 장부와 `TPHTTPExchange`를 연결합니다. 계정 헤더를 전달하는 대신 고정된 HTTP 요청을 새로 만듭니다. 제품 앱에는 등록하지 않습니다.
 
 본문 256바이트를 시작 전에 예약하고 성공과 실패 뒤에도 환급하지 않습니다. 파일 쓰기는 같은 폴더의 임시 파일, fsync와 rename을 사용하며 실제 전원 종료의 내구성 검증은 아닙니다. 합성 경로에서 한 예약에 한 HTTP 송신을 관찰한 결과를 공급원이나 실제 SDK의 모든 요청 제한으로 확대하지 않습니다.
+
+## 2026-11-03 명시적 사설 HTTPS 시험 경로
+
+기존 loopback TLS 생성자는 그대로 두고 exact canonical origin(127.0.0.1 또는 RFC1918 IPv4·명시적 포트)과 공개 DER를 같이 받는 opt-in 경로를 추가했습니다. DNS·public·link-local·IPv6·추가 URL 구성요소와 다른 origin은 전송 전에 거절합니다. 엄격한 base64와 DER의 최대16KiB를 확인하며 같은 장부·전역 gate를 유지합니다. Mac 새7개는 실제 loopback 연결이며 사설 주소의 host 검사는 전송 없는 설정/거절 근거입니다. 실제 LAN 연결은 별도 SDK iPhone 단일 렌더1개에서만 확인했습니다. TLS verified 카운터는 정상 완료·신뢰·정확한 ALPN이 모두 확인된 exchange만 셉니다. HTTP2·제품 공급원·OS 수신량을 증명하지 않습니다.

@@ -2,7 +2,7 @@
 
 작성일: 2026-10-11, Asia/Seoul  
 목표 플랫폼: Android, iOS  
-현재 상태: 2026-11-02 최신 재개. HTTPS 연결을 영속 장부·전역 대기열에 묶은 Mac8개와 Android 준비 코드 선택 통합118개, 전체 verifier가 통과했습니다. Mac CLI 강제 종료 뒤 미확정 예약 유지도 확인했습니다. SDK HTTPS·폰·Release·HTTP2와 OS 수신량, Android의 실제 formatter/producer/AVD는 남아 있습니다. 전체24/54, P3-02 부분 완료/G1~G4 미완료입니다. [재개 순서](docs/RESUME.md)에서 이어갑니다.
+현재 상태: 2026-11-03. 별도 iPhone Debug 앱의 SDK HTTPS 단일 렌더1개와 Mac private TLS7·fixture29·전체 verifier가 통과했습니다. 실제 TLS 동시수는1이며 대기/취소·HTTP2·제품 통합과 Android 실제 formatter/AVD/native는 남아 있습니다. 전체24/54/P3-02부분/G1~G4 미완료입니다. [재개 순서](docs/RESUME.md)를 따릅니다.
 추천 개발 방식: React Native + Expo 개발 빌드 + TypeScript
 
 ## 1. 제품 목표와 첫 버전의 범위

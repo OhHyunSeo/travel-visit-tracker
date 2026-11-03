@@ -20,10 +20,20 @@ static const NSUInteger TPHeaderLimit = 8192, TPBodyLimit = 256;
 @property BOOL started, finishing, completed;
 @property BOOL fixtureTLS, trustAccepted, chainTrusted;
 @property NSData *fixtureCertificate;
+@property NSString *privateFixtureOrigin;
 @property NSString *negotiatedProtocol;
 @end
 
 @implementation TPHTTPExchange
++ (BOOL)safePrivateFixtureTLSOrigin:(NSString *)origin {
+    NSURLComponents *parts = [NSURLComponents componentsWithString:origin];
+    struct in_addr address;
+    if (![parts.scheme isEqual:@"https"] || !parts.port || parts.port.integerValue < 1 || parts.port.integerValue > 65535 || parts.user || parts.password || parts.query || parts.fragment || parts.path.length || inet_pton(AF_INET, parts.host.UTF8String, &address) != 1) return NO;
+    uint32_t ip = ntohl(address.s_addr);
+    if (ip != 0x7f000001 && (ip >> 24) != 10 && (ip >> 20) != 0xac1 && (ip >> 16) != 0xc0a8) return NO;
+    NSString *canonical = [NSString stringWithFormat:@"https://%@:%ld", parts.host, (long)parts.port.integerValue];
+    return [origin isEqual:canonical];
+}
 - (instancetype)initWithURL:(NSURL *)url queue:(dispatch_queue_t)queue timeout:(NSTimeInterval)timeout completion:(void (^)(NSHTTPURLResponse *, NSData *, NSError *))completion {
     if ((self = [super init])) {
         _url = url; _queue = queue; _timeout = timeout; _completion = [completion copy];
@@ -35,6 +45,10 @@ static const NSUInteger TPHeaderLimit = 8192, TPBodyLimit = 256;
     if ((self = [self initWithURL:url queue:queue timeout:timeout completion:completion])) {
         _fixtureTLS = YES; _fixtureCertificate = [certificate copy];
     }
+    return self;
+}
+- (instancetype)initWithURL:(NSURL *)url queue:(dispatch_queue_t)queue timeout:(NSTimeInterval)timeout privateFixtureOrigin:(NSString *)origin fixtureCertificate:(NSData *)certificate completion:(void (^)(NSHTTPURLResponse *, NSData *, NSError *))completion {
+    if ((self = [self initWithURL:url queue:queue timeout:timeout fixtureCertificate:certificate completion:completion])) _privateFixtureOrigin = [origin copy];
     return self;
 }
 - (void)deliver {
@@ -61,7 +75,11 @@ static const NSUInteger TPHeaderLimit = 8192, TPBodyLimit = 256;
     uint32_t ip = ntohl(address.s_addr);
     if ((ip >> 24) != 127 && (ip >> 24) != 10 && (ip >> 20) != 0xac1 && (ip >> 16) != 0xc0a8) return NO;
     if (self.fixtureTLS) {
-        if (ip != 0x7f000001 || !self.fixtureCertificate.length || self.fixtureCertificate.length > 16384) return NO;
+        if (self.privateFixtureOrigin) {
+            NSString *origin = [NSString stringWithFormat:@"%@://%@:%@", parts.scheme, parts.host, parts.port];
+            if (![TPHTTPExchange safePrivateFixtureTLSOrigin:self.privateFixtureOrigin] || ![origin isEqual:self.privateFixtureOrigin]) return NO;
+        } else if (ip != 0x7f000001) return NO;
+        if (!self.fixtureCertificate.length || self.fixtureCertificate.length > 16384) return NO;
         if (@available(macOS 15.5, iOS 18.5, *)) { /* Modern, copied ALPN metadata. */ }
         else return NO;
         SecCertificateRef certificate = SecCertificateCreateWithData(NULL, (__bridge CFDataRef)self.fixtureCertificate);

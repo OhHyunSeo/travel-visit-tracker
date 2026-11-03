@@ -54,3 +54,7 @@ node qa/map-transport/fixture/server.mjs --host 192.168.1.10 --port 3091 --allow
 `bytesWritten`과 `totalBytesWritten`은 Node 응답 쓰기에 넣은 **payload 바이트**입니다. gzip이면 압축된 본문 길이를 셉니다. HTTP chunk 프레임, 헤더와 TLS, OS가 실제 전달한 양이나 클라이언트가 받은 양은 포함하지 않습니다. 이 값만으로 공급원 수신량 상한이나 네이티브 다운로드 수용을 통과했다고 판단하지 않습니다.
 
 `close()`와 CLI의 SIGINT, SIGTERM은 이번 서버의 타이머와 대기 연결을 정리합니다. 개인용 서버나 다른 프로세스를 종료하지 않습니다.
+
+## 작은 SDK HTTPS 서버
+
+`sdk-server.mjs`는 명시적 `tls: {key: Buffer, cert: Buffer}` 또는 함께 지정한 `--tls-key`/`--tls-cert`로만 HTTPS를 엽니다. 각 입력은16KiB 이하이며 CLI는 연결 수1인 일반 파일만 제한 읽기합니다. TLS1.2 이상과 ALPN `http/1.1`을 요구하고, 두 값이 없으면 기존 HTTP 동작을 유지합니다. 실제 SDK 스타일의 타일 주소도 HTTPS로 생성합니다. 공개 공급원·프록시·개인 자료는 연결하지 않습니다. 전체 fixture29개가 통과했습니다.

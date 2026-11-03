@@ -1,5 +1,21 @@
 # 실제 지도 엔진을 연결한 iPhone 시험
 
+## 11월 3일: 아이폰의 작은 합성 지도를 HTTPS로 확인했습니다
+
+기존 여행색칠과 분리된 시험 앱에서 **물리 iPhone 1개 사례**를 통과했습니다. 실제 RN native 주소 변환 클래스를 유지한 채 스타일과 타일 2개 요청을 정확한 사설 IPv4·포트와 공개 DER에 고정했습니다. TLS·HTTP/1.1 확인 2회, 시작·반환·송신 2회, 본문307바이트, 장부 requests2/tiles1/reserved512와 마지막 active/pending/unresolved0을 서버와 대조했습니다. 서버의 두 응답도 HTTP/1.1·TLS1.3, 인증·쿠키 없음으로 일치했습니다. 실제 최대 동시는1이며, TLS에서의 네 자리 대기·SDK 취소/재실행·HTTP2·제품 JS·공급원·OS 수신량 검증으로 세지 않습니다.
+
+기존 loopback TLS API와 HTTP 동작은 유지하고 사설 시험 origin을 명시하는 별도 API만 추가했습니다. 최대16KiB DER의 엄격한 base64 입력은 지도 생성 전에 검사하고, origin·인증서·한도는 같은 영속 장부에 묶습니다. 인증서·호스트·leaf와 ALPN 확인을 재사용하며 시스템 신뢰 설정을 바꾸지 않습니다. 단일 `tls-render` 단계는 고정되지 않은 readiness/control 호출과 후속 HTTP 재설정을 건너뜁니다. 제품 앱·의존성과 공급원 다운로드는 연결하지 않았습니다.
+
+처음 OS가 신뢰 설정 때문에 실행을 거절한 준비와, 다음 첫 TLS admission 뒤 송신0·예약256으로 끝난 준비는 제외해 보관했습니다. 후자의 원인은 확정하지 않았습니다. 사용자가 같은 Wi-Fi·로컬 네트워크 허용을 확인한 뒤 같은 빌드의 새 PID/run에서 통과했습니다. 결과를 임의 수정하거나 이 준비들을 기기 통과로 세지 않았습니다.
+
+공통 전체 verifier exit0 PASS: 모바일609/서버61/fixture29/Androidhost118/MacHTTP13+TLS기본7+gate8+private7/기존 보고서13+TLS보고서17/임시 HTTP·SQLite·파일/양쪽 production JS-Hermes. 서버 ALPN/TLS 필드를 추가로 요구하는 최종 TLS 보고서18개와 합계31개 보고서 회귀도 별도 PASS입니다. 서명 Debug 빌드·격리 검사가 통과했고 SDK는 재사용했습니다.
+
+최종·제외 run의 결과와 장부4파일을 대조해 보관했습니다. QA 앱·전용 캐시와 소유 TLS 서버·임시 비공개 키를 정리했고 원래 앱 설치 정보가 같았습니다. 개인 DB·사진·native 인증은 열거나 새로 대조하지 않았습니다. 원문은 Git 제외 `map-sdk-tls-resume-20261103/`입니다. 전체 **24/54**, P3-02 부분 완료/G1~G4 미완료를 유지합니다.
+
+`QA_STAGE=tls-render`, 새 `QA_RUN_ID`, canonical `QA_SERVER_ORIGIN=https://PRIVATE_IPV4:PORT`와 `QA_TLS_LEAF_DER_BASE64`를 실행 환경에 전달합니다. 인증서 DER는 공개 값만 최대16KiB로 받으며 비공개 키는 Mac의 임시 서버에만 둡니다. 이 단계는 한 번의 스타일·타일 렌더 후 끝나며 기존 HTTP queue/cancel 단계와 구분합니다. HTTP stage에 TLS 입력을 섞으면 거절합니다.
+
+`tls_result.py RESULT SERVER --ledger LEDGER --certificate PUBLIC_DER --origin ORIGIN --pid PID`로 보관 파일을 독립 대조합니다. 이 도구의 합성 회귀와 실제 기기 사례를 합치지 않습니다. 인증서 신뢰 방식은 Apple의 [anchor 제한](https://developer.apple.com/documentation/security/sectrustsetanchorcertificatesonly(_:_:))과 [네트워크 가져오기 제한](https://developer.apple.com/documentation/security/sectrustsetnetworkfetchallowed(_:_:)) API를 사용합니다.
+
 ## 2026-11-02 취소와 수동 재로딩 통과
 
 새 signed Debug 소스의 물리 iPhone 두 사례가 통과했습니다. `QA_STAGE=cancel-retry`는 한 장부로 진행합니다. 타일 전송 4개·대기 2개를 서버와 함께 관측한 뒤 로컬 빈 `styleJSON`으로 전환해 SDK 취소를 일으킵니다. task나 전송 도구의 취소 함수를 직접 호출하지 않습니다. 네 옛 응답은 본문 없이 닫혔으며 시작한 다섯 요청의 자리 반환과 기존 1,280바이트 예약을 대조했습니다.
