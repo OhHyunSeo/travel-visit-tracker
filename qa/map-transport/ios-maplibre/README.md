@@ -94,3 +94,7 @@ bash qa/map-transport/ios-maplibre/build-ios.sh
 실행할 때 `QA_SERVER_ORIGIN`과 새 `QA_RUN_ID`를 전달합니다. `QA_STAGE`는 기본 `queue`이며 취소 후 같은 경로를 다시 받는 구간은 `cancel-retry`입니다. 다른 stage는 거절하고, 새 프로세스와 리소스 0건인 새 서버 상태를 요구합니다. 서버는 [sdk-server.mjs](../fixture/sdk-server.mjs)이며 명시적으로 허용한 사설 IPv4의 HTTP만 받습니다. 이미 사용한 시험 이름은 거절하고 결과 파일도 덮어쓰지 않습니다. 현재 앱의 재실행 보존 검사는 별도 범위입니다.
 
 이번 원문은 Git 제외 `docs/test-results/maplibre-transform-qa-20261031/`, 통과 앱은 `.build/pinned-native-transform-20261031/`입니다. 이전 두 사례는 `maplibre-sdk-qa-20261031/`와 `.build/pinned-sdk-20261031/`에 유지합니다. 다음은 [재개 순서](../../../docs/RESUME.md)와 [제품 연결 전 조건](../../../docs/OFFLINE_MAP_TRANSPORT.md)을 따릅니다.
+
+## 취소·재로딩 신호를 받기 전 작은 검사
+
+`TPFixtureActionGate`는 현재 run ID·PID·서로 다른 두64자리 nonce와 정확히 일치하는 QA URL만 정해진 순서(phase10취소→phase12재로딩)로 한 번씩 받아들입니다. URL을 열거나 SDK/전송 작업을 직접 실행하지 않습니다. 잘못된 신호가 상태를 소비하지 않고 원래 검사나 완료 상태를 초기화하지 않는 실제 Mac Foundation11개가 통과했습니다. 현재 객체는 아직 앱에 연결하지 않았습니다. 다음에는 scene URL 전달과 같은 PID 유지를 기기에서 먼저 확인한 뒤 TLS 요청 취소에 연결합니다. 신호 일치만으로 서버 응답이 닫혔다고 판단하지 않으며 native·서버 관측을 따로 대조해야 합니다.
