@@ -26,3 +26,9 @@
 정상 보고에도 `nativeAdmissionEnabled=false`, `allocationBoundProven=false`, `imageFormatted=false`가 남습니다. 최대65MiB는 API를 통한 metadata+backing의 논리 설계 범위이며 전체 native 할당량 상한의 증명이 아닙니다. descriptor·파일 변경 검사는 원자적인 OS sandbox가 아니므로 임의 process의 직접 쓰기나 경합까지 차단했다고 하지 않습니다.
 
 형식화·mount, 실제 producer 진입 경계, 모든 native 자식·임시 파일·열린 FD와 mount 수명, 최소 생성·부팅 용량은 미검증입니다. 다음은 이 조건을 강제할 제한된 backend를 따로 준비하는 일이며, 현재 도구로 emulator나 ADB를 시작하지 않습니다. 과거 QCOW2 해시 차이의 원인도 미확정으로 유지합니다.
+
+## 11월 3일 고정 작업자 두 파일 추가
+
+Android6c165d6의 `single_writer_component.py`와 대응 검사만 검토 후 가져왔습니다. 기존 네 controller 파일은 바꾸지 않았습니다. 이 checkout에서 함께 실행한 host154개가 통과했으며 이 검사는 macOS OS profile을 적용하지 않습니다. 명시적 `--run-component`는 macOS의 작은 합성512바이트 일반 파일용입니다. Android branch의 실제 OS14관측은 이전 고정 소스의 근거이고 이번 통합의 새 실험으로 세지 않습니다.
+
+저장 result.json은 최종 정리 전의 COMPONENT_PASS_ONLY/cleanup=PENDING일 수 있습니다. 최종 CLI 반환과 실제 audit/cleanup 보고서가 동반돼야 하며 사전 파일만 성공 근거로 사용하지 않습니다. 일반 파일의 RLIMIT 논리 cap과 관측 할당4096바이트는 전체 할당량·임의 native 프로세스의 제한 증명이 아닙니다. formatter·image/mount·AVD·실제 Android/Release는 실행하지 않으며 세 admission 플래그도false를 유지합니다.

@@ -125,3 +125,7 @@ python3 -B -m unittest discover -s qa/map-transport/android -p 'test_*.py'
 실행 도구는 기존 패키지를 임의로 덮어쓰지 않습니다. 고유한 `.build/validation/run_*/`에 결과를 남겨 이전 근거를 덮어쓰지 않고, 처음 검사하는 소유 AVD에 사용 기록을 원자적으로 남긴 뒤 QA 앱만 설치합니다. 끝나면 QA 앱만 제거하고 개인 패키지의 계속된 부재와 네트워크, 화면 설정을 대조합니다. 기존 앱의 인증이나 DB 보존을 새로 확인한 결과로 보고하지 않습니다. HTTP에는 `adb reverse`를 사용하지 않습니다.
 
 이 도구는 AVD를 만들거나 시작, 종료하지 않습니다. 준비 주체가 실제 디스크 증가량과 새 저장 공간의 출처, 소유 서버와 emulator 종료를 별도로 확인해야 합니다. 과거 QCOW2 차이가 해결되지 않은 상태에서 원본을 덮어쓰거나 지워 해시를 맞추지 않습니다.
+
+## 고정 Python 작업자의 작은 보호 구성요소
+
+`single_writer_component.py`는 별도512바이트 합성 파일의 exec·FD·쓰기·종료 제한을 확인하는 명시적 macOS 도구입니다. 평소 공통 검사에서는 대응36개 portable 회귀만 실행하고 OS profile은 적용하지 않습니다. 공통 전체 Android host154개가 통과했습니다. 이전 Android6c165d6의 OS 관측과 같은 소스지만 새 통합 실행의 OS/Android 검증으로 세지 않습니다. 사전 result.json과 최종 CLI audit·cleanup을 구분하며 formatter·mount·AVD·native admission은 계속 닫아 둡니다.
