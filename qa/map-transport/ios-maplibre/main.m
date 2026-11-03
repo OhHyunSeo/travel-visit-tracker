@@ -3,6 +3,7 @@
 #import <MapLibre/MLNNetworkConfiguration.h>
 #import "TPTransport.h"
 #import "MLRNTransformRequest.h"
+#import "TPFixtureActionGate.h"
 
 static NSURL *TPRunDirectory;
 static NSString *TPOrigin;
@@ -47,6 +48,9 @@ static NSDictionary *TPControl(NSString *path) {
 @property NSDictionary *waitingServer, *cancelledSnapshot, *cancelledServer, *releaseControl;
 @property NSDictionary *emptyStyleEvidence;
 @property NSData *fixtureCertificate;
+@property NSString *runID;
+@property TPFixtureActionGate *actionGate;
+@property NSMutableArray *actionAttempts;
 @end
 
 @implementation TPSDKController
@@ -72,15 +76,18 @@ static NSDictionary *TPControl(NSString *path) {
     TPRunning = NO; UIApplication.sharedApplication.idleTimerDisabled = TPPriorIdle;
     NSUInteger transforms, rewrites;
     @synchronized(self) { transforms = self.transforms; rewrites = self.rewrittenStyles; }
+    NSString *scope = [self.stage isEqual:@"action-gate"] ? @"fixture URL delivery only; no SDK, transport, cancellation or reload acceptance" : ([@[@"tls-render", @"tls-queue"] containsObject:self.stage] ? @"isolated pinned private-fixture HTTPS HTTP1 SDK; no cancel/restart, HTTP2, RN JS bridge, provider or OS-byte acceptance" : @"isolated MapLibre6.31.0 with actual RN11.5 native transform class; no JS/TurboModule bridge, TLS/HTTP2/provider/OS-byte acceptance");
     TPWrite(@{@"complete": @YES, @"pass": @(pass), @"reason": reason,
               @"cases": self.cases ?: @[], @"stage": self.stage ?: @"invalid", @"process": @(NSProcessInfo.processInfo.processIdentifier),
+              @"runID": self.runID ?: @"invalid", @"fixtureActionAttempts": self.actionAttempts ?: @[],
+              @"fixtureActionSequence": @(self.actionGate.lastAcceptedSequence), @"mapCreated": @((BOOL)(self.map != nil)),
               @"nativeAtFinish": TPTransport.snapshot,
               @"cancellationTrigger": [self.stage isEqual:@"cancel-retry"] ? @"local-style-json" : @"none",
               @"trialPhase": @(self.phase), @"emptyStyleEvidence": self.emptyStyleEvidence ?: @{},
               @"transforms": @(transforms), @"rewrittenStyles": @(rewrites), @"externalTileRequests": @(self.externalTileRequests),
               @"delegatePreserved": @(self.transform && MLNNetworkConfiguration.sharedManager.delegate == self.transform),
               @"delegateClass": self.transform ? NSStringFromClass(self.transform.class) : @"none",
-              @"scope": [@[@"tls-render", @"tls-queue"] containsObject:self.stage] ? @"isolated pinned private-fixture HTTPS HTTP1 SDK; no cancel/restart, HTTP2, RN JS bridge, provider or OS-byte acceptance" : @"isolated MapLibre6.31.0 with actual RN11.5 native transform class; no JS/TurboModule bridge, TLS/HTTP2/provider/OS-byte acceptance"});
+              @"scope": scope});
     self.label.text = pass ? @"지도 엔진 시험을 마쳤습니다.\n결과를 Mac에서 확인하고 있습니다." : @"지도 시험 결과를 확인하고 있습니다.\nMac 안내를 확인해 주세요.";
     self.map.delegate = nil;
     self.transform.logCallback = nil;
@@ -94,18 +101,29 @@ static NSDictionary *TPControl(NSString *path) {
     TPOrigin = env[@"QA_SERVER_ORIGIN"];
     self.stage = env[@"QA_STAGE"] ?: @"queue";
     BOOL tlsTrial = [@[@"tls-render", @"tls-queue"] containsObject:self.stage];
+    BOOL actionTrial = [self.stage isEqual:@"action-gate"];
     self.fixtureCertificate = [TPTransport fixtureCertificateFromBase64:env[@"QA_TLS_LEAF_DER_BASE64"]];
     NSString *runID = env[@"QA_RUN_ID"];
     NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9_-]{1,64}$" options:0 error:nil];
     BOOL valid = runID && [pattern numberOfMatchesInString:runID options:0 range:NSMakeRange(0, runID.length)] == 1;
+    self.runID = valid ? runID : nil;
+    if (actionTrial && valid) self.actionGate = [[TPFixtureActionGate alloc] initWithRunID:runID processIdentifier:NSProcessInfo.processInfo.processIdentifier cancelNonce:env[@"QA_FIXTURE_CANCEL_NONCE"] reloadNonce:env[@"QA_FIXTURE_RELOAD_NONCE"]];
     NSURL *documents = [[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     TPRunDirectory = [documents URLByAppendingPathComponent:valid ? runID : @"invalid-input"];
     BOOL fresh = ![[NSFileManager defaultManager] fileExistsAtPath:TPRunDirectory.path];
-    BOOL originOK = tlsTrial ? [TPTransport safePrivateFixtureTLSOrigin:TPOrigin] && self.fixtureCertificate : [TPTransport safeOrigin:TPOrigin] && !env[@"QA_TLS_LEAF_DER_BASE64"];
-    if (!valid || !fresh || ![@[@"queue", @"cancel-retry", @"tls-render", @"tls-queue"] containsObject:self.stage] || !originOK) { TPRunDirectory = nil; [self finish:NO reason:@"unsafe or reused inputs"]; return; }
-    [[NSFileManager defaultManager] createDirectoryAtURL:TPRunDirectory withIntermediateDirectories:YES attributes:nil error:nil];
+    BOOL originOK = actionTrial ? !env[@"QA_SERVER_ORIGIN"] && !env[@"QA_TLS_LEAF_DER_BASE64"] : (tlsTrial ? [TPTransport safePrivateFixtureTLSOrigin:TPOrigin] && self.fixtureCertificate : [TPTransport safeOrigin:TPOrigin] && !env[@"QA_TLS_LEAF_DER_BASE64"]);
+    BOOL signalsOK = actionTrial ? self.actionGate != nil : !env[@"QA_FIXTURE_CANCEL_NONCE"] && !env[@"QA_FIXTURE_RELOAD_NONCE"];
+    if (!valid || !fresh || ![@[@"queue", @"cancel-retry", @"tls-render", @"tls-queue", @"action-gate"] containsObject:self.stage] || !originOK || !signalsOK) { TPRunDirectory = nil; [self finish:NO reason:@"unsafe or reused inputs"]; return; }
+    if (![[NSFileManager defaultManager] createDirectoryAtURL:TPRunDirectory withIntermediateDirectories:YES attributes:nil error:nil]) { TPRunDirectory = nil; [self finish:NO reason:@"run directory not ready"]; return; }
     self.cases = [NSMutableArray new];
-    TPWrite(@{@"complete": @NO, @"phase": @"waiting-for-local-fixture"});
+    TPWrite(@{@"complete": @NO, @"phase": actionTrial ? @"waiting-for-fixture-signal" : @"waiting-for-local-fixture"});
+    if (actionTrial) {
+        self.phase = 10; self.actionAttempts = [NSMutableArray new];
+        [self publishActionProgress];
+        self.label.text = @"검사 신호를 확인하고 있습니다.\nMac의 안내를 기다려 주세요.";
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 45 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ if (!self.finishing) [self finish:NO reason:@"fixture signal deadline"]; });
+        return;
+    }
     // The host prepares and verifies the TLS fixture before launch. No unpinned
     // readiness/control NSURLSession is used by this deliberately single phase.
     if (tlsTrial) { [self createMap]; return; }
@@ -122,6 +140,27 @@ static NSDictionary *TPControl(NSString *path) {
             [self createMap];
         });
     });
+}
+- (void)publishActionProgress {
+    NSDictionary *value = @{@"kind": @"fixture-action-progress", @"stage": self.stage, @"runID": self.runID,
+                            @"process": @(NSProcessInfo.processInfo.processIdentifier), @"phase": @(self.phase),
+                            @"sequence": @(self.actionGate.lastAcceptedSequence), @"attempts": [self.actionAttempts copy]};
+    NSData *data = [NSJSONSerialization dataWithJSONObject:value options:NSJSONWritingSortedKeys error:nil];
+    [data writeToURL:[TPRunDirectory URLByAppendingPathComponent:@"action-progress.json"] options:NSDataWritingAtomic error:nil];
+}
+- (void)receiveFixtureURL:(NSURL *)url {
+    if (!TPRunning || self.finishing || ![self.stage isEqual:@"action-gate"]) return;
+    if (self.actionAttempts.count >= 8) { [self finish:NO reason:@"too many fixture signals"]; return; }
+    NSUInteger phaseBefore = self.phase, sequenceBefore = self.actionGate.lastAcceptedSequence;
+    BOOL accepted = [self.actionGate acceptURL:url phase:self.phase];
+    if (accepted) self.phase = self.phase == 10 ? 12 : 13;
+    [self.actionAttempts addObject:@{@"accepted": @(accepted), @"phaseBefore": @(phaseBefore), @"phaseAfter": @(self.phase),
+                                    @"sequenceBefore": @(sequenceBefore), @"sequenceAfter": @(self.actionGate.lastAcceptedSequence)}];
+    [self publishActionProgress];
+    if (accepted && self.phase == 13) {
+        [self.cases addObject:@{@"name": @"run-bound fixture URL delivery", @"pass": @YES, @"attempts": [self.actionAttempts copy]}];
+        [self finish:self.map == nil && self.actionGate.lastAcceptedSequence == 2 reason:@"fixture URL delivery completed; no map actions performed"];
+    }
 }
 - (void)createMap {
     MLNNetworkConfiguration *network = MLNNetworkConfiguration.sharedManager;
@@ -336,6 +375,11 @@ static NSDictionary *TPControl(NSString *path) {
 - (void)sceneDidBecomeActive:(UIScene *)scene {
     if (!TPStarted) [self.controller start];
     else if (TPRunning) UIApplication.sharedApplication.idleTimerDisabled = YES;
+}
+- (void)scene:(UIScene *)scene openURLContexts:(NSSet<UIOpenURLContext *> *)URLContexts {
+    // Existing-scene delivery only. Cold-launch URL contexts deliberately do
+    // not authorize an action in a different/unconfigured process.
+    if (URLContexts.count == 1) [self.controller receiveFixtureURL:URLContexts.anyObject.URL];
 }
 - (void)sceneWillResignActive:(UIScene *)scene { if (TPStarted) UIApplication.sharedApplication.idleTimerDisabled = TPPriorIdle; }
 - (void)sceneDidDisconnect:(UIScene *)scene { if (TPStarted) UIApplication.sharedApplication.idleTimerDisabled = TPPriorIdle; }

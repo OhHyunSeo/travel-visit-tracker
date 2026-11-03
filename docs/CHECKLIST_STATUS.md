@@ -1,5 +1,9 @@
 # 개발 체크리스트
 
+## 11월 3일 검사 신호 준비
+
+검사별 일회 URL 신호의 Mac native11개와 전체 verifier609/61·fixture30·Android175·Mac63·보고서61·양쪽 JS/Hermes, QA signed build·정적 격리가 통과했습니다. 사용자 기기 연결 해제 안내 뒤 새 기기 작업0회입니다. same-PID 전달과 실제 TLS 취소/재로딩은 NOT RUN으로 유지하며 [재개 기록](RESUME.md)을 따릅니다. 전체24/54/P3-02부분/G1~G4미완료입니다.
+
 ## 11월 3일 최신: iPhone HTTPS 대기·Android 요청 검증
 
 실제 iPhone의 HTTPS 전송4/대기2와 최종7회·예약1792를 대조한 새1개 사례가 통과했습니다. Android 요청 검증까지 선택 반영한 전체 verifier609/61·fixture30·Android175·Mac52·보고서61·양쪽 JS/Hermes도 통과했습니다. TLS 취소/재실행·HTTP2·실제 Android/Release·공급원/OS 수신량은 남아 전체24/54/P3-02부분/G1~G4미완료입니다. [최신 재개 범위](RESUME.md)를 따릅니다.
