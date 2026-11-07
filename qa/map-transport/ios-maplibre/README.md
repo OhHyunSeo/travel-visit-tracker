@@ -100,3 +100,18 @@ bash qa/map-transport/ios-maplibre/build-ios.sh
 `TPFixtureActionGate`는 현재 run ID·PID·서로 다른 두64자리 nonce와 정확히 일치하는 QA URL만 정해진 순서(phase10취소→phase12재로딩)로 한 번씩 받아들입니다. URL을 열거나 SDK/전송 작업을 직접 실행하지 않습니다. 잘못된 신호가 상태를 소비하지 않고 원래 검사나 완료 상태를 초기화하지 않는 실제 Mac Foundation11개가 통과했습니다. 객체는 별도 `action-gate` 준비 모드에 연결했습니다. 실제 scene URL 전달과 같은 PID 유지는 아직 기기에서 확인하지 않았으며, 이를 먼저 확인한 뒤 TLS 요청 취소에 연결합니다. 신호 일치만으로 서버 응답이 닫혔다고 판단하지 않으며 native·서버 관측을 따로 대조해야 합니다.
 
 `action-gate`에는 새 QA_RUN_ID와 QA_FIXTURE_CANCEL_NONCE/QA_FIXTURE_RELOAD_NONCE만 전달하고 서버 origin이나 DER는 섞지 않습니다. 모드는45초 안에 기존 scene의 정확한 QA URL을 기다립니다. 현재 준비 앱은 `.build/pinned-action-delivery-prepared-20261103/`이며 signed Debug·정적 격리·전체 verifier를 통과했습니다. 기기 전달·SDK 취소는 NOT RUN입니다. 이 scheme은 별도 QA 앱만 등록하며 active Expo 앱에는 추가하지 않았습니다. UIKit의 [scene URL 수신](https://developer.apple.com/documentation/uikit/uiscenedelegate/scene(_:openurlcontexts:))을 사용하고 초기 scene connection URL은 의도적으로 무시합니다.
+
+### Mac에서 신호 전달을 기록하는 방법
+
+실기기 검사 때는 원래 앱의 설치 정보와 별도 QA 저장 공간을 먼저 점검합니다. 유효한 서명의 시험 앱을 확인해 설치한 뒤, 잠금이 풀린 아이폰과 종료된 QA 앱을 준비합니다. `TP_QA_DEVICE`에는 이번 검사 대상의 CoreDevice 식별자를 지정합니다. 캡처 결과는 새 비공개 디렉터리에 저장합니다.
+
+```sh
+python3 -B qa/map-transport/ios-maplibre/action_delivery.py capture \
+  --device "$TP_QA_DEVICE" docs/test-results/scene-action-device-run
+python3 -B qa/map-transport/ios-maplibre/action_delivery.py verify \
+  docs/test-results/scene-action-device-run
+```
+
+캡처는 별도 QA 앱을 실행하고 진행 파일을 읽은 뒤 취소 신호, 같은 신호, 재로딩 신호를 차례대로 전달합니다. 각 단계의 응답과 마지막 프로세스 조회가 최초 PID와 일치해야 통과합니다. 결과 폴더에는 신호 종류와 앱 관측값을 저장합니다. 중간에 실패하면 폴더를 보존하고 별도 QA 앱과 그 실행 기록을 확인한 뒤 다음 시도를 준비합니다. 시험 앱 설치와 정리는 별도로 진행합니다.
+
+11월 7일 Mac의 모의 CoreDevice 검사 6개와 실제 아이폰 검사 1개를 통과했습니다. `3295925` 네이티브 소스로 새로 서명한 앱이 기존 scene에서 세 신호를 받았고, 앱 기록과 CoreDevice가 보고한 PID가 일치했습니다. 실제 SDK HTTPS 요청에 취소·재로딩을 연결하는 작업이 다음 단계입니다.

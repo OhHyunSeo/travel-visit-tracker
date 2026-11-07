@@ -2,7 +2,7 @@
 
 작성일: 2026-10-11, Asia/Seoul  
 목표 플랫폼: Android, iOS  
-현재 상태: 2026-11-03. 별도 iPhone HTTPS 대기 1개(전송4/대기2)는 고정 소스에서 통과했습니다. 후속 검사 신호 준비와 통신 진단을 포함한 전체 verifier는 모바일609/서버61·fixture30·Android175·Mac66·보고서61·양쪽 JS/Hermes PASS입니다. 신호 전달 준비 앱은 보존했으며 연결 해제 안내 뒤 새 기기 작업은 0회입니다. same-PID 전달·TLS 취소/재실행·HTTP2·실제 Android/Release·공급원/OS 수신량은 남아 전체24/54/P3-02부분/G1~G4미완료입니다. [재개 순서](docs/RESUME.md)를 따릅니다.
+2026-11-07 현재 별도 iPhone 시험 앱에서 HTTPS 요청 대기와 같은 프로세스의 검사 신호 전달을 각각 확인했습니다. 다음 단계는 실제 SDK HTTPS 요청의 취소와 재로딩입니다. 전체 24/54, P3-02 부분 완료, G1~G4 미완료입니다. [재개 순서](docs/RESUME.md)
 추천 개발 방식: React Native + Expo 개발 빌드 + TypeScript
 
 ## 1. 제품 목표와 첫 버전의 범위
