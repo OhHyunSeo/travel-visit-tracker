@@ -1,172 +1,57 @@
-# Travel Visit Tracker Backend
+# Trip Painting 서버
 
-Backend service for the Travel Visit Tracker app. Provides GeoJSON boundary data and photo upload functionality.
+휴대폰에 모아 둔 방문과 사진을 백업할 수 있도록 준비하는 서버입니다. 계정 인증, 방문 저장과 사진 접근 보호를 맡습니다. 앱의 선택 로그인, 계정별 기록과 수동 방문 백업을 연결했습니다. 자동 방문 백업은 계정마다 기본 꺼짐이며, 사용자가 켜면 앱을 열어 둔 동안 전송합니다. 사진 첨부본을 보존하는 서버 API와 앱의 수동 전송·전용 확인창을 연결했습니다. **새 사진 native 전송 검증, 자동 사진 전송과 다른 기기 복원은 아직 남아 있습니다.**
 
-## Features
+## 실행하기
 
-- Serve country-specific GeoJSON boundary packs
-- Handle photo uploads with automatic thumbnail generation
-- ETag support for efficient caching
-- CORS enabled for Flutter app
-- Gzip compression for responses
-- Request logging
+Node 24.21.0을 사용합니다. 저장소 루트에서 `bash scripts/setup-cloud.sh`로 설치하고, `npm --prefix backend test`로 검사할 수 있습니다. 검사는 임시 DB와 합성 사진을 사용합니다.
 
-## Installation
+실제 서버를 실행할 때는 다음과 같이 설정하세요.
 
-```bash
-npm ci
+```sh
+cd backend
+cp .env.example .env
+# .env의 JWT_SECRET에 새로운 임의 비밀값을 넣은 뒤
+node --env-file=.env server.js
 ```
 
-Use Node 24.21.0 from the repository `.nvmrc`. For the shared Cloud setup, run `bash scripts/setup-cloud.sh` from the repository root. The current Expo app does not yet use this API for login or synchronization; the Flutter references below describe the earlier client.
+기본 주소는 `127.0.0.1:3000`입니다. `JWT_SECRET`은 최소 32 UTF-8 바이트이며, 값이 없거나 이전 개발 기본값이면 시작하지 않습니다. 실제 비밀값은 Git에 올리지 않습니다.
 
-Local environment names are documented in `.env.example`: `PORT`, `NODE_ENV`, and `JWT_SECRET`. Copy it to `.env`, supply a fresh local secret, then run `node --env-file=.env server.js`. `npm start` and `npm run dev` require variables to be supplied by the shell; they do not load `.env` automatically. Never use the hard-coded development fallback for a real deployment. Cloud mobile tests need no JWT secret.
+DB와 사진 폴더를 따로 둘 때는 `DB_PATH`, `UPLOADS_DIR`을 사용합니다. 접속 주소는 `HOST`, `PORT`, 허용할 브라우저 주소는 `CORS_ORIGINS`로 지정합니다. 전체 설정 이름은 [.env.example](.env.example)에 있습니다.
 
-## Running the Server
+## 방문 백업은 어떻게 처리하나요?
 
-Development mode (with auto-reload):
-```bash
-npm run dev
-```
+휴대폰은 방문과 전송 작업에 각각 고유 ID를 붙입니다. 서버는 로그인한 계정과 이 ID를 함께 확인합니다. 저장 응답을 받지 못해 같은 작업을 다시 보내도 방문을 중복으로 만들지 않습니다.
 
-Production mode:
-```bash
-npm start
-```
+삭제한 방문은 삭제 표시를 남깁니다. 오래된 휴대폰에서 이전 방문을 다시 보내거나, 삭제 요청이 원래 방문보다 먼저 도착해도 이를 되살리지 않습니다. 요청 하나의 저장이 실패하면 그 요청의 전체 작업을 취소하고 성공 응답을 보내지 않습니다.
 
-The server runs on port 3000 by default. Set the `PORT` environment variable to use a different port.
+[방문 백업 API 예시](docs/VISIT_BACKUP.md)에 요청 형식과 재시도, 내려받기 방법을 설명했습니다. 앱의 백업 화면과 foreground 시작·복귀 점검에 연결했고, 재시도 시각과 401·409 자동 중단 상태는 기기에 보관합니다. 모바일·서버 전송은 임시 DB와 합성 자료로 검사했습니다. 방문 연결 사진의 서버 기반은 [새 사진 API](docs/VISIT_PHOTOS.md)에 구현했고, 앱 수동 사진 전송과 아직 남은 native 검증·복원은 [사진 보존 계획](../docs/PHOTO_BACKUP_PLAN.md)에 정리했습니다.
 
-## API Endpoints
+## 제공하는 API
 
-### Health Check
+인증이 필요한 요청에는 `Authorization: Bearer <access-token>`을 보냅니다. 사진을 읽을 때도 같은 헤더가 필요합니다.
 
-**GET** `/health`
+| 요청 | 하는 일 |
+| --- | --- |
+| `GET /health` | 서버 상태 확인 |
+| `POST /api/auth/signup`, `/api/auth/login` | 계정 생성과 로그인 |
+| `GET /api/auth/me` | 현재 계정 확인 |
+| `POST /api/visits/sync` | 방문 저장·삭제 작업을 한 묶음으로 처리 |
+| `GET /api/visits` | 내 방문과 삭제 표시를 페이지로 내려받기 |
+| `POST /api/visit-photos` | 방문·사진·작업 UUID로 첨부본을 중복 없이 저장 |
+| `GET /api/visit-photos` | 활성 방문에 연결된 내 사진 메타데이터 목록 |
+| `GET /api/visit-photos/:id/original`, `GET /api/visit-photos/:id/thumbnail` | 내 활성 방문의 첨부본과 썸네일 조회 |
+| `POST /api/photos` | 내 계정에 사진 업로드 (`file`, `region_id`) |
+| `GET /uploads/:filename`, `/uploads/thumbnails/:filename` | 내 원본 사진과 썸네일 조회 |
+| `GET /api/geojson/:countryCode` | 공개 개발 경계 팩 조회 |
+| `POST /api/trips/sync` | 이전 위치점 API 유지. 현재 앱의 방문 전송에는 사용하지 않음 |
 
-Returns server status.
+새 비밀번호는 8글자 이상, 72 UTF-8 바이트 이하로 받습니다. 기존 대소문자 이메일과 이전 긴 비밀번호의 로그인은 보존합니다. 새 방문 사진 API는 JPEG·PNG 첨부본을 최대 10MiB·2,500만 픽셀로 검사하고 받은 바이트 그대로 저장하며 200×200 JPEG 썸네일을 따로 만듭니다. 기존 지역 사진 API는 이전처럼 품질 90의 JPEG로 재인코딩합니다. 두 경로를 같은 원본 보존 방식으로 안내하지 않습니다. 타인의 사진과 소유권 정보가 없는 파일은 조회할 수 없습니다.
 
-**Response:**
-```json
-{
-  "status": "ok",
-  "timestamp": "2025-11-14T10:30:00.000Z",
-  "service": "travel-visit-tracker-backend"
-}
-```
+## 기존 자료는 어떻게 되나요?
 
-### Get GeoJSON Pack
+서버 DB는 현재 버전 3입니다. 기존 계정·여행·위치점·지역 사진·방문·삭제 표시·처리 영수증을 보존하고 방문 사진·사진 변경 순서·사진 처리 영수증 테이블을 추가합니다. 예전 업로드 중 소유권 정보가 없는 파일은 삭제하거나 임의의 계정에 붙이지 않고 그대로 보관합니다.
 
-**GET** `/api/geojson/:countryCode`
+인증, 경계 자료, 방문, 사진과 동기화는 `src/`의 각 모듈로 나눴습니다. `src/app.js`가 이를 연결하고 `server.js`가 실행 설정을 읽습니다. 기존 위치점 API는 `legacyTrips.js`에 별도로 남겼습니다.
 
-Retrieves the GeoJSON boundary pack for a specific country.
-
-**Parameters:**
-- `countryCode` (path): 2-3 uppercase letter country code (e.g., KR, US, JP)
-
-**Headers:**
-- `If-None-Match` (optional): ETag for conditional requests
-
-**Response Headers:**
-- `Content-Type: application/geo+json`
-- `Cache-Control: public, max-age=86400`
-- `ETag: <hash>`
-- `Content-Encoding: gzip`
-
-**Success Response (200):**
-```json
-{
-  "type": "FeatureCollection",
-  "features": [...]
-}
-```
-
-**Not Modified (304):**
-Returns empty body if ETag matches.
-
-**Error Responses:**
-- `400`: Invalid country code format
-- `404`: GeoJSON pack not found for country
-- `500`: Server error
-
-### Upload Photo
-
-**POST** `/api/photos`
-
-Uploads a photo and generates a thumbnail.
-
-**Content-Type:** `multipart/form-data`
-
-**Parameters:**
-- `file` (file): Image file (JPEG or PNG, max 10 MB)
-- `region_id` (string): ID of the region to attach photo to
-
-**Success Response (200):**
-```json
-{
-  "url": "http://localhost:3000/uploads/abc123.jpg",
-  "thumbnail_url": "http://localhost:3000/uploads/thumbnails/abc123_thumb.jpg",
-  "region_id": "KR-11-680",
-  "uploaded_at": "2025-11-14T10:30:00.000Z"
-}
-```
-
-**Error Responses:**
-- `400`: No file uploaded, missing region_id, or invalid file type
-- `413`: File too large (> 10 MB)
-- `500`: Server error
-
-## Directory Structure
-
-```
-backend/
-├── server.js           # Main server file
-├── package.json        # Dependencies
-├── data/              # GeoJSON pack files
-│   └── KR_boundaries.geojson
-│   └── US_boundaries.geojson
-│   └── JP_boundaries.geojson
-└── uploads/           # Uploaded photos (auto-created)
-    └── thumbnails/    # Generated thumbnails
-```
-
-## Adding GeoJSON Packs
-
-Place GeoJSON files in the `data/` directory with the naming convention:
-```
-{COUNTRY_CODE}_boundaries.geojson
-```
-
-For example:
-- `KR_boundaries.geojson` for South Korea
-- `US_boundaries.geojson` for United States
-- `JP_boundaries.geojson` for Japan
-
-## Environment Variables
-
-- `PORT`: Server port (default: 3000)
-- `NODE_ENV`: Environment mode (development/production)
-
-## Testing
-
-Test the health endpoint:
-```bash
-curl http://localhost:3000/health
-```
-
-Test GeoJSON endpoint:
-```bash
-curl http://localhost:3000/api/geojson/KR
-```
-
-Test photo upload:
-```bash
-curl -X POST http://localhost:3000/api/photos \
-  -F "file=@photo.jpg" \
-  -F "region_id=KR-11-680"
-```
-
-## Production Deployment
-
-1. Set `NODE_ENV=production`
-2. Configure CORS origin to your Flutter app domain
-3. Use a reverse proxy (nginx) for HTTPS
-4. Consider using S3 or CDN for photo storage
-5. Set up proper logging and monitoring
+자동 검사로 반복 전송, 계정 격리, 삭제 보존, DB 갱신과 실패 시 롤백을 확인합니다. 실제 서버 배포, HTTPS, 운영 백업, 로그인 요청 제한과 모바일 복원은 이어서 준비해야 합니다. [전체 진행 상황](../PROGRESS.md)을 참고하세요.

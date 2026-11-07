@@ -12,9 +12,16 @@ export default function RootLayout() {
   const ready = useAppStore((s) => s.ready),
     error = useAppStore((s) => s.error);
   useEffect(() => {
-    void useAppStore.getState().initialize();
+    const requestBackup = () => {
+      void useAppStore.getState().backupVisits(false);
+    };
+    void useAppStore.getState().initialize().then(requestBackup);
     const subscription = AppState.addEventListener('change', (state) => {
-      const operation = onAppStateChange(state).then(() => useAppStore.getState().refresh());
+      const operation = onAppStateChange(state)
+        .then(() => useAppStore.getState().refresh())
+        .then(() => {
+          if (state === 'active') requestBackup();
+        });
       void operation.catch(() =>
         useAppStore.setState({ error: '위치 상태를 확인하지 못했습니다. 설정을 확인해 주세요.' }),
       );
@@ -26,6 +33,7 @@ export default function RootLayout() {
         checking = true;
         void checkTrackingHealth()
           .then(() => useAppStore.getState().refresh())
+          .then(requestBackup)
           .catch(() =>
             useAppStore.setState({
               error: '위치 상태를 확인하지 못했습니다. 설정을 확인해 주세요.',

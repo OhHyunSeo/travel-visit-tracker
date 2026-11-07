@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
-import { Modal, Platform, ScrollView, Text, TextInput, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { BackHandler, Modal, Platform, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { regions, regionById, regionPack } from '../../src/data/regions';
 import { collectionStats } from '../../src/domain/collection';
 import { useAppStore } from '../../src/store/useAppStore';
@@ -15,6 +15,16 @@ export default function MapScreen() {
   const [selected, select] = useState<string | null>(null),
     [searching, search] = useState(false),
     [query, setQuery] = useState('');
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS !== 'android' || selected === null) return;
+      const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+        select(null);
+        return true;
+      });
+      return () => subscription.remove();
+    }, [selected]),
+  );
   const stats = useMemo(() => collectionStats(app.visits, packIds), [app.visits]);
   const region = selected ? regionById.get(selected) : undefined;
   const visit = app.visits.find((v) => v.regionId === selected);
