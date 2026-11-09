@@ -115,3 +115,17 @@ python3 -B qa/map-transport/ios-maplibre/action_delivery.py verify \
 캡처는 별도 QA 앱을 실행하고 진행 파일을 읽은 뒤 취소 신호, 같은 신호, 재로딩 신호를 차례대로 전달합니다. 각 단계의 응답과 마지막 프로세스 조회가 최초 PID와 일치해야 통과합니다. 결과 폴더에는 신호 종류와 앱 관측값을 저장합니다. 중간에 실패하면 폴더를 보존하고 별도 QA 앱과 그 실행 기록을 확인한 뒤 다음 시도를 준비합니다. 시험 앱 설치와 정리는 별도로 진행합니다.
 
 11월 7일 Mac의 모의 CoreDevice 검사 6개와 실제 아이폰 검사 1개를 통과했습니다. `3295925` 네이티브 소스로 새로 서명한 앱이 기존 scene에서 세 신호를 받았고, 앱 기록과 CoreDevice가 보고한 PID가 일치했습니다. 실제 SDK HTTPS 요청에 취소·재로딩을 연결하는 작업이 다음 단계입니다.
+
+### HTTPS 요청을 진행 중에 취소하는 검사
+
+`tls-cancel-retry` 모드는 인증서가 고정된 합성 HTTPS 서버에서 스타일을 읽고 타일 본문 네 개가 보류될 때까지 기다립니다. 첫 신호가 오면 MapLibre에 빈 스타일을 지정합니다. Mac은 활성 요청과 대기 요청이 줄어든 앱 기록을 읽고, 서버가 기존 본문 네 개를 전송 없이 닫았는지 확인합니다. 중복 취소를 거절한 뒤 Mac이 서버의 보류 상태를 풀면, 마지막 신호로 같은 스타일을 다시 요청합니다.
+
+아이폰에서 도달할 수 있는 사설 주소에 새 HTTPS fixture를 열고 별도 시험 앱을 설치합니다. Mac의 캡처 도구에는 그 주소와 시험 서버의 공개 DER 인증서, 대상 기기 식별자를 지정합니다.
+
+```sh
+python3 -B qa/map-transport/ios-maplibre/tls_cancel_capture.py \
+  --device "$TP_QA_DEVICE" --origin "$TP_QA_ORIGIN" --certificate "$TP_QA_LEAF_DER" \
+  docs/test-results/sdk-tls-cancel-device-run
+```
+
+캡처 도구는 HTTPS 서버에 제어 요청을 쓰기 전에 인증서와 HTTP/1.1을 대조합니다. 결과 검증은 같은 PID의 신호 세 건, 서버의 이전 요청 종료와 같은 타일 재요청, 앱의 예약 장부를 함께 확인합니다. 검사 전에 시험 앱과 원래 앱의 설치 정보를 확인하고, 끝난 뒤에는 시험 파일을 대조해 보관한 후 이번에 설치한 시험 앱을 정리합니다.

@@ -17,6 +17,7 @@ python3 -m unittest discover -s qa/map-transport/ios-maplibre -p 'test_tls_resul
 python3 -m unittest discover -s qa/map-transport/ios-maplibre -p 'test_tls_queue_result.py'
 python3 -m unittest discover -s qa/map-transport/ios-maplibre -p 'test_fixture_action.py'
 python3 -m unittest discover -s qa/map-transport/ios-maplibre -p 'test_action_delivery.py'
+python3 -m unittest discover -s qa/map-transport/ios-maplibre -p 'test_tls_cancel*.py'
 node --check backend/server.js
 npm --prefix backend test
 (
