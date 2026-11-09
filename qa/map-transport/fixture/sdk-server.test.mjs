@@ -38,6 +38,40 @@ function openHTTPS(origin, path, options = {}) {
   });
 }
 
+test("policy style exposes independent origin, path and redirect probes", async t => {
+  const target = await createSDKFixture({ tls: tlsMaterials(), mixed: true });
+  t.after(() => target.close());
+  const source = await createSDKFixture({ tls: tlsMaterials(), mixed: true, policyTarget: target.origin });
+  t.after(() => source.close());
+  const styleResponse = await openHTTPS(source.origin, "/resource/style/mixed");
+  const style = JSON.parse(await styleResponse.body);
+  assert.deepEqual(Object.fromEntries(Object.entries(style.sources).map(([id, entry]) => [id, entry.tiles])), {
+    t: [`${source.origin}/resource/tile/m_2_0_{y}`],
+    p: [`${source.origin}/resource/tile/denied_{z}_{x}_{y}`],
+    h: [`${target.origin}/resource/tile/m_2_0_{y}`],
+  });
+  assert.deepEqual(style.layers.map(layer => layer.source), ["t", "p", "h"]);
+  const redirect = await openHTTPS(source.origin, "/resource/tile/m_2_0_0");
+  assert.equal(redirect.response.statusCode, 302);
+  assert.equal(redirect.response.headers.location, `${target.origin}/resource/tile/m_2_0_1`);
+  assert.equal((await redirect.body).length, 0);
+  const denied = await openHTTPS(source.origin, "/resource/tile/denied_0_0_0");
+  assert.equal(denied.response.statusCode, 404);
+  await denied.body;
+  assert.equal(source.stats().policyDeniedPathArrivals, 1);
+  assert.deepEqual(source.stats().requests.map(row => [row.path, row.status]),
+    [["/resource/style/mixed", 200], ["/resource/tile/m_2_0_0", 302]]);
+  assert.equal(target.stats().resourceCount, 0);
+});
+
+test("policy target stays on a distinct explicit private HTTPS port", async () => {
+  for (const policyTarget of ["http://127.0.0.1:2000", "https://example.invalid:2000",
+    "https://127.0.0.1:2000/", "https://127.0.0.1:2000?probe=1", "https://127.0.0.1:2000"]) {
+    await assert.rejects(createSDKFixture({ tls: tlsMaterials(), mixed: true, port: 2000, policyTarget }));
+  }
+  await assert.rejects(createSDKFixture({ tls: tlsMaterials(), policyTarget: "https://127.0.0.1:2000" }));
+});
+
 test("original indexed PNG is 256px with bounded decompressed and encoded bytes", () => {
   const tile = syntheticRasterTile();
   assert.ok(tile.length <= 256);

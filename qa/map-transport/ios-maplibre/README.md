@@ -141,3 +141,15 @@ python3 -B qa/map-transport/ios-maplibre/tls_mixed_capture.py \
 ```
 
 혼합 전용 장부는 요청당 1,024바이트, 요청 16회와 타일 8회를 상한으로 둡니다. 시험 스타일은 원본 합성 타일, 글꼴 한 글자, 해상도에 맞는 아이콘 스프라이트 한 쌍을 요청합니다.
+
+### 허용 목록과 리다이렉트 검사
+
+같은 사설 IP의 다른 포트에 HTTPS `--mixed` 서버를 두 개 시작합니다. 두 서버에 같은 시험 인증서를 사용하고, 먼저 띄운 서버의 출처를 두 번째 서버의 `--policy-target`으로 지정합니다. 두 번째 서버의 스타일은 허용되지 않은 출처와 경로에 각각 타일을 요청하고, 허용 경로에서는 첫 번째 서버를 목적지로 하는 302 응답을 받습니다.
+
+```sh
+python3 -B qa/map-transport/ios-maplibre/tls_policy_capture.py \
+  --device "$TP_QA_DEVICE" --origin "$TP_QA_ORIGIN" --target "$TP_QA_TARGET" \
+  --certificate "$TP_QA_LEAF_DER" docs/test-results/sdk-policy-device-run
+```
+
+캡처는 앱을 한 번 실행해 같은 PID의 장부와 두 서버의 기록을 대조합니다. SDK가 리다이렉트 원본을 다시 요청했는지는 최초 거절 뒤 최소 2.5초의 관찰 구간에서 기록합니다. 다른 포트의 목적지와 허용하지 않은 경로에 도착한 리소스는 0건이어야 합니다.

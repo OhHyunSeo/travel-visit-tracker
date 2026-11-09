@@ -245,6 +245,46 @@ class PrivateTLSTests(unittest.TestCase):
             self.assertEqual(reopened["native"]["ledger"]["reservedBytes"], 2048)
             self.assertEqual(len(server.requests), 2)
 
+    def test_mixed_wrong_origin_and_path_never_open_a_socket_or_reserve(self):
+        with self.fixture() as source, self.fixture() as target:
+            origin = f"https://127.0.0.1:{source.port}"
+            for url in (origin + "/resource/tile/denied_0_0_0",
+                        f"https://127.0.0.1:{target.port}/resource/tile/m_2_0_0",
+                        "https://example.invalid:443/resource/tile/m_2_0_0"):
+                with self.subTest(url=url):
+                    result = self.run_driver(origin, url, mode="mixed")
+                    self.assertNotEqual(result["error"], 0)
+                    native = result["native"]
+                    self.assertEqual(native["blockedBeforeDispatch"], 1)
+                    self.assertEqual(native["httpRequestSendsSettled"], 0)
+                    self.assertEqual(native["ledger"]["reservedBytes"], 0)
+            self.assertEqual((source.accepted, target.accepted), (0, 0))
+
+    def test_mixed_redirect_stops_after_one_tls_request_and_keeps_its_charge(self):
+        with self.fixture() as target:
+            for code, location in ((302, f"https://127.0.0.1:{target.port}/resource/tile/m_2_0_1"),
+                                   (307, "/resource/tile/m_2_0_1")):
+                with self.subTest(code=code):
+                    response = (f"HTTP/1.1 {code} Redirect\r\nLocation: {location}\r\n"
+                                "Content-Length: 0\r\nConnection: close\r\n\r\n").encode()
+                    with self.fixture(response=response) as source:
+                        origin = f"https://127.0.0.1:{source.port}"
+                        result = self.run_driver(origin, origin + "/resource/tile/m_2_0_0", mode="mixed",
+                                                 ledger=self.root / f"mixed-redirect-{code}.json")
+                        native = result["native"]
+                        self.assertNotEqual(result["error"], 0)
+                        self.assertEqual(result["length"], 0)
+                        self.assertEqual(native["ledger"]["reservedBytes"], 1024)
+                        self.assertEqual(native["ledger"]["unresolved"], [])
+                        self.assertEqual((native["started"], native["released"], native["httpRequestSendsSettled"]), (1, 1, 1))
+                        self.assertEqual(native["lastExchange"]["finishCode"], 6)
+                        self.assertIs(native["lastExchange"]["trustAccepted"], True)
+                        self.assertEqual(native["lastExchange"]["alpn"], "http/1.1")
+                        self.assertEqual(source.accepted, 1)
+                        self.assertEqual([row.split(b"\r\n", 1)[0] for row in source.requests],
+                                         [b"GET /resource/tile/m_2_0_0 HTTP/1.1"])
+            self.assertEqual(target.accepted, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

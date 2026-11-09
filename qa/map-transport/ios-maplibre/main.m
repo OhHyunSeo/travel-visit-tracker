@@ -11,7 +11,7 @@ static BOOL TPStarted, TPRunning, TPPriorIdle;
 static NSString *const TPEmptyStyleJSON = @"{\"version\":8,\"sources\":{},\"layers\":[]}";
 
 static BOOL TPTLSStage(NSString *stage) {
-    return [@[@"tls-render", @"tls-queue", @"tls-cancel-retry", @"tls-mixed"] containsObject:stage];
+    return [@[@"tls-render", @"tls-queue", @"tls-cancel-retry", @"tls-mixed", @"tls-policy"] containsObject:stage];
 }
 
 static BOOL TPCancellationStage(NSString *stage) {
@@ -58,6 +58,9 @@ static NSDictionary *TPControl(NSString *path) {
 @property NSDictionary *waitingServer, *cancelledSnapshot, *cancelledServer, *releaseControl;
 @property NSDictionary *emptyStyleEvidence;
 @property NSDictionary *mixedStyleEvidence;
+@property NSString *policyTarget;
+@property NSUInteger policyOriginAttempts, policyPathAttempts, policyRedirectAttempts;
+@property NSTimeInterval policyObservationStarted;
 @property NSData *fixtureCertificate;
 @property NSString *runID;
 @property TPFixtureActionGate *actionGate;
@@ -91,6 +94,7 @@ static NSDictionary *TPControl(NSString *path) {
     if ([self.stage isEqual:@"action-gate"]) scope = @"fixture URL delivery only; no SDK, transport, cancellation or reload acceptance";
     else if ([self.stage isEqual:@"tls-cancel-retry"]) scope = @"isolated pinned HTTPS HTTP1 SDK style cancellation and manual reload";
     else if ([self.stage isEqual:@"tls-mixed"]) scope = @"isolated pinned HTTPS HTTP1 SDK style, tile, glyph and sprite requests";
+    else if ([self.stage isEqual:@"tls-policy"]) scope = @"isolated pinned HTTPS SDK origin, path and redirect refusal";
     else if (TPTLSStage(self.stage)) scope = @"isolated pinned private-fixture HTTPS HTTP1 SDK; no cancel/restart, HTTP2, RN JS bridge, provider or OS-byte acceptance";
     TPWrite(@{@"complete": @YES, @"pass": @(pass), @"reason": reason,
               @"cases": self.cases ?: @[], @"stage": self.stage ?: @"invalid", @"process": @(NSProcessInfo.processInfo.processIdentifier),
@@ -100,6 +104,7 @@ static NSDictionary *TPControl(NSString *path) {
               @"cancellationTrigger": TPCancellationStage(self.stage) ? @"local-style-json" : @"none",
               @"trialPhase": @(self.phase), @"emptyStyleEvidence": self.emptyStyleEvidence ?: @{},
               @"transforms": @(transforms), @"rewrittenStyles": @(rewrites), @"externalTileRequests": @(self.externalTileRequests),
+              @"policyAttempts": [self policyAttempts],
               @"delegatePreserved": @(self.transform && MLNNetworkConfiguration.sharedManager.delegate == self.transform),
               @"delegateClass": self.transform ? NSStringFromClass(self.transform.class) : @"none",
               @"scope": scope});
@@ -116,6 +121,12 @@ static NSDictionary *TPControl(NSString *path) {
     TPOrigin = env[@"QA_SERVER_ORIGIN"];
     self.stage = env[@"QA_STAGE"] ?: @"queue";
     BOOL tlsTrial = TPTLSStage(self.stage);
+    self.policyTarget = env[@"QA_POLICY_TARGET"];
+    BOOL policyTrial = [self.stage isEqual:@"tls-policy"];
+    BOOL policyOK = !self.policyTarget;
+    if (policyTrial && self.policyTarget.length && [TPTransport safePrivateFixtureTLSOrigin:self.policyTarget] && ![self.policyTarget isEqual:TPOrigin]) {
+        policyOK = [[NSURL URLWithString:self.policyTarget].host isEqual:[NSURL URLWithString:TPOrigin].host];
+    } else if (policyTrial) policyOK = NO;
     BOOL actionTrial = [self.stage isEqual:@"action-gate"];
     BOOL usesActionGate = actionTrial || [self.stage isEqual:@"tls-cancel-retry"];
     self.fixtureCertificate = [TPTransport fixtureCertificateFromBase64:env[@"QA_TLS_LEAF_DER_BASE64"]];
@@ -130,7 +141,7 @@ static NSDictionary *TPControl(NSString *path) {
     BOOL originOK = actionTrial ? !env[@"QA_SERVER_ORIGIN"] && !env[@"QA_TLS_LEAF_DER_BASE64"] : (tlsTrial ? [TPTransport safePrivateFixtureTLSOrigin:TPOrigin] && self.fixtureCertificate : [TPTransport safeOrigin:TPOrigin] && !env[@"QA_TLS_LEAF_DER_BASE64"]);
     BOOL signalsOK = usesActionGate ? self.actionGate != nil : !env[@"QA_FIXTURE_CANCEL_NONCE"] && !env[@"QA_FIXTURE_RELOAD_NONCE"];
     BOOL supportedStage = tlsTrial || actionTrial || [@[@"queue", @"cancel-retry"] containsObject:self.stage];
-    if (!valid || !fresh || !supportedStage || !originOK || !signalsOK) { TPRunDirectory = nil; [self finish:NO reason:@"unsafe or reused inputs"]; return; }
+    if (!valid || !fresh || !supportedStage || !originOK || !signalsOK || !policyOK) { TPRunDirectory = nil; [self finish:NO reason:@"unsafe or reused inputs"]; return; }
     if (![[NSFileManager defaultManager] createDirectoryAtURL:TPRunDirectory withIntermediateDirectories:YES attributes:nil error:nil]) { TPRunDirectory = nil; [self finish:NO reason:@"run directory not ready"]; return; }
     self.cases = [NSMutableArray new];
     if (usesActionGate) self.actionAttempts = [NSMutableArray new];
@@ -224,16 +235,17 @@ static NSDictionary *TPControl(NSString *path) {
     BOOL tlsCancel = [self.stage isEqual:@"tls-cancel-retry"];
     BOOL tlsQueue = [self.stage isEqual:@"tls-queue"];
     BOOL tlsMixed = [self.stage isEqual:@"tls-mixed"];
+    BOOL tlsPolicy = [self.stage isEqual:@"tls-policy"];
     NSURL *ledgerURL = [TPRunDirectory URLByAppendingPathComponent:tlsTrial ? @"tls-ledger.json" : (cancelTrial ? @"cancel-ledger.json" : @"render-ledger.json")];
     BOOL configured;
-    if (tlsMixed) configured = [TPTransport configureMixedPrivateFixtureTLSOrigin:TPOrigin ledgerURL:ledgerURL certificate:self.fixtureCertificate];
+    if (tlsMixed || tlsPolicy) configured = [TPTransport configureMixedPrivateFixtureTLSOrigin:TPOrigin ledgerURL:ledgerURL certificate:self.fixtureCertificate];
     else if (tlsTrial) configured = [TPTransport configurePrivateFixtureTLSOrigin:TPOrigin ledgerURL:ledgerURL maxRequests:32 maxTiles:16 maxReservedBytes:8192 certificate:self.fixtureCertificate];
     else configured = [TPTransport configureOrigin:TPOrigin ledgerURL:ledgerURL maxRequests:cancelTrial ? 64 : 32 maxTiles:cancelTrial ? 32 : 16 maxReservedBytes:cancelTrial ? 16384 : 8192];
     if (!configured) { [self finish:NO reason:@"ledger not ready"]; return; }
     self.phase = tlsCancel ? 9 : (cancelTrial ? 10 : ((tlsQueue || tlsMixed) ? 2 : 1));
     // Explicit style avoids constructing a default network style before the gate.
     BOOL largeViewport = cancelTrial || tlsQueue || tlsMixed;
-    NSString *stylePath = tlsMixed ? @"/resource/style/mixed" : (cancelTrial ? @"/resource/style/held" : (tlsQueue ? @"/resource/style/multi-entry" : @"/resource/style/entry"));
+    NSString *stylePath = (tlsMixed || tlsPolicy) ? @"/resource/style/mixed" : (cancelTrial ? @"/resource/style/held" : (tlsQueue ? @"/resource/style/multi-entry" : @"/resource/style/entry"));
     self.map = [[MLNMapView alloc] initWithFrame:CGRectMake(0, 120, largeViewport ? 1024 : self.view.bounds.size.width, largeViewport ? 1024 : 300) styleURL:[NSURL URLWithString:[TPOrigin stringByAppendingString:stylePath]]];
     self.map.delegate = self; self.map.prefetchesTiles = NO;
     self.map.shouldRequestAuthorizationToUseLocationServices = NO;
@@ -248,12 +260,31 @@ static NSDictionary *TPControl(NSString *path) {
 - (void)observedTransformURL:(NSString *)url {
     @synchronized(self) {
         self.transforms++;
+        if ([self.stage isEqual:@"tls-policy"]) {
+            if ([url isEqual:[self.policyTarget stringByAppendingString:@"/resource/tile/m_2_0_0"]]) self.policyOriginAttempts++;
+            else if ([url isEqual:[TPOrigin stringByAppendingString:@"/resource/tile/denied_0_0_0"]]) self.policyPathAttempts++;
+            else if ([url isEqual:[TPOrigin stringByAppendingString:@"/resource/tile/m_2_0_0"]]) self.policyRedirectAttempts++;
+        }
         if ([url isEqual:[TPOrigin stringByAppendingString:[self.stage isEqual:@"tls-queue"] ? @"/resource/style/multi" : @"/resource/style/sdk"]]) self.rewrittenStyles++;
         NSURLComponents *parts = [NSURLComponents componentsWithString:url];
         if (self.phase == 3 && [parts.scheme isEqual:@"http"] && [parts.host isEqual:@"example.invalid"] && (!parts.port || parts.port.integerValue == 80) && [parts.path isEqual:@"/resource/tile/0_0_0"] && !parts.query && !parts.fragment) self.externalTileRequests++;
     }
 }
+- (NSDictionary *)policyAttempts {
+    @synchronized(self) {
+        return @{@"origin": @(self.policyOriginAttempts), @"path": @(self.policyPathAttempts),
+                 @"redirectSource": @(self.policyRedirectAttempts)};
+    }
+}
 - (void)mapView:(MLNMapView *)mapView didFinishLoadingStyle:(MLNStyle *)style {
+    if ([self.stage isEqual:@"tls-policy"]) {
+        self.styleLoaded = YES;
+        for (NSString *identifier in @[@"t", @"p", @"h"]) {
+            if (![[style sourceWithIdentifier:identifier] isKindOfClass:MLNRasterTileSource.class] ||
+                ![[style layerWithIdentifier:identifier] isKindOfClass:MLNRasterStyleLayer.class]) self.styleLoaded = NO;
+        }
+        return;
+    }
     if ([self.stage isEqual:@"tls-mixed"]) {
         self.mixedStyleEvidence = @{@"rasterSource": @([[style sourceWithIdentifier:@"t"] isKindOfClass:MLNRasterTileSource.class]),
                                     @"rasterLayer": @([[style layerWithIdentifier:@"t"] isKindOfClass:MLNRasterStyleLayer.class]),
@@ -432,11 +463,32 @@ static NSDictionary *TPControl(NSString *path) {
         [self finish:MLNNetworkConfiguration.sharedManager.delegate == self.transform reason:@"SDK HTTPS mixed resource check completed"];
     }
 }
+- (void)inspectTLSPolicy:(NSDictionary *)native {
+    NSDictionary *attempts = [self policyAttempts];
+    NSUInteger started = [native[@"started"] unsignedIntegerValue];
+    NSDictionary *last = native[@"lastExchange"];
+    // The gate reserves only the allowed style and redirect source. The latter
+    // fails at the HTTP status line, while the other two URLs never dispatch.
+    if (!self.styleLoaded || ![native[@"ledgerOK"] isEqual:@YES] || ![native[@"active"] isEqual:@0] ||
+        ![native[@"pending"] isEqual:@0] || [native[@"blockedBeforeDispatch"] unsignedIntegerValue] < 2 ||
+        ![attempts[@"origin"] unsignedIntegerValue] || ![attempts[@"path"] unsignedIntegerValue] ||
+        ![attempts[@"redirectSource"] unsignedIntegerValue] || started < 2 ||
+        ![native[@"released"] isEqual:@(started)] || ![native[@"httpRequestSendsSettled"] isEqual:@(started)] ||
+        ![native[@"tlsVerifiedExchanges"] isEqual:@1] || ![last[@"finishCode"] isEqual:@6]) return;
+    NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+    if (!self.policyObservationStarted) self.policyObservationStarted = now;
+    NSUInteger elapsed = (NSUInteger)((now - self.policyObservationStarted) * 1000);
+    if (elapsed < 2500) return;
+    [self.cases addObject:@{@"name": @"SDK HTTPS policy refusal", @"pass": @YES, @"styleLoaded": @YES,
+                           @"attempts": attempts, @"observationMs": @(elapsed), @"native": native}];
+    [self finish:MLNNetworkConfiguration.sharedManager.delegate == self.transform reason:@"SDK HTTPS policy observation completed"];
+}
 - (void)inspectProgress {
     if (self.finishing) return;
     if ([self.stage isEqual:@"cancel-retry"]) { [self inspectCancellation]; return; }
     NSDictionary *native = TPTransport.snapshot;
     if ([self.stage isEqual:@"tls-mixed"]) { [self inspectTLSMixed:native]; return; }
+    if ([self.stage isEqual:@"tls-policy"]) { [self inspectTLSPolicy:native]; return; }
     if ([self.stage isEqual:@"tls-cancel-retry"]) { [self inspectTLSCancellation:native]; return; }
     if ([self.stage isEqual:@"tls-render"]) {
         if (self.phase == 1 && self.styleLoaded && self.fullyRendered && [self idleNative:native] && [native[@"started"] isEqual:@2] && [native[@"httpRequestSendsSettled"] isEqual:@2] && [native[@"tlsVerifiedExchanges"] isEqual:@2] && [native[@"ledger"][@"tiles"] isEqual:@1]) {

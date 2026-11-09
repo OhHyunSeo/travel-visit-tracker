@@ -102,6 +102,18 @@ export function syntheticMixedStyle(origin) {
   }));
 }
 
+function syntheticPolicyStyle(origin, target) {
+  const templates = {
+    t: `${origin}/resource/tile/m_2_0_{y}`,
+    p: `${origin}/resource/tile/denied_{z}_{x}_{y}`,
+    h: `${target}/resource/tile/m_2_0_{y}`,
+  };
+  const sources = Object.fromEntries(Object.entries(templates).map(([id, path]) =>
+    [id, { type: "raster", tiles: [path], tileSize: 256, minzoom: 0, maxzoom: 0 }]));
+  return Buffer.from(JSON.stringify({ version: 8, sources,
+    layers: Object.keys(sources).map(id => ({ id, type: "raster", source: id })) }));
+}
+
 function spriteImage(ratio) {
   const size = 8 * ratio;
   const header = Buffer.alloc(13);
@@ -182,17 +194,24 @@ function mixedAssetBodies() {
 }
 
 /** Actual SDK fixture, no proxy, external requests, user files or real map data. */
-export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan = false, tls, mixed = false } = {}) {
+export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan = false, tls, mixed = false, policyTarget } = {}) {
   if (!isAllowedFixtureHost(host, allowLan) || host === "::1" || host === "localhost")
     throw new Error("Use a literal loopback or explicitly allowed private IPv4 address");
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invalid port");
   const tlsOptions = fixtureTLSOptions(tls);
   if (typeof mixed !== "boolean" || (mixed && !tlsOptions)) throw new Error("Mixed SDK fixture requires explicit TLS");
+  if (policyTarget !== undefined) {
+    const target = new URL(policyTarget);
+    if (!mixed || !tlsOptions || target.protocol !== "https:" || target.hostname !== host || !target.port || target.origin !== policyTarget || Number(target.port) === port)
+      throw new Error("Policy fixture requires a distinct HTTPS port on the same private address");
+  }
   const tile = syntheticRasterTile();
   const mixedAssets = mixed ? mixedAssetBodies() : new Map();
   const requests = [], pending = new Set(), timers = new Set(), heldBodies = new Map();
   let origin, active = 0, maxActive = 0, closed = false, heldReleased = false;
-  const stats = () => ({ active, maxActive, heldActive: heldBodies.size, heldReleased, resourceCount: requests.length, requests: requests.map(x => ({ ...x })) });
+  let policyDeniedPathArrivals = 0;
+  const stats = () => ({ active, maxActive, heldActive: heldBodies.size, heldReleased, resourceCount: requests.length, requests: requests.map(x => ({ ...x })),
+    ...(policyTarget ? { policyDeniedPathArrivals } : {}) });
   const handler = (request, response) => {
     // https installs its own secureConnection listener before ours. Check again
     // at the handler boundary so already-buffered HTTP cannot reach any route.
@@ -213,8 +232,12 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
     }
     if (request.url === "/reset") {
       if (active) return json(409, { error: "Resources active" });
-      requests.length = 0; maxActive = 0; heldReleased = false;
+      requests.length = 0; maxActive = 0; heldReleased = false; policyDeniedPathArrivals = 0;
       return json(200, { reset: true });
+    }
+    if (policyTarget && request.url === "/resource/tile/denied_0_0_0") {
+      policyDeniedPathArrivals++;
+      return json(404, { error: "Policy path reached the fixture" });
     }
     const mixedStyle = mixed && request.url === "/resource/style/mixed";
     const style = mixedStyle || ["/resource/style/sdk", "/resource/style/multi", "/resource/style/blocked", "/resource/style/held", "/resource/style/empty"].includes(request.url);
@@ -223,18 +246,21 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
     const mixedTile = mixed && /^\/resource\/tile\/m_2_[0-3]_[0-3]$/.test(request.url);
     const asset = mixedAssets.get(request.url);
     if (!style && !multiTile && !heldTile && !mixedTile && !asset && request.url !== "/resource/tile/0_0_0") return json(404, { error: "Unknown synthetic SDK resource" });
-    const body = mixedStyle ? syntheticMixedStyle(origin)
+    const redirect = policyTarget && request.url === "/resource/tile/m_2_0_0";
+    const body = redirect ? Buffer.alloc(0)
+      : mixedStyle ? (policyTarget ? syntheticPolicyStyle(origin, policyTarget) : syntheticMixedStyle(origin))
       : request.url === "/resource/style/empty" ? Buffer.from('{"version":8,"sources":{},"layers":[]}')
       : style ? syntheticRasterStyle(origin, request.url.endsWith("/blocked"), request.url.endsWith("/multi"), request.url.endsWith("/held")) : (asset?.body ?? tile);
     if (body.length > (mixedStyle ? 1024 : 256)) return json(500, { error: "Synthetic reservation exceeded" });
     // Sprite documents finish before the barrier so SDK style loading cannot deadlock on them.
-    const hold = heldTile || mixedTile || asset?.hold === true;
+    const hold = !redirect && (heldTile || mixedTile || asset?.hold === true);
     const entry = {
       path: request.url, bytes: body.length, bytesWritten: 0, finished: false,
       held: hold, closedBeforeFinish: false,
       ua: request.headers["user-agent"] ?? null,
       receivedAuthHeader: request.headers.authorization !== undefined,
       cookieHeader: request.headers.cookie !== undefined,
+      ...(policyTarget ? { status: redirect ? 302 : 200 } : {}),
       ...(tlsOptions ? { tlsProtocol: request.socket.getProtocol(), alpn: request.socket.alpnProtocol } : {}),
     };
     requests.push(entry); pending.add(response);
@@ -250,7 +276,8 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
     response.once("finish", () => { entry.finished = true; settle(); });
     response.once("close", () => { entry.closedBeforeFinish = !entry.finished; settle(); });
     const type = style ? "application/json" : (asset?.type ?? "image/png");
-    response.writeHead(200, { "Content-Type": type, "Content-Length": body.length, "Cache-Control": "no-store" });
+    response.writeHead(redirect ? 302 : 200, { "Content-Type": type, "Content-Length": body.length, "Cache-Control": "no-store",
+      ...(redirect ? { Location: `${policyTarget}/resource/tile/m_2_0_1` } : {}) });
     const sendBody = () => {
       if (settled || response.destroyed) return;
       heldBodies.delete(response);
@@ -283,7 +310,11 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
     server.listen(port, host, resolve);
   });
   origin = `${tlsOptions ? "https" : "http"}://${host}:${server.address().port}`;
-  if (syntheticRasterStyle(origin).length > 256) { server.close(); throw new Error("Style exceeds fixture reservation"); }
+  if (origin === policyTarget || syntheticRasterStyle(origin).length > 256 ||
+      (policyTarget && syntheticPolicyStyle(origin, policyTarget).length > 1024)) {
+    server.close();
+    throw new Error("Policy target or style reservation is invalid");
+  }
   return {
     origin, stats,
     close: async () => {
@@ -308,8 +339,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const key = args[index];
     if (key === "--allow-lan" && options.allowLan === undefined) options.allowLan = true;
     else if (key === "--mixed" && options.mixed === undefined) options.mixed = true;
+    else if (key === "--policy-target" && options.policyTarget === undefined && args[index + 1] !== undefined) options.policyTarget = args[++index];
     else if (["--host", "--port", "--tls-key", "--tls-cert"].includes(key) && options[key.slice(2)] === undefined && args[index + 1] !== undefined) options[key.slice(2)] = args[++index];
-    else throw new Error("Usage: sdk-server.mjs [--host IPv4] [--port 0] [--allow-lan] [--tls-key PATH --tls-cert PATH] [--mixed]");
+    else throw new Error("Usage: sdk-server.mjs [--host IPv4] [--port 0] [--allow-lan] [--tls-key PATH --tls-cert PATH] [--mixed] [--policy-target HTTPS_ORIGIN]");
   }
   if (options.port !== undefined) options.port = Number(options.port);
   if ((options["tls-key"] !== undefined) !== (options["tls-cert"] !== undefined)) throw new Error("Both TLS fixture input paths are required");
