@@ -129,3 +129,15 @@ python3 -B qa/map-transport/ios-maplibre/tls_cancel_capture.py \
 ```
 
 캡처 도구는 HTTPS 서버에 제어 요청을 쓰기 전에 인증서와 HTTP/1.1을 대조합니다. 결과 검증은 같은 PID의 신호 세 건, 서버의 이전 요청 종료와 같은 타일 재요청, 앱의 예약 장부를 함께 확인합니다. 검사 전에 시험 앱과 원래 앱의 설치 정보를 확인하고, 끝난 뒤에는 시험 파일을 대조해 보관한 후 이번에 설치한 시험 앱을 정리합니다.
+
+### 글꼴과 아이콘을 포함한 혼합 HTTPS 요청 검사
+
+합성 서버를 `--mixed` 옵션과 TLS 키·인증서로 시작합니다. 서버는 스타일과 스프라이트 JSON·PNG를 먼저 전달할 수 있고, 타일과 글꼴은 본문을 보류합니다. Mac 캡처는 아이폰의 대기 기록과 서버의 열린 응답 네 개가 일치할 때만 보류를 풉니다. 마지막에는 같은 PID의 결과와 장부, 서버가 완료한 리소스 10개를 대조합니다.
+
+```sh
+python3 -B qa/map-transport/ios-maplibre/tls_mixed_capture.py \
+  --device "$TP_QA_DEVICE" --origin "$TP_QA_ORIGIN" --certificate "$TP_QA_LEAF_DER" \
+  docs/test-results/sdk-mixed-device-run
+```
+
+혼합 전용 장부는 요청당 1,024바이트, 요청 16회와 타일 8회를 상한으로 둡니다. 시험 스타일은 원본 합성 타일, 글꼴 한 글자, 해상도에 맞는 아이콘 스프라이트 한 쌍을 요청합니다.
