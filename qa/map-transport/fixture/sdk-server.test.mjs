@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync, symlinkSync, linkSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inflateSync } from "node:zlib";
-import { createSDKFixture, readTLSFixtureFile, syntheticRasterStyle, syntheticRasterTile } from "./sdk-server.mjs";
+import { createSDKFixture, readTLSFixtureFile, syntheticMixedStyle, syntheticRasterStyle, syntheticRasterTile } from "./sdk-server.mjs";
 
 let certificateDirectory, certificate;
 function tlsMaterials() {
@@ -275,6 +275,126 @@ test("TLS held-body cancellation, release and same-path retry preserve cancelled
   assert.deepEqual(fixture.stats().requests.map(entry => entry.path), [path, path]);
   assert.equal(fixture.stats().requests[0].finished, false);
   assert.equal(fixture.stats().requests[1].finished, true);
+});
+
+function readProtoFields(bytes) {
+  let cursor = 0;
+  const readVarint = () => {
+    let value = 0;
+    for (let shift = 0; shift < 28; shift += 7) {
+      assert.ok(cursor < bytes.length, "truncated fixture varint");
+      const octet = bytes[cursor++];
+      value += (octet & 127) * 2 ** shift;
+      if (octet < 128) return value;
+    }
+    assert.fail("fixture varint exceeds expected width");
+  };
+  const fields = new Map();
+  while (cursor < bytes.length) {
+    const tag = readVarint(), field = tag >>> 3;
+    assert.ok(field > 0 && !fields.has(field));
+    if ((tag & 7) === 0) fields.set(field, readVarint());
+    else {
+      assert.equal(tag & 7, 2);
+      const size = readVarint();
+      assert.ok(size <= bytes.length - cursor);
+      fields.set(field, bytes.subarray(cursor, cursor + size));
+      cursor += size;
+    }
+  }
+  return fields;
+}
+
+test("mixed HTTPS style names a valid local raster, glyph and both sprite densities", async t => {
+  const largestOrigin = "https://192.168.255.255:65535";
+  assert.ok(syntheticMixedStyle(largestOrigin).length <= 1024);
+  const fixture = await createSDKFixture({ tls: tlsMaterials(), mixed: true });
+  t.after(() => fixture.close());
+  const { origin } = fixture;
+  const requestStyle = await openHTTPS(origin, "/resource/style/mixed");
+  const styleBytes = await requestStyle.body;
+  assert.equal(styleBytes.length, Number(requestStyle.response.headers["content-length"]));
+  assert.equal(requestStyle.response.headers["content-type"], "application/json");
+  const style = JSON.parse(styleBytes);
+  assert.equal(style.sources.t.tiles[0], `${origin}/resource/tile/m_{z}_{x}_{y}`);
+  assert.equal(style.sources.t.minzoom, 2);
+  assert.equal(style.sources.t.maxzoom, 2);
+  const symbol = style.layers.find(layer => layer.type === "symbol");
+  assert.equal(style.sources[symbol.source].data.geometry.type, "Point");
+  assert.deepEqual(symbol.layout, { "icon-image": "mark", "text-field": "A", "text-font": ["QA"] });
+  assert.equal(style.glyphs, `${origin}/resource/glyph/{fontstack}/{range}.pbf`);
+  assert.equal(style.sprite, `${origin}/resource/sprite/mixed`);
+
+  for (const ratio of [1, 2]) {
+    const base = `/resource/sprite/mixed${ratio === 1 ? "" : "@2x"}`;
+    const index = await openHTTPS(origin, `${base}.json`);
+    const image = await openHTTPS(origin, `${base}.png`);
+    const indexBytes = await index.body, png = await image.body;
+    assert.ok(indexBytes.length <= 256 && png.length <= 256);
+    assert.equal(index.response.headers["content-type"], "application/json");
+    assert.equal(image.response.headers["content-type"], "image/png");
+    const size = 8 * ratio;
+    assert.deepEqual(JSON.parse(indexBytes), { mark: { width: size, height: size, x: 0, y: 0, pixelRatio: ratio } });
+    assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+    assert.equal(png.readUInt32BE(16), size);
+    assert.equal(png.readUInt32BE(20), size);
+    assert.equal(png[25], 6); // RGBA.
+    assert.equal(png.toString("ascii", 37, 41), "IDAT");
+    const pixels = inflateSync(png.subarray(41, 41 + png.readUInt32BE(33)));
+    assert.equal(pixels.length, size * (1 + 4 * size));
+    assert.ok(pixels.includes(255) && pixels.includes(0));
+  }
+
+  const paths = ["/resource/glyph/QA/0-255.pbf", "/resource/tile/m_2_0_0", "/resource/tile/m_2_0_1", "/resource/tile/m_2_1_0"];
+  const requests = await Promise.all(paths.map(path => openHTTPS(origin, path)));
+  const waiting = fixture.stats();
+  assert.equal(waiting.active, 4);
+  assert.equal(waiting.heldActive, 4);
+  assert.equal(waiting.heldReleased, false);
+  assert.ok(waiting.requests.slice(0, 5).every(row => row.finished && !row.held));
+  assert.ok(waiting.requests.slice(5).every(row => row.held && !row.finished && row.bytesWritten === 0));
+  const release = await openHTTPS(origin, "/release-held");
+  assert.deepEqual(JSON.parse(await release.body), { heldReleased: true, releasedOpenBodies: 4 });
+  const [glyph, ...tiles] = await Promise.all(requests.map(request => request.body));
+  assert.equal(requests[0].response.headers["content-type"], "application/x-protobuf");
+  assert.ok(glyph.length <= 256);
+  assert.ok(tiles.every(tile => tile.equals(syntheticRasterTile())));
+  const glyphs = readProtoFields(glyph), stack = readProtoFields(glyphs.get(1));
+  assert.deepEqual([...glyphs.keys()], [1]);
+  assert.equal(stack.get(1).toString(), "QA");
+  assert.equal(stack.get(2).toString(), "0-255");
+  const fields = readProtoFields(stack.get(3));
+  assert.equal(fields.get(1), 65);
+  assert.deepEqual([...fields.entries()].filter(([key]) => key !== 2), [[1, 65], [3, 5], [4, 7], [5, 0], [6, 14], [7, 6]]);
+  assert.equal(fields.get(2).length, (5 + 6) * (7 + 6));
+  assert.ok(fields.get(2).some(value => value > 192) && fields.get(2).some(value => value < 192));
+  const next = await openHTTPS(origin, "/resource/tile/m_2_1_1");
+  assert.deepEqual(await next.body, syntheticRasterTile());
+  assert.equal(fixture.stats().maxActive, 4);
+  assert.equal(fixture.stats().heldActive, 0);
+  assert.equal(fixture.stats().resourceCount, 10);
+});
+
+test("mixed resources require TLS opt-in and reject malformed aliases before recording", async t => {
+  await assert.rejects(createSDKFixture({ mixed: true }), /requires explicit TLS/);
+  await assert.rejects(createSDKFixture({ mixed: "true", tls: tlsMaterials() }), /requires explicit TLS/);
+  const ordinary = await createSDKFixture({ tls: tlsMaterials() });
+  t.after(() => ordinary.close());
+  const fixture = await createSDKFixture({ tls: tlsMaterials(), mixed: true });
+  t.after(() => fixture.close());
+  const denied = {
+    disabled: ["/resource/style/mixed", "/resource/glyph/QA/0-255.pbf", "/resource/sprite/mixed.json", "/resource/tile/m_2_0_0"],
+    aliases: ["/resource/style/mixed?x=1", "/resource/glyph/%51A/0-255.pbf", "/resource/glyph/QA/256-511.pbf", "/resource/glyph/QA/0-255.pbf/",
+      "/resource/sprite/mixed%402x.png", "/resource/sprite/mixed@3x.json", "/resource/sprite/mixed.png?x=1", "/resource/tile/m_2_4_0"],
+  };
+  for (const [target, paths] of [[ordinary, denied.disabled], [fixture, denied.aliases]]) {
+    for (const path of paths) {
+      const { response, body } = await openHTTPS(target.origin, path);
+      assert.equal(response.statusCode, 404, path);
+      await body;
+    }
+    assert.equal(target.stats().resourceCount, 0);
+  }
 });
 
 test("TLS refuses h2-only or absent ALPN and untrusted clients before any HTTP resource", async t => {

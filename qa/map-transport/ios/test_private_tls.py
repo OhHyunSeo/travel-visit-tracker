@@ -170,6 +170,81 @@ class PrivateTLSTests(unittest.TestCase):
             self.assertEqual(native["ledger"]["reservedBytes"], 256)
             self.assertEqual(len(server.requests), 0)
 
+    def test_mixed_body_limit_and_existing_default_limit(self):
+        for size in (1024, 1025):
+            response = (f"HTTP/1.1 200 OK\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n".encode()
+                        + b"x" * size)
+            with self.subTest(size=size), self.fixture(response=response) as server:
+                origin = f"https://127.0.0.1:{server.port}"
+                ledger = self.root / f"mixed-body-{size}.json"
+                result = self.run_driver(origin, origin + "/resource/style/mixed", mode="mixed", ledger=ledger)
+                self.assertTrue(result["configured"])
+                native = result["native"]
+                self.assertEqual(native["released"], 1)
+                self.assertEqual(native["httpRequestSendsSettled"], 1)
+                self.assertEqual(native["ledger"]["reservationBytes"], 1024)
+                self.assertEqual(native["ledger"]["reservedBytes"], 1024)
+                self.assertEqual(native["ledger"]["unresolved"], [])
+                accepted = size == 1024
+                self.assertEqual(result["error"] == 0, accepted)
+                self.assertEqual(result["length"], size if accepted else 0)
+                self.assertEqual(native["tlsVerifiedExchanges"], int(accepted))
+                self.assertEqual(native["lastExchange"]["finishCode"], 0 if accepted else 6)
+                if accepted:
+                    default = self.run_driver(origin, origin + "/resource/style/mixed", mode="gate-mixed-budget",
+                                              ledger=self.root / "default-body.json")
+                    self.assertNotEqual(default["error"], 0)
+                    self.assertEqual(default["length"], 0)
+                    self.assertEqual(default["native"]["lastExchange"]["finishCode"], 6)
+                    self.assertEqual(default["native"]["ledger"]["reservedBytes"], 256)
+
+    def test_mixed_accepts_only_exact_resource_paths(self):
+        accepted = ("/resource/style/mixed", "/resource/tile/m_2_0_3", "/resource/glyph/QA/0-255.pbf",
+                    "/resource/sprite/mixed.json", "/resource/sprite/mixed.png",
+                    "/resource/sprite/mixed@2x.json", "/resource/sprite/mixed@2x.png")
+        rejected = ("/resource/style/sdk", "/resource/style/mixed?", "/resource/style/mixed?hold=1",
+                    "/resource/tile/m_2_4_0", "/resource/tile/m_1_0_0", "/resource/glyph/QA/256-511.pbf",
+                    "/resource/glyph/%51A/0-255.pbf", "/resource/sprite/mixed%402x.png",
+                    "/resource/sprite/mixed@3x.png", "/resource/sprite/mixed.json/")
+        with self.fixture() as server:
+            origin = f"https://127.0.0.1:{server.port}"
+            ledger = self.root / "mixed-routes.json"
+            for route in accepted:
+                with self.subTest(route=route):
+                    result = self.run_driver(origin, origin + route, mode="mixed", ledger=ledger)
+                    self.assertEqual(result["error"], 0)
+                    self.assertEqual(server.requests[-1].split(b"\r\n", 1)[0], f"GET {route} HTTP/1.1".encode())
+            before = ledger.read_bytes()
+            for route in rejected:
+                with self.subTest(route=route):
+                    result = self.run_driver(origin, origin + route, mode="mixed", ledger=ledger)
+                    self.assertNotEqual(result["error"], 0)
+                    self.assertEqual(result["native"]["started"], 0)
+                    self.assertEqual(result["native"]["blockedBeforeDispatch"], 1)
+                    self.assertEqual(ledger.read_bytes(), before)
+            self.assertEqual(server.accepted, len(accepted))
+
+    def test_mixed_ledger_reopens_only_with_its_resource_profile(self):
+        with self.fixture() as server:
+            origin = f"https://127.0.0.1:{server.port}"
+            ledger = self.root / "mixed-profile.json"
+            style = origin + "/resource/style/mixed"
+            first = self.run_driver(origin, style, mode="mixed", ledger=ledger)
+            self.assertEqual(first["error"], 0)
+            saved = first["native"]["ledger"]
+            self.assertEqual({key: saved[key] for key in ("maxRequests", "maxTiles", "maxReservedBytes",
+                                                         "fixtureResourceProfile", "reservedBytes")},
+                             {"maxRequests": 16, "maxTiles": 8, "maxReservedBytes": 16384,
+                              "fixtureResourceProfile": "mixed-v1", "reservedBytes": 1024})
+            before = ledger.read_bytes()
+            self.assertFalse(self.run_driver(origin, style, mode="gate-mixed-budget", ledger=ledger)["configured"])
+            self.assertEqual(ledger.read_bytes(), before)
+            self.assertEqual(len(server.requests), 1)
+            reopened = self.run_driver(origin, style, mode="mixed", ledger=ledger)
+            self.assertEqual(reopened["error"], 0)
+            self.assertEqual(reopened["native"]["ledger"]["reservedBytes"], 2048)
+            self.assertEqual(len(server.requests), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

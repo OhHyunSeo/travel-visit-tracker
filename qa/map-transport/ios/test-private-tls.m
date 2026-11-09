@@ -10,7 +10,7 @@ int main(int argc, const char *argv[]) {
         NSData *certificate = [TPTransport fixtureCertificateFromBase64:[NSString stringWithUTF8String:argv[3]]];
         NSURL *ledger = [NSURL fileURLWithPath:[NSString stringWithUTF8String:argv[4]]];
         NSString *mode = [NSString stringWithUTF8String:argv[5]];
-        if (![@[@"gate", @"exchange", @"legacy"] containsObject:mode]) return 2;
+        if (![@[@"gate", @"exchange", @"legacy", @"mixed", @"gate-mixed-budget"] containsObject:mode]) return 2;
         __block NSDictionary *result;
         dispatch_semaphore_t done = dispatch_semaphore_create(0);
         NSURLSession *session;
@@ -25,7 +25,16 @@ int main(int argc, const char *argv[]) {
                 [exchange start];
             });
         } else {
-            BOOL configured = [mode isEqual:@"legacy"] ? [TPTransport configureFixtureTLSOrigin:origin ledgerURL:ledger maxRequests:2 maxTiles:2 maxReservedBytes:512 certificate:certificate] : [TPTransport configurePrivateFixtureTLSOrigin:origin ledgerURL:ledger maxRequests:2 maxTiles:2 maxReservedBytes:512 certificate:certificate];
+            BOOL configured;
+            if ([mode isEqual:@"mixed"]) {
+                configured = [TPTransport configureMixedPrivateFixtureTLSOrigin:origin ledgerURL:ledger certificate:certificate];
+            } else if ([mode isEqual:@"gate-mixed-budget"]) {
+                configured = [TPTransport configurePrivateFixtureTLSOrigin:origin ledgerURL:ledger maxRequests:16 maxTiles:8 maxReservedBytes:16384 certificate:certificate];
+            } else if ([mode isEqual:@"legacy"]) {
+                configured = [TPTransport configureFixtureTLSOrigin:origin ledgerURL:ledger maxRequests:2 maxTiles:2 maxReservedBytes:512 certificate:certificate];
+            } else {
+                configured = [TPTransport configurePrivateFixtureTLSOrigin:origin ledgerURL:ledger maxRequests:2 maxTiles:2 maxReservedBytes:512 certificate:certificate];
+            }
             if (!configured) { result = @{@"configured": @NO}; dispatch_semaphore_signal(done); }
             else {
                 NSURLSessionConfiguration *configuration = NSURLSessionConfiguration.ephemeralSessionConfiguration;

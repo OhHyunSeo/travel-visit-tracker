@@ -11,18 +11,19 @@ static BOOL TPStarted, TPRunning, TPPriorIdle;
 static NSString *const TPEmptyStyleJSON = @"{\"version\":8,\"sources\":{},\"layers\":[]}";
 
 static BOOL TPTLSStage(NSString *stage) {
-    return [@[@"tls-render", @"tls-queue", @"tls-cancel-retry"] containsObject:stage];
+    return [@[@"tls-render", @"tls-queue", @"tls-cancel-retry", @"tls-mixed"] containsObject:stage];
 }
 
 static BOOL TPCancellationStage(NSString *stage) {
     return [@[@"cancel-retry", @"tls-cancel-retry"] containsObject:stage];
 }
 
-static void TPWrite(NSDictionary *value) {
+static void TPWriteDocument(NSString *name, NSDictionary *value) {
     if (!TPRunDirectory) return;
     NSData *data = [NSJSONSerialization dataWithJSONObject:value options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys error:nil];
-    [data writeToURL:[TPRunDirectory URLByAppendingPathComponent:@"result.json"] options:NSDataWritingAtomic error:nil];
+    [data writeToURL:[TPRunDirectory URLByAppendingPathComponent:name] options:NSDataWritingAtomic error:nil];
 }
+static void TPWrite(NSDictionary *value) { TPWriteDocument(@"result.json", value); }
 static NSDictionary *TPControl(NSString *path) {
     NSURLSessionConfiguration *config = NSURLSessionConfiguration.ephemeralSessionConfiguration;
     config.timeoutIntervalForRequest = 2; config.timeoutIntervalForResource = 3;
@@ -56,6 +57,7 @@ static NSDictionary *TPControl(NSString *path) {
 @property BOOL controlBusy;
 @property NSDictionary *waitingServer, *cancelledSnapshot, *cancelledServer, *releaseControl;
 @property NSDictionary *emptyStyleEvidence;
+@property NSDictionary *mixedStyleEvidence;
 @property NSData *fixtureCertificate;
 @property NSString *runID;
 @property TPFixtureActionGate *actionGate;
@@ -88,6 +90,7 @@ static NSDictionary *TPControl(NSString *path) {
     NSString *scope = @"isolated MapLibre6.31.0 with actual RN11.5 native transform class; no JS/TurboModule bridge, TLS/HTTP2/provider/OS-byte acceptance";
     if ([self.stage isEqual:@"action-gate"]) scope = @"fixture URL delivery only; no SDK, transport, cancellation or reload acceptance";
     else if ([self.stage isEqual:@"tls-cancel-retry"]) scope = @"isolated pinned HTTPS HTTP1 SDK style cancellation and manual reload";
+    else if ([self.stage isEqual:@"tls-mixed"]) scope = @"isolated pinned HTTPS HTTP1 SDK style, tile, glyph and sprite requests";
     else if (TPTLSStage(self.stage)) scope = @"isolated pinned private-fixture HTTPS HTTP1 SDK; no cancel/restart, HTTP2, RN JS bridge, provider or OS-byte acceptance";
     TPWrite(@{@"complete": @YES, @"pass": @(pass), @"reason": reason,
               @"cases": self.cases ?: @[], @"stage": self.stage ?: @"invalid", @"process": @(NSProcessInfo.processInfo.processIdentifier),
@@ -220,13 +223,17 @@ static NSDictionary *TPControl(NSString *path) {
     BOOL tlsTrial = TPTLSStage(self.stage);
     BOOL tlsCancel = [self.stage isEqual:@"tls-cancel-retry"];
     BOOL tlsQueue = [self.stage isEqual:@"tls-queue"];
+    BOOL tlsMixed = [self.stage isEqual:@"tls-mixed"];
     NSURL *ledgerURL = [TPRunDirectory URLByAppendingPathComponent:tlsTrial ? @"tls-ledger.json" : (cancelTrial ? @"cancel-ledger.json" : @"render-ledger.json")];
-    BOOL configured = tlsTrial ? [TPTransport configurePrivateFixtureTLSOrigin:TPOrigin ledgerURL:ledgerURL maxRequests:32 maxTiles:16 maxReservedBytes:8192 certificate:self.fixtureCertificate] : [TPTransport configureOrigin:TPOrigin ledgerURL:ledgerURL maxRequests:cancelTrial ? 64 : 32 maxTiles:cancelTrial ? 32 : 16 maxReservedBytes:cancelTrial ? 16384 : 8192];
+    BOOL configured;
+    if (tlsMixed) configured = [TPTransport configureMixedPrivateFixtureTLSOrigin:TPOrigin ledgerURL:ledgerURL certificate:self.fixtureCertificate];
+    else if (tlsTrial) configured = [TPTransport configurePrivateFixtureTLSOrigin:TPOrigin ledgerURL:ledgerURL maxRequests:32 maxTiles:16 maxReservedBytes:8192 certificate:self.fixtureCertificate];
+    else configured = [TPTransport configureOrigin:TPOrigin ledgerURL:ledgerURL maxRequests:cancelTrial ? 64 : 32 maxTiles:cancelTrial ? 32 : 16 maxReservedBytes:cancelTrial ? 16384 : 8192];
     if (!configured) { [self finish:NO reason:@"ledger not ready"]; return; }
-    self.phase = tlsCancel ? 9 : (cancelTrial ? 10 : (tlsQueue ? 2 : 1));
+    self.phase = tlsCancel ? 9 : (cancelTrial ? 10 : ((tlsQueue || tlsMixed) ? 2 : 1));
     // Explicit style avoids constructing a default network style before the gate.
-    BOOL largeViewport = cancelTrial || tlsQueue;
-    NSString *stylePath = cancelTrial ? @"/resource/style/held" : (tlsQueue ? @"/resource/style/multi-entry" : @"/resource/style/entry");
+    BOOL largeViewport = cancelTrial || tlsQueue || tlsMixed;
+    NSString *stylePath = tlsMixed ? @"/resource/style/mixed" : (cancelTrial ? @"/resource/style/held" : (tlsQueue ? @"/resource/style/multi-entry" : @"/resource/style/entry"));
     self.map = [[MLNMapView alloc] initWithFrame:CGRectMake(0, 120, largeViewport ? 1024 : self.view.bounds.size.width, largeViewport ? 1024 : 300) styleURL:[NSURL URLWithString:[TPOrigin stringByAppendingString:stylePath]]];
     self.map.delegate = self; self.map.prefetchesTiles = NO;
     self.map.shouldRequestAuthorizationToUseLocationServices = NO;
@@ -247,6 +254,14 @@ static NSDictionary *TPControl(NSString *path) {
     }
 }
 - (void)mapView:(MLNMapView *)mapView didFinishLoadingStyle:(MLNStyle *)style {
+    if ([self.stage isEqual:@"tls-mixed"]) {
+        self.mixedStyleEvidence = @{@"rasterSource": @([[style sourceWithIdentifier:@"t"] isKindOfClass:MLNRasterTileSource.class]),
+                                    @"rasterLayer": @([[style layerWithIdentifier:@"t"] isKindOfClass:MLNRasterStyleLayer.class]),
+                                    @"symbolSource": @([[style sourceWithIdentifier:@"p"] isKindOfClass:MLNShapeSource.class]),
+                                    @"symbolLayer": @([[style layerWithIdentifier:@"s"] isKindOfClass:MLNSymbolStyleLayer.class])};
+        self.styleLoaded = ![self.mixedStyleEvidence.allValues containsObject:@NO];
+        return;
+    }
     if (self.phase == 11 || self.phase == 12) {
         NSData *data = [style.styleJSON dataUsingEncoding:NSUTF8StringEncoding];
         id json = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
@@ -268,6 +283,10 @@ static NSDictionary *TPControl(NSString *path) {
     }
     if (!self.styleLoaded || !fullyRendered || self.phase > 2) return;
     NSDictionary *native = TPTransport.snapshot;
+    if ([self.stage isEqual:@"tls-mixed"]) {
+        if ([self idleNative:native] && [native[@"tlsVerifiedExchanges"] isEqual:@10] && [native[@"ledger"][@"tiles"] isEqual:@6]) self.fullyRendered = YES;
+        return;
+    }
     NSUInteger minimumTiles = self.phase == 2 ? 5 : 1;
     if ([native[@"active"] integerValue] == 0 && [native[@"ledger"][@"tiles"] unsignedIntegerValue] >= minimumTiles && [native[@"blockedBeforeDispatch"] integerValue] == 0) self.fullyRendered = YES;
 }
@@ -391,10 +410,33 @@ static NSDictionary *TPControl(NSString *path) {
         [self finish:MLNNetworkConfiguration.sharedManager.delegate == self.transform reason:@"SDK HTTPS style cancellation and manual reload completed"];
     }
 }
+- (void)inspectTLSMixed:(NSDictionary *)native {
+    NSUInteger released = [native[@"released"] unsignedIntegerValue];
+    if (![native[@"ledgerOK"] isEqual:@YES] || ![native[@"blockedBeforeDispatch"] isEqual:@0] || [native[@"started"] unsignedIntegerValue] > 10) {
+        [self finish:NO reason:@"HTTPS mixed resource gate failed"];
+        return;
+    }
+    if (!self.waitingSnapshot && [native[@"active"] isEqual:@4] && [native[@"pending"] unsignedIntegerValue] > 0 &&
+        [native[@"mixedActiveSprites"] isEqual:@0] && released >= 1 && released <= 3 &&
+        [native[@"tlsVerifiedExchanges"] unsignedIntegerValue] == released) {
+        self.waitingSnapshot = native;
+        TPWriteDocument(@"mixed-waiting.json", @{@"kind": @"mixed-waiting", @"runID": self.runID,
+                                               @"process": @(NSProcessInfo.processInfo.processIdentifier), @"native": native});
+    }
+    if (self.styleLoaded && self.fullyRendered && self.waitingSnapshot && [self idleNative:native] &&
+        [native[@"started"] isEqual:@10] && [native[@"httpRequestSendsSettled"] isEqual:@10] &&
+        [native[@"ledger"][@"reservedBytes"] isEqual:@10240] && [native[@"ledger"][@"tiles"] isEqual:@6]) {
+        [self.cases addObject:@{@"name": @"SDK pinned HTTPS mixed resources", @"pass": @YES, @"native": native,
+                               @"waitingSnapshot": self.waitingSnapshot, @"styleEvidence": self.mixedStyleEvidence,
+                               @"styleLoaded": @YES, @"fullyRendered": @YES}];
+        [self finish:MLNNetworkConfiguration.sharedManager.delegate == self.transform reason:@"SDK HTTPS mixed resource check completed"];
+    }
+}
 - (void)inspectProgress {
     if (self.finishing) return;
     if ([self.stage isEqual:@"cancel-retry"]) { [self inspectCancellation]; return; }
     NSDictionary *native = TPTransport.snapshot;
+    if ([self.stage isEqual:@"tls-mixed"]) { [self inspectTLSMixed:native]; return; }
     if ([self.stage isEqual:@"tls-cancel-retry"]) { [self inspectTLSCancellation:native]; return; }
     if ([self.stage isEqual:@"tls-render"]) {
         if (self.phase == 1 && self.styleLoaded && self.fullyRendered && [self idleNative:native] && [native[@"started"] isEqual:@2] && [native[@"httpRequestSendsSettled"] isEqual:@2] && [native[@"tlsVerifiedExchanges"] isEqual:@2] && [native[@"ledger"][@"tiles"] isEqual:@1]) {

@@ -2,6 +2,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+enum { TPFixtureBodyLimit = 256, TPMixedFixtureBodyLimit = 1024 };
+
 // Controlled HTTP/1.1 fixture experiment, not a general HTTP client or provider adapter.
 // All methods and callbacks run on the supplied serial queue.
 @interface TPHTTPExchange : NSObject
@@ -32,6 +34,13 @@ NS_ASSUME_NONNULL_BEGIN
                     timeout:(NSTimeInterval)timeout
        privateFixtureOrigin:(NSString *)origin
          fixtureCertificate:(NSData *)certificate
+                 completion:(void (^)(NSHTTPURLResponse * _Nullable, NSData * _Nullable, NSError * _Nullable))completion;
+- (instancetype)initWithURL:(NSURL *)url
+                      queue:(dispatch_queue_t)queue
+                    timeout:(NSTimeInterval)timeout
+       privateFixtureOrigin:(NSString *)origin
+         fixtureCertificate:(NSData *)certificate
+             mixedResources:(BOOL)mixedResources
                  completion:(void (^)(NSHTTPURLResponse * _Nullable, NSData * _Nullable, NSError * _Nullable))completion;
 - (void)start;
 - (void)cancel;

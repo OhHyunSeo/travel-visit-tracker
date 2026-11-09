@@ -12,7 +12,7 @@ static dispatch_queue_t TPQueue;
 static NSMutableArray<TPTransport *> *TPPending;
 static NSString *TPOrigin;
 static NSData *TPFixtureCertificate;
-static BOOL TPPrivateFixtureTLS;
+static BOOL TPPrivateFixtureTLS, TPMixedResources;
 static NSURL *TPLedgerURL;
 static NSMutableDictionary *TPLedger;
 static BOOL TPLedgerOK;
@@ -22,8 +22,22 @@ static NSUInteger TPHTTPSends, TPHTTPReceived;
 static NSUInteger TPVerifiedTLS;
 static NSDictionary *TPLastExchangeDiagnostics;
 static NSUInteger TPMaxPending, TPCancelledPending, TPCancelledActive, TPReleased;
-static const NSUInteger TPReservation = 256;
+static NSUInteger TPMixedActiveSprites;
 static const NSUInteger TPLedgerReadLimit = 64 * 1024;
+
+static NSUInteger TPReservation(BOOL mixed) {
+    return mixed ? TPMixedFixtureBodyLimit : TPFixtureBodyLimit;
+}
+
+static BOOL TPMixedFixturePath(NSString *path) {
+    if ([path isEqual:@"/resource/style/mixed"] || [path isEqual:@"/resource/glyph/QA/0-255.pbf"]) return YES;
+    static NSRegularExpression *resources;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        resources = [NSRegularExpression regularExpressionWithPattern:@"^/resource/(tile/m_2_[0-3]_[0-3]|sprite/mixed(@2x)?\\.(json|png))$" options:0 error:nil];
+    });
+    return [resources numberOfMatchesInString:path options:0 range:NSMakeRange(0, path.length)] == 1;
+}
 
 static BOOL TPUnsignedInteger(id value, NSUInteger *result) {
     if (![value isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID()
@@ -79,22 +93,25 @@ static BOOL TPReadLedger(NSURL *url, NSData **data) {
     return ok;
 }
 
-static BOOL TPValidLedger(NSMutableDictionary *ledger, NSString *origin, NSUInteger requests, NSUInteger tiles, NSUInteger bytes, NSData *certificate) {
+static BOOL TPValidLedger(NSMutableDictionary *ledger, NSString *origin, NSUInteger requests, NSUInteger tiles, NSUInteger bytes, NSData *certificate, BOOL mixed) {
     if (![ledger isKindOfClass:NSMutableDictionary.class]) return NO;
     NSMutableSet *keys = [NSMutableSet setWithArray:@[@"schema", @"origin", @"requests", @"tiles", @"reservedBytes", @"unresolved", @"maxRequests", @"maxTiles", @"maxReservedBytes", @"reservationBytes"]];
     if (certificate) [keys addObject:@"fixtureTLSLeafDER"];
+    if (mixed) [keys addObject:@"fixtureResourceProfile"];
     if (![[NSSet setWithArray:ledger.allKeys] isEqual:keys] || ![ledger[@"origin"] isKindOfClass:NSString.class] || ![ledger[@"origin"] isEqual:origin]) return NO;
-    NSDictionary *identity = @{@"schema": @1, @"maxRequests": @(requests), @"maxTiles": @(tiles), @"maxReservedBytes": @(bytes), @"reservationBytes": @(TPReservation)};
+    NSUInteger reservation = TPReservation(mixed);
+    NSDictionary *identity = @{@"schema": @1, @"maxRequests": @(requests), @"maxTiles": @(tiles), @"maxReservedBytes": @(bytes), @"reservationBytes": @(reservation)};
     for (NSString *key in identity) {
         NSUInteger value;
         if (!TPUnsignedInteger(ledger[key], &value) || value != [identity[key] unsignedIntegerValue]) return NO;
     }
     if (certificate && (![ledger[@"fixtureTLSLeafDER"] isKindOfClass:NSString.class]
         || ![ledger[@"fixtureTLSLeafDER"] isEqual:[certificate base64EncodedStringWithOptions:0]])) return NO;
+    if (mixed && ![ledger[@"fixtureResourceProfile"] isEqual:@"mixed-v1"]) return NO;
     NSUInteger used, tileUsed, reserved;
     if (!TPUnsignedInteger(ledger[@"requests"], &used) || !TPUnsignedInteger(ledger[@"tiles"], &tileUsed)
         || !TPUnsignedInteger(ledger[@"reservedBytes"], &reserved) || used > requests || tileUsed > tiles || tileUsed > used
-        || used > NSUIntegerMax / TPReservation || reserved != used * TPReservation || reserved > bytes
+        || used > NSUIntegerMax / reservation || reserved != used * reservation || reserved > bytes
         || ![ledger[@"unresolved"] isKindOfClass:NSMutableArray.class] || [ledger[@"unresolved"] count] > used) return NO;
     NSMutableSet *seen = [NSMutableSet new];
     for (id value in ledger[@"unresolved"]) {
@@ -108,9 +125,10 @@ static BOOL TPValidLedger(NSMutableDictionary *ledger, NSString *origin, NSUInte
 
 @interface TPTransport ()
 + (BOOL)configureOrigin:(NSString *)origin ledgerURL:(NSURL *)ledgerURL maxRequests:(NSUInteger)requests maxTiles:(NSUInteger)tiles maxReservedBytes:(NSUInteger)bytes fixtureCertificate:(NSData *)certificate;
-+ (BOOL)configureOrigin:(NSString *)origin ledgerURL:(NSURL *)ledgerURL maxRequests:(NSUInteger)requests maxTiles:(NSUInteger)tiles maxReservedBytes:(NSUInteger)bytes fixtureCertificate:(NSData *)certificate privateTLS:(BOOL)privateTLS;
++ (BOOL)configureOrigin:(NSString *)origin ledgerURL:(NSURL *)ledgerURL maxRequests:(NSUInteger)requests maxTiles:(NSUInteger)tiles maxReservedBytes:(NSUInteger)bytes fixtureCertificate:(NSData *)certificate privateTLS:(BOOL)privateTLS mixedResources:(BOOL)mixed;
++ (BOOL)configurePrivateFixtureTLSOrigin:(NSString *)origin ledgerURL:(NSURL *)ledgerURL maxRequests:(NSUInteger)requests maxTiles:(NSUInteger)tiles maxReservedBytes:(NSUInteger)bytes certificate:(NSData *)certificate mixedResources:(BOOL)mixed;
 @property TPHTTPExchange *exchange;
-@property BOOL acquired, stopped, settled, failed;
+@property BOOL acquired, stopped, settled, failed, mixedSprite;
 @property NSUInteger observed, accepted;
 @property NSString *reservationID;
 @end
@@ -190,36 +208,44 @@ static BOOL TPValidLedger(NSMutableDictionary *ledger, NSString *origin, NSUInte
     return [data copy];
 }
 + (BOOL)configurePrivateFixtureTLSOrigin:(NSString *)origin ledgerURL:(NSURL *)ledgerURL maxRequests:(NSUInteger)requests maxTiles:(NSUInteger)tiles maxReservedBytes:(NSUInteger)bytes certificate:(NSData *)certificate {
+    return [self configurePrivateFixtureTLSOrigin:origin ledgerURL:ledgerURL maxRequests:requests maxTiles:tiles maxReservedBytes:bytes certificate:certificate mixedResources:NO];
+}
++ (BOOL)configureMixedPrivateFixtureTLSOrigin:(NSString *)origin ledgerURL:(NSURL *)ledgerURL certificate:(NSData *)certificate {
+    return [self configurePrivateFixtureTLSOrigin:origin ledgerURL:ledgerURL maxRequests:16 maxTiles:8 maxReservedBytes:16384 certificate:certificate mixedResources:YES];
+}
++ (BOOL)configurePrivateFixtureTLSOrigin:(NSString *)origin ledgerURL:(NSURL *)ledgerURL maxRequests:(NSUInteger)requests maxTiles:(NSUInteger)tiles maxReservedBytes:(NSUInteger)bytes certificate:(NSData *)certificate mixedResources:(BOOL)mixed {
     if (@available(macOS 15.5, iOS 18.5, *)) { /* Matches the existing TLS API. */ }
     else return NO;
     if (![origin isKindOfClass:NSString.class] || ![certificate isKindOfClass:NSData.class] || ![self safePrivateFixtureTLSOrigin:origin] || !certificate.length || certificate.length > 16384) return NO;
     SecCertificateRef leaf = SecCertificateCreateWithData(NULL, (__bridge CFDataRef)certificate);
     if (!leaf) return NO;
     CFRelease(leaf);
-    return [self configureOrigin:origin ledgerURL:ledgerURL maxRequests:requests maxTiles:tiles maxReservedBytes:bytes fixtureCertificate:[certificate copy] privateTLS:YES];
+    return [self configureOrigin:origin ledgerURL:ledgerURL maxRequests:requests maxTiles:tiles maxReservedBytes:bytes fixtureCertificate:[certificate copy] privateTLS:YES mixedResources:mixed];
 }
 + (BOOL)configureOrigin:(NSString *)origin ledgerURL:(NSURL *)ledgerURL maxRequests:(NSUInteger)requests maxTiles:(NSUInteger)tiles maxReservedBytes:(NSUInteger)bytes fixtureCertificate:(NSData *)certificate {
-    return [self configureOrigin:origin ledgerURL:ledgerURL maxRequests:requests maxTiles:tiles maxReservedBytes:bytes fixtureCertificate:certificate privateTLS:NO];
+    return [self configureOrigin:origin ledgerURL:ledgerURL maxRequests:requests maxTiles:tiles maxReservedBytes:bytes fixtureCertificate:certificate privateTLS:NO mixedResources:NO];
 }
-+ (BOOL)configureOrigin:(NSString *)origin ledgerURL:(NSURL *)ledgerURL maxRequests:(NSUInteger)requests maxTiles:(NSUInteger)tiles maxReservedBytes:(NSUInteger)bytes fixtureCertificate:(NSData *)certificate privateTLS:(BOOL)privateTLS {
++ (BOOL)configureOrigin:(NSString *)origin ledgerURL:(NSURL *)ledgerURL maxRequests:(NSUInteger)requests maxTiles:(NSUInteger)tiles maxReservedBytes:(NSUInteger)bytes fixtureCertificate:(NSData *)certificate privateTLS:(BOOL)privateTLS mixedResources:(BOOL)mixed {
     __block BOOL ok = NO;
     dispatch_sync(TPQueue, ^{
+        NSUInteger reservation = TPReservation(mixed);
         if (TPActive || TPPending.count || ![origin isKindOfClass:NSString.class] || !TPLedgerFileURL(ledgerURL)
-            || !requests || requests > NSUIntegerMax / TPReservation || tiles > requests || bytes < TPReservation) return;
+            || !requests || requests > NSUIntegerMax / reservation || tiles > requests || bytes < reservation) return;
         NSString *candidateOrigin = [origin stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"/"]];
         if (!certificate && ![self safeOrigin:candidateOrigin]) return;
         NSData *data;
         if (!TPReadLedger(ledgerURL, &data)) return;
         id candidate = data ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil]
-            : [@{@"schema": @1, @"origin": candidateOrigin, @"requests": @0, @"tiles": @0, @"reservedBytes": @0, @"unresolved": [NSMutableArray new], @"maxRequests": @(requests), @"maxTiles": @(tiles), @"maxReservedBytes": @(bytes), @"reservationBytes": @(TPReservation)} mutableCopy];
+            : [@{@"schema": @1, @"origin": candidateOrigin, @"requests": @0, @"tiles": @0, @"reservedBytes": @0, @"unresolved": [NSMutableArray new], @"maxRequests": @(requests), @"maxTiles": @(tiles), @"maxReservedBytes": @(bytes), @"reservationBytes": @(reservation)} mutableCopy];
         if (!data && certificate) candidate[@"fixtureTLSLeafDER"] = [certificate base64EncodedStringWithOptions:0];
-        if (!TPValidLedger(candidate, candidateOrigin, requests, tiles, bytes, certificate)) return;
+        if (!data && mixed) candidate[@"fixtureResourceProfile"] = @"mixed-v1";
+        if (!TPValidLedger(candidate, candidateOrigin, requests, tiles, bytes, certificate, mixed)) return;
         if (!data && ![self persistLedger:candidate toURL:ledgerURL]) return;
         // Publish only after all validation/persistence succeeds. A rejected
         // reconfiguration keeps the previous configuration and counters intact.
         TPOrigin = candidateOrigin;
         TPFixtureCertificate = [certificate copy];
-        TPPrivateFixtureTLS = privateTLS;
+        TPPrivateFixtureTLS = privateTLS; TPMixedResources = mixed; TPMixedActiveSprites = 0;
         TPLedgerURL = ledgerURL;
         TPMaxRequests = requests; TPMaxTiles = tiles; TPMaxReserved = bytes;
         TPMaxActive = TPBlocked = TPStarted = TPAccepted = 0;
@@ -235,6 +261,11 @@ static BOOL TPValidLedger(NSMutableDictionary *ledger, NSString *origin, NSUInte
     __block NSDictionary *result;
     dispatch_sync(TPQueue, ^{
         result = @{@"active": @(TPActive), @"maxActive": @(TPMaxActive), @"pending": @(TPPending.count), @"maxPending": @(TPMaxPending), @"cancelledPending": @(TPCancelledPending), @"cancelledActive": @(TPCancelledActive), @"released": @(TPReleased), @"blockedBeforeDispatch": @(TPBlocked), @"started": @(TPStarted), @"httpRequestSendsSettled": @(TPHTTPSends), @"receivedHTTPBytesSettled": @(TPHTTPReceived), @"lastExchange": TPLastExchangeDiagnostics ?: @{}, @"tlsVerifiedExchanges": @(TPVerifiedTLS), @"transport": TPFixtureCertificate ? (TPPrivateFixtureTLS ? @"pinned-private-tls-http1-fixture" : @"pinned-loopback-tls-http1-fixture") : @"single-send-http1-fixture", @"acceptedBodyBytes": @(TPAccepted), @"ledgerOK": @(TPLedgerOK), @"ledger": TPLedgerOK ? [NSJSONSerialization JSONObjectWithData:[NSJSONSerialization dataWithJSONObject:TPLedger options:0 error:nil] options:0 error:nil] : @{}};
+        if (TPMixedResources) {
+            NSMutableDictionary *mixed = [result mutableCopy];
+            mixed[@"mixedActiveSprites"] = @(TPMixedActiveSprites);
+            result = [mixed copy];
+        }
     });
     return result;
 }
@@ -242,8 +273,9 @@ static BOOL TPValidLedger(NSMutableDictionary *ledger, NSString *origin, NSUInte
     NSURLComponents *parts = [NSURLComponents componentsWithURL:self.request.URL resolvingAgainstBaseURL:NO];
     NSString *origin = [NSString stringWithFormat:@"%@://%@:%@", parts.scheme, parts.host, parts.port];
     if (![origin isEqual:TPOrigin] || parts.user || parts.password || parts.fragment || ![self.request.HTTPMethod isEqual:@"GET"]) return NO;
-    NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:@"^/resource/(style|tile|glyph|sprite)/[A-Za-z0-9_-]{1,64}$" options:0 error:nil];
     NSString *path = parts.percentEncodedPath;
+    if (TPMixedResources) return !parts.percentEncodedQuery && TPMixedFixturePath(path);
+    NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:@"^/resource/(style|tile|glyph|sprite)/[A-Za-z0-9_-]{1,64}$" options:0 error:nil];
     if ([pattern numberOfMatchesInString:path options:0 range:NSMakeRange(0, path.length)] != 1) return NO;
     NSDictionary *limits = @{@"bytes": @65536, @"delayMs": @2000, @"status": @599, @"chunked": @1, @"gzip": @1, @"redirect": @1, @"hold": @1};
     NSMutableSet *seen = [NSMutableSet new];
@@ -263,6 +295,7 @@ static BOOL TPValidLedger(NSMutableDictionary *ledger, NSString *origin, NSUInte
     [self.client URLProtocol:self didFailWithError:[NSError errorWithDomain:@"MapTransportQA" code:code userInfo:nil]];
 }
 + (void)drain {
+    NSUInteger reservation = TPReservation(TPMixedResources);
     while (TPActive < 4 && TPPending.count) {
         TPTransport *p = TPPending.firstObject;
         [TPPending removeObjectAtIndex:0];
@@ -272,16 +305,18 @@ static BOOL TPValidLedger(NSMutableDictionary *ledger, NSString *origin, NSUInte
         NSUInteger used = [TPLedger[@"requests"] unsignedIntegerValue];
         NSUInteger tileUsed = [TPLedger[@"tiles"] unsignedIntegerValue];
         NSUInteger bytes = [TPLedger[@"reservedBytes"] unsignedIntegerValue];
-        if (!TPLedgerOK || used >= TPMaxRequests || (tile && tileUsed >= TPMaxTiles) || bytes > TPMaxReserved || TPMaxReserved - bytes < TPReservation) { TPBlocked++; [p fail:2]; continue; }
+        if (!TPLedgerOK || used >= TPMaxRequests || (tile && tileUsed >= TPMaxTiles) || bytes > TPMaxReserved || TPMaxReserved - bytes < reservation) { TPBlocked++; [p fail:2]; continue; }
         p.reservationID = NSUUID.UUID.UUIDString;
-        TPLedger[@"requests"] = @(used + 1); TPLedger[@"tiles"] = @(tileUsed + (tile ? 1 : 0)); TPLedger[@"reservedBytes"] = @(bytes + TPReservation);
+        TPLedger[@"requests"] = @(used + 1); TPLedger[@"tiles"] = @(tileUsed + (tile ? 1 : 0)); TPLedger[@"reservedBytes"] = @(bytes + reservation);
         [TPLedger[@"unresolved"] addObject:p.reservationID];
         if (![self persistLedger]) { TPLedgerOK = NO; TPBlocked++; [p fail:3]; continue; }
         p.acquired = YES; TPActive++; TPStarted++; TPMaxActive = MAX(TPMaxActive, TPActive);
+        p.mixedSprite = TPMixedResources && [p.request.URL.path hasPrefix:@"/resource/sprite/"];
+        if (p.mixedSprite) TPMixedActiveSprites++;
         void (^completion)(NSHTTPURLResponse *, NSData *, NSError *) = ^(NSHTTPURLResponse *response, NSData *data, NSError *error) {
             [p exchangeCompleted:response data:data error:error];
         };
-        if (TPPrivateFixtureTLS) p.exchange = [[TPHTTPExchange alloc] initWithURL:p.request.URL queue:TPQueue timeout:10 privateFixtureOrigin:TPOrigin fixtureCertificate:TPFixtureCertificate completion:completion];
+        if (TPPrivateFixtureTLS) p.exchange = [[TPHTTPExchange alloc] initWithURL:p.request.URL queue:TPQueue timeout:10 privateFixtureOrigin:TPOrigin fixtureCertificate:TPFixtureCertificate mixedResources:TPMixedResources completion:completion];
         else if (TPFixtureCertificate) p.exchange = [[TPHTTPExchange alloc] initWithURL:p.request.URL queue:TPQueue timeout:10 fixtureCertificate:TPFixtureCertificate completion:completion];
         else p.exchange = [[TPHTTPExchange alloc] initWithURL:p.request.URL queue:TPQueue timeout:10 completion:completion];
         [p.exchange start];
@@ -314,6 +349,7 @@ static BOOL TPValidLedger(NSMutableDictionary *ledger, NSString *origin, NSUInte
     TPHTTPReceived += self.exchange.receivedHTTPBytes;
     if (!error && self.exchange.trustAccepted && [self.exchange.negotiatedProtocol isEqual:@"http/1.1"]) TPVerifiedTLS++;
     if (self.acquired) {
+        if (self.mixedSprite) TPMixedActiveSprites--;
         [TPLedger[@"unresolved"] removeObject:self.reservationID];
         if (![TPTransport persistLedger]) TPLedgerOK = NO;
         TPActive--; TPReleased++; self.acquired = NO;

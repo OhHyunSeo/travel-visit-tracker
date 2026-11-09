@@ -4,7 +4,7 @@
 #import <arpa/inet.h>
 #import <math.h>
 
-static const NSUInteger TPHeaderLimit = 8192, TPBodyLimit = 256;
+static const NSUInteger TPHeaderLimit = 8192;
 
 @interface TPHTTPExchange ()
 @property NSURL *url;
@@ -17,6 +17,7 @@ static const NSUInteger TPHeaderLimit = 8192, TPBodyLimit = 256;
 @property NSHTTPURLResponse *response;
 @property NSError *failure;
 @property NSUInteger contentLength, requestSendCount, receivedHTTPBytes;
+@property NSUInteger bodyLimit;
 @property BOOL started, finishing, completed;
 @property BOOL fixtureTLS, trustAccepted, chainTrusted;
 @property NSData *fixtureCertificate;
@@ -49,7 +50,7 @@ static const NSUInteger TPHeaderLimit = 8192, TPBodyLimit = 256;
 - (instancetype)initWithURL:(NSURL *)url queue:(dispatch_queue_t)queue timeout:(NSTimeInterval)timeout completion:(void (^)(NSHTTPURLResponse *, NSData *, NSError *))completion {
     if ((self = [super init])) {
         _url = url; _queue = queue; _timeout = timeout; _completion = [completion copy];
-        _header = [NSMutableData new]; _body = [NSMutableData new]; _negotiatedProtocol = @"none";
+        _header = [NSMutableData new]; _body = [NSMutableData new]; _negotiatedProtocol = @"none"; _bodyLimit = TPFixtureBodyLimit;
     }
     return self;
 }
@@ -60,7 +61,13 @@ static const NSUInteger TPHeaderLimit = 8192, TPBodyLimit = 256;
     return self;
 }
 - (instancetype)initWithURL:(NSURL *)url queue:(dispatch_queue_t)queue timeout:(NSTimeInterval)timeout privateFixtureOrigin:(NSString *)origin fixtureCertificate:(NSData *)certificate completion:(void (^)(NSHTTPURLResponse *, NSData *, NSError *))completion {
-    if ((self = [self initWithURL:url queue:queue timeout:timeout fixtureCertificate:certificate completion:completion])) _privateFixtureOrigin = [origin copy];
+    return [self initWithURL:url queue:queue timeout:timeout privateFixtureOrigin:origin fixtureCertificate:certificate mixedResources:NO completion:completion];
+}
+- (instancetype)initWithURL:(NSURL *)url queue:(dispatch_queue_t)queue timeout:(NSTimeInterval)timeout privateFixtureOrigin:(NSString *)origin fixtureCertificate:(NSData *)certificate mixedResources:(BOOL)mixedResources completion:(void (^)(NSHTTPURLResponse *, NSData *, NSError *))completion {
+    if ((self = [self initWithURL:url queue:queue timeout:timeout fixtureCertificate:certificate completion:completion])) {
+        _privateFixtureOrigin = [origin copy];
+        if (mixedResources && _privateFixtureOrigin.length) _bodyLimit = TPMixedFixtureBodyLimit;
+    }
     return self;
 }
 - (void)deliver {
@@ -242,9 +249,9 @@ static const NSUInteger TPHeaderLimit = 8192, TPBodyLimit = 256;
         fields[name] = value;
     }
     NSString *length = fields[@"content-length"];
-    if (!length.length || length.length > 3 || [length rangeOfCharacterFromSet:[NSCharacterSet decimalDigitCharacterSet].invertedSet].location != NSNotFound) return NO;
+    if (!length.length || length.length > 4 || [length rangeOfCharacterFromSet:[NSCharacterSet decimalDigitCharacterSet].invertedSet].location != NSNotFound) return NO;
     NSUInteger number = length.integerValue;
-    if (number > TPBodyLimit || ![length isEqual:[NSString stringWithFormat:@"%lu", (unsigned long)number]] || fields[@"transfer-encoding"] || (fields[@"content-encoding"] && [fields[@"content-encoding"] caseInsensitiveCompare:@"identity"] != NSOrderedSame)) return NO;
+    if (number > self.bodyLimit || ![length isEqual:[NSString stringWithFormat:@"%lu", (unsigned long)number]] || fields[@"transfer-encoding"] || (fields[@"content-encoding"] && [fields[@"content-encoding"] caseInsensitiveCompare:@"identity"] != NSOrderedSame)) return NO;
     self.contentLength = number;
     self.response = [[NSHTTPURLResponse alloc] initWithURL:self.url statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:fields];
     return self.response != nil;

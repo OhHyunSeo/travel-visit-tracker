@@ -86,13 +86,110 @@ export function syntheticRasterStyle(origin, blocked = false, multi = false, hel
   }));
 }
 
+export function syntheticMixedStyle(origin) {
+  return Buffer.from(JSON.stringify({
+    version: 8,
+    glyphs: `${origin}/resource/glyph/{fontstack}/{range}.pbf`,
+    sprite: `${origin}/resource/sprite/mixed`,
+    sources: {
+      t: { type: "raster", tiles: [`${origin}/resource/tile/m_{z}_{x}_{y}`], tileSize: 256, minzoom: 2, maxzoom: 2 },
+      p: { type: "geojson", data: { type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [0, 0] } } },
+    },
+    layers: [
+      { id: "t", type: "raster", source: "t" },
+      { id: "s", type: "symbol", source: "p", layout: { "icon-image": "mark", "text-field": "A", "text-font": ["QA"] } },
+    ],
+  }));
+}
+
+function spriteImage(ratio) {
+  const size = 8 * ratio;
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(size, 0);
+  header.writeUInt32BE(size, 4);
+  header[8] = 8;
+  header[9] = 6;
+  const stride = 1 + size * 4;
+  const pixels = Buffer.alloc(stride * size);
+  const center = (size - 1) / 2;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      if (Math.abs(x - center) + Math.abs(y - center) <= center)
+        pixels.set([255, 155, 40, 255], y * stride + 1 + x * 4);
+    }
+  }
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk("IHDR", header), chunk("IDAT", deflateSync(pixels)), chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+function varint(value) {
+  const bytes = [];
+  while (value > 127) { bytes.push((value & 127) | 128); value >>>= 7; }
+  bytes.push(value);
+  return Buffer.from(bytes);
+}
+
+function protoBytes(field, value) {
+  const bytes = Buffer.from(value);
+  return Buffer.concat([varint((field << 3) | 2), varint(bytes.length), bytes]);
+}
+
+function protoNumber(field, value) {
+  return Buffer.concat([varint(field << 3), varint(value)]);
+}
+
+// Original synthetic A. The glyph metrics exclude the implicit 3px bitmap border.
+// https://github.com/mapbox/fontnik/blob/master/proto/glyphs.proto
+// https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/src/mln/text/glyph_pbf.cpp
+function syntheticGlyph() {
+  const mask = ["01110", "10001", "10001", "11111", "10001", "10001", "10001"];
+  const width = mask[0].length, height = mask.length, border = 3;
+  const stride = width + 2 * border, rows = height + 2 * border;
+  const ink = (x, y) => mask[y - border]?.[x - border] === "1";
+  const bitmap = Buffer.alloc(stride * rows);
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < stride; x++) {
+      let distance = 4;
+      for (let yy = 0; yy < rows; yy++) {
+        for (let xx = 0; xx < stride; xx++) {
+          if (ink(x, y) !== ink(xx, yy)) distance = Math.min(distance, Math.hypot(x - xx, y - yy));
+        }
+      }
+      const signed = (ink(x, y) ? 1 : -1) * (distance - 0.5);
+      bitmap[y * stride + x] = Math.max(0, Math.min(255, Math.round(192 + 48 * signed)));
+    }
+  }
+  const glyph = Buffer.concat([
+    protoNumber(1, 65), protoBytes(2, bitmap), protoNumber(3, width), protoNumber(4, height),
+    protoNumber(5, 0), protoNumber(6, 2 * height), protoNumber(7, width + 1), // ZigZag left=0, top=height.
+  ]);
+  const stack = Buffer.concat([protoBytes(1, "QA"), protoBytes(2, "0-255"), protoBytes(3, glyph)]);
+  return protoBytes(1, stack);
+}
+
+function mixedAssetBodies() {
+  const assets = new Map([["/resource/glyph/QA/0-255.pbf", { body: syntheticGlyph(), type: "application/x-protobuf", hold: true }]]);
+  for (const ratio of [1, 2]) {
+    const base = `/resource/sprite/mixed${ratio === 1 ? "" : "@2x"}`;
+    const size = 8 * ratio;
+    const index = { mark: { width: size, height: size, x: 0, y: 0, pixelRatio: ratio } };
+    assets.set(`${base}.json`, { body: Buffer.from(JSON.stringify(index)), type: "application/json" });
+    assets.set(`${base}.png`, { body: spriteImage(ratio), type: "image/png" });
+  }
+  return assets;
+}
+
 /** Actual SDK fixture, no proxy, external requests, user files or real map data. */
-export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan = false, tls } = {}) {
+export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan = false, tls, mixed = false } = {}) {
   if (!isAllowedFixtureHost(host, allowLan) || host === "::1" || host === "localhost")
     throw new Error("Use a literal loopback or explicitly allowed private IPv4 address");
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invalid port");
   const tlsOptions = fixtureTLSOptions(tls);
+  if (typeof mixed !== "boolean" || (mixed && !tlsOptions)) throw new Error("Mixed SDK fixture requires explicit TLS");
   const tile = syntheticRasterTile();
+  const mixedAssets = mixed ? mixedAssetBodies() : new Map();
   const requests = [], pending = new Set(), timers = new Set(), heldBodies = new Map();
   let origin, active = 0, maxActive = 0, closed = false, heldReleased = false;
   const stats = () => ({ active, maxActive, heldActive: heldBodies.size, heldReleased, resourceCount: requests.length, requests: requests.map(x => ({ ...x })) });
@@ -119,16 +216,22 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
       requests.length = 0; maxActive = 0; heldReleased = false;
       return json(200, { reset: true });
     }
-    const style = ["/resource/style/sdk", "/resource/style/multi", "/resource/style/blocked", "/resource/style/held", "/resource/style/empty"].includes(request.url);
+    const mixedStyle = mixed && request.url === "/resource/style/mixed";
+    const style = mixedStyle || ["/resource/style/sdk", "/resource/style/multi", "/resource/style/blocked", "/resource/style/held", "/resource/style/empty"].includes(request.url);
     const multiTile = /^\/resource\/tile\/2_[0-3]_[0-3]$/.test(request.url);
     const heldTile = /^\/resource\/tile\/h_2_[0-3]_[0-3]$/.test(request.url);
-    if (!style && !multiTile && !heldTile && request.url !== "/resource/tile/0_0_0") return json(404, { error: "Unknown synthetic SDK resource" });
-    const body = request.url === "/resource/style/empty" ? Buffer.from('{"version":8,"sources":{},"layers":[]}')
-      : style ? syntheticRasterStyle(origin, request.url.endsWith("/blocked"), request.url.endsWith("/multi"), request.url.endsWith("/held")) : tile;
-    if (body.length > 256) return json(500, { error: "Synthetic reservation exceeded" });
+    const mixedTile = mixed && /^\/resource\/tile\/m_2_[0-3]_[0-3]$/.test(request.url);
+    const asset = mixedAssets.get(request.url);
+    if (!style && !multiTile && !heldTile && !mixedTile && !asset && request.url !== "/resource/tile/0_0_0") return json(404, { error: "Unknown synthetic SDK resource" });
+    const body = mixedStyle ? syntheticMixedStyle(origin)
+      : request.url === "/resource/style/empty" ? Buffer.from('{"version":8,"sources":{},"layers":[]}')
+      : style ? syntheticRasterStyle(origin, request.url.endsWith("/blocked"), request.url.endsWith("/multi"), request.url.endsWith("/held")) : (asset?.body ?? tile);
+    if (body.length > (mixedStyle ? 1024 : 256)) return json(500, { error: "Synthetic reservation exceeded" });
+    // Sprite documents finish before the barrier so SDK style loading cannot deadlock on them.
+    const hold = heldTile || mixedTile || asset?.hold === true;
     const entry = {
       path: request.url, bytes: body.length, bytesWritten: 0, finished: false,
-      held: heldTile, closedBeforeFinish: false,
+      held: hold, closedBeforeFinish: false,
       ua: request.headers["user-agent"] ?? null,
       receivedAuthHeader: request.headers.authorization !== undefined,
       cookieHeader: request.headers.cookie !== undefined,
@@ -146,14 +249,15 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
     };
     response.once("finish", () => { entry.finished = true; settle(); });
     response.once("close", () => { entry.closedBeforeFinish = !entry.finished; settle(); });
-    response.writeHead(200, { "Content-Type": style ? "application/json" : "image/png", "Content-Length": body.length, "Cache-Control": "no-store" });
+    const type = style ? "application/json" : (asset?.type ?? "image/png");
+    response.writeHead(200, { "Content-Type": type, "Content-Length": body.length, "Cache-Control": "no-store" });
     const sendBody = () => {
       if (settled || response.destroyed) return;
       heldBodies.delete(response);
       response.end(body);
       entry.bytesWritten = body.length; // Accepted by Node, not OS-delivered bytes.
     };
-    if (heldTile && !heldReleased) {
+    if (hold && !heldReleased) {
       response.flushHeaders();
       heldBodies.set(response, sendBody);
     } else if (multiTile) {
@@ -203,8 +307,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   for (let index = 0; index < args.length; index++) {
     const key = args[index];
     if (key === "--allow-lan" && options.allowLan === undefined) options.allowLan = true;
+    else if (key === "--mixed" && options.mixed === undefined) options.mixed = true;
     else if (["--host", "--port", "--tls-key", "--tls-cert"].includes(key) && options[key.slice(2)] === undefined && args[index + 1] !== undefined) options[key.slice(2)] = args[++index];
-    else throw new Error("Usage: sdk-server.mjs [--host IPv4] [--port 0] [--allow-lan] [--tls-key PATH --tls-cert PATH]");
+    else throw new Error("Usage: sdk-server.mjs [--host IPv4] [--port 0] [--allow-lan] [--tls-key PATH --tls-cert PATH] [--mixed]");
   }
   if (options.port !== undefined) options.port = Number(options.port);
   if ((options["tls-key"] !== undefined) !== (options["tls-cert"] !== undefined)) throw new Error("Both TLS fixture input paths are required");
