@@ -8,6 +8,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import okhttp3.Authenticator;
 import okhttp3.Call;
 import okhttp3.CookieJar;
+import okhttp3.Dispatcher;
 import okhttp3.Interceptor;
 import okhttp3.OkHttpClient;
 import okhttp3.Protocol;
@@ -15,6 +16,7 @@ import okhttp3.Request;
 
 /** A dedicated HTTP/1.1 client for exercising the fixture policy on the host. */
 final class FixtureHttpClient implements AutoCloseable {
+  private static final int MAX_ASYNC_REQUESTS = 4;
   private final OkHttpClient client;
 
   private static final class Exchange {
@@ -23,7 +25,11 @@ final class FixtureHttpClient implements AutoCloseable {
 
   FixtureHttpClient(int port, Interceptor transform) {
     FixtureRequestPolicy policy = new FixtureRequestPolicy(port);
+    Dispatcher dispatcher = new Dispatcher();
+    dispatcher.setMaxRequests(MAX_ASYNC_REQUESTS);
+    dispatcher.setMaxRequestsPerHost(MAX_ASYNC_REQUESTS);
     client = new OkHttpClient.Builder()
+        .dispatcher(dispatcher)
         .proxy(Proxy.NO_PROXY)
         .protocols(List.of(Protocol.HTTP_1_1))
         .cookieJar(CookieJar.NO_COOKIES)
@@ -55,6 +61,10 @@ final class FixtureHttpClient implements AutoCloseable {
 
   Call newCall(Request request) {
     return client.newCall(request);
+  }
+
+  int queuedAsyncCalls() {
+    return client.dispatcher().queuedCallsCount();
   }
 
   @Override public void close() {
