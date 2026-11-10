@@ -1,5 +1,11 @@
 # Trip Painting development rules
 
+## 작업 채팅 운영
+
+- 사용자는 `체크리스트 진행` 채팅에서 공통·iOS와 Android에 한 번만 진행을 지시합니다. 범위를 따로 지정하지 않은 진행·재개 요청이면 이 채팅에서 공통·iOS 항목을 이어가고, 기존 `Android 개발·검증` 채팅에도 저장된 다음 항목을 전달합니다. Android가 이미 진행 중이면 같은 요청을 보내지 않습니다.
+- 각 채팅은 자기 작업 폴더에서 작업합니다. 체크리스트 담당은 양쪽의 진행, 대기 이유, 검증 결과와 저장 지점을 확인해 한 곳에 정리합니다. 공통 코드는 검증된 변경만 검토해 합치고, 두 브랜치를 자동으로 합치지 않습니다.
+- 사용자가 범위를 좁히면 그 범위를 따릅니다. 이 채팅의 중지·저장 요청은 양쪽에 적용합니다. 직접 중지 요청이 있거나 공유 5시간 한도의 잔여가 20% 미만이면, 진행 중인 항목만 정리하고 새 항목을 시작하지 않습니다. 두 채팅의 저장 상태와 미실행 항목을 확인합니다.
+
 ## Start here
 
 - Read `README.md`, `PROGRESS.md`, `PROJECT_PLAN.md`, `docs/CHECKLIST_STATUS.md`, and `docs/RESUME.md` before changing behavior. Newer dated updates take precedence over older reports.
