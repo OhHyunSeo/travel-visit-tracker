@@ -2,6 +2,14 @@
 
 마지막 갱신: 2026-11-10, Asia/Seoul.
 
+## 11월 10일 P3-02 후속: 합성 지도 요청 주소와 헤더 검사
+
+사용자가 Android도 중지 지시 또는 300분 잔여 20% 미만까지 진행하라고 지시했습니다. `53ff46e`에서 재개해 userdata 생성기 보류와 분리하고 P3-02의 호스트 작업을 이어갔습니다. 이 단위의 300분 잔여는 시작 42%, 검사 후 35%였습니다.
+
+`host-transport/FixtureRequestPolicy.java`는 변환이 끝난 OkHttp 요청에서 선택한 `127.0.0.1` 포트와 합성 스타일·타일·글꼴·스프라이트만 허용합니다. 기존 요청 헤더를 고정 User-Agent와 identity encoding으로 교체합니다. OkHttp 4.12.0·Okio 3.6.0·Kotlin 2.2.21 캐시 파일 해시 3/3을 기존 manifest와 대조한 뒤 JDK 17에서 `FixtureRequestPolicyTest`를 실행해 통과했습니다. 4종 분류, 거절 입력과 정확한 헤더 목록을 확인했습니다.
+
+이 단계는 요청 객체 검사입니다. MapLibre RN 11.5.0의 헤더 등록 시 기본 HTTP client 교체와 별도 `ModuleProvider` 경로는 소스로만 검토했습니다. 다음 단계는 이 정책을 전용 OkHttp에 연결하고 localhost에서 변환 뒤 전송 및 재전송을 관찰하는 것입니다. SDK/Android·실기기 실행과 공급원 전송은 보류이며 P3-02와 전체 완료 수를 유지합니다. [Android HTTP 확장 경로](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/ModuleProvider.java)
+
 ## 11월 10일 캐시된 userdata 생성 경로 읽기 전용 확인
 
 Android 소스 `82c41b505bf8361188d13b03f8dd2adea2a5eebc`에서 재개했고, 공통의 버전 전용 probe는 `bda9fff0d6cce8256db6f6f67eb03e101a2b6f6a` 기준으로 읽었습니다. 300분 사용량 잔여는 시작 61%, 저장 전 55%였습니다.
