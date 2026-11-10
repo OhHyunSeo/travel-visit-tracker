@@ -14,7 +14,7 @@ PRODUCT = ROOT / 'travel_visit_tracker'
 BUNDLE = 'app.trippainting.rnmapqa'
 
 
-def stage(name):
+def stage(name, sdk):
     build = HERE / '.build'
     build.mkdir(exist_ok=True)
     assert not build.is_symlink()
@@ -27,7 +27,7 @@ def stage(name):
     for item in ('Podfile.lock', 'Podfile.properties.json'):
         shutil.copyfile(PRODUCT / 'ios' / item, ios / item)
     (target / 'node_modules').symlink_to(PRODUCT / 'node_modules', target_is_directory=True)
-    cached_packages = PRODUCT / '.build' / 'ios' / 'SourcePackages'
+    cached_packages = PRODUCT / '.build' / ('device' if sdk == 'iphoneos' else 'ios') / 'SourcePackages'
     subprocess.run(['cp', '-cR', '-P', str(cached_packages), str(target / 'SourcePackages')], check=True)
 
     app = ios / 'TripPainting'
@@ -70,7 +70,8 @@ module.exports = config;
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('name', help='name for a new owned QA staging directory')
+    parser.add_argument('--sdk', choices=('iphonesimulator', 'iphoneos'), default='iphonesimulator')
     args = parser.parse_args()
     if not args.name.isascii() or not args.name.replace('-', '').isalnum():
         parser.error('use an ASCII name with letters, digits and hyphens')
-    stage(args.name)
+    stage(args.name, args.sdk)

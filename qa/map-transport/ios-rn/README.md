@@ -16,3 +16,16 @@ python3 -B qa/map-transport/ios-rn/run-simulator.py \
 다른 Ruby 설치를 사용한다면 첫 명령에 `TP_RN_RUBY`와 해당 설치의 `GEM_HOME`을 지정할 수 있습니다. 각 실행은 새 이름을 사용하세요. 빌드는 분리된 폴더와 `app.trippainting.rnmapqa` 식별자를 씁니다. 실행 도구는 전용 시뮬레이터를 만들어 127.0.0.1 합성 서버로 요청을 보낸 뒤 자신이 만든 시뮬레이터와 서버를 정리합니다. 보관하는 인증서는 공개 부분입니다.
 
 이 검사는 React Native 초기화, URL 변환, 렌더 이벤트와 시험용 HTTPS 경로를 확인합니다. 실기기, 여행색칠 제품 앱, HTTP/2와 오프라인 지도 저장은 별도 검사입니다.
+
+## iPhone 실기기에서 확인
+
+같은 소스를 개발용으로 서명합니다. 기존 여행색칠과 다른 앱 식별자를 씁니다. 시험 앱을 연결한 iPhone에 설치한 뒤, Mac과 iPhone을 같은 네트워크에 연결하고 iPhone의 잠금을 해제합니다.
+
+```sh
+APPLE_TEAM_ID="$QA_TEAM" bash qa/map-transport/ios-rn/build-ios.sh iphoneos my-device-run
+python3 -B qa/map-transport/ios-rn/capture-device.py \
+  --device "$QA_DEVICE" --origin "$QA_ORIGIN" --certificate "$QA_LEAF_DER" \
+  docs/test-results/my-rn-device-run
+```
+
+`QA_ORIGIN`은 새 [합성 서버](../fixture/sdk-server.mjs)를 실행해 얻은 Mac의 사설 HTTPS 주소입니다. 서버에 그 주소를 SAN으로 넣은 새 시험 인증서를 쓰고 공개 DER만 검사에 넘깁니다. capture 도구는 별도 시험 앱만 실행하고, 한 번의 실행에서 얻은 앱 장부와 서버 기록을 대조합니다. 개발자 신뢰와 로컬 네트워크 허용이 필요한 경우 iPhone 설정에서 시험 앱에만 적용하세요. 시험이 끝나면 이번에 설치한 시험 앱과 서버를 정리합니다.

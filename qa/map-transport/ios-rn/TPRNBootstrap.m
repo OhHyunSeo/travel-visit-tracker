@@ -6,10 +6,37 @@
 static NSString *TPRNOrigin, *TPRNRunID;
 static NSURL *TPRNDirectory;
 static MLRNTransformRequest *TPRNDelegate;
+static NSMutableArray<NSDictionary *> *TPRNRequests;
+
+@interface TPRNTransport : TPTransport
+@end
+
+@implementation TPRNTransport
+- (void)startLoading {
+    NSURLComponents *parts = [NSURLComponents componentsWithURL:self.request.URL resolvingAgainstBaseURL:NO];
+    NSString *origin = [NSString stringWithFormat:@"%@://%@:%@", parts.scheme, parts.host, parts.port];
+    NSString *path = parts.percentEncodedPath;
+    NSArray *fixturePaths = @[@"/resource/style/rn-entry", @"/resource/style/sdk",
+        @"/resource/tile/0_0_0", @"/resource/style/empty"];
+    BOOL fixtureOrigin = [origin isEqual:TPRNOrigin];
+    NSString *resource = fixtureOrigin && [fixturePaths containsObject:path ?: @""] ? path : @"other";
+    @synchronized (TPRNTransport.class) {
+        if (TPRNRequests.count < 12) {
+            [TPRNRequests addObject:@{@"fixtureOrigin": @(fixtureOrigin), @"resource": resource,
+                @"query": @(parts.percentEncodedQuery != nil), @"fragment": @(parts.fragment != nil),
+                @"get": @([self.request.HTTPMethod isEqual:@"GET"])}];
+        }
+    }
+    [super startLoading];
+}
+@end
 
 static void TPRNWrite(BOOL complete, BOOL pass, NSDictionary *native) {
+    NSArray *requests;
+    @synchronized (TPRNTransport.class) { requests = [TPRNRequests copy]; }
     NSDictionary *result = @{@"complete": @(complete), @"pass": @(pass), @"runID": TPRNRunID,
         @"process": @(NSProcessInfo.processInfo.processIdentifier), @"native": native,
+        @"observedRequests": requests,
         @"delegatePreserved": @((BOOL)(MLNNetworkConfiguration.sharedManager.delegate == TPRNDelegate))};
     NSData *data = [NSJSONSerialization dataWithJSONObject:result options:NSJSONWritingSortedKeys error:nil];
     [data writeToURL:[TPRNDirectory URLByAppendingPathComponent:@"result.json"] options:NSDataWritingAtomic error:nil];
@@ -32,7 +59,9 @@ static void TPRNWrite(BOOL complete, BOOL pass, NSDictionary *native) {
                                             maxRequests:8 maxTiles:4 maxReservedBytes:2048 certificate:leaf]) return NO;
 
     NSURLSessionConfiguration *config = NSURLSessionConfiguration.ephemeralSessionConfiguration;
-    config.protocolClasses = @[TPTransport.class];
+    TPRNOrigin = origin;
+    TPRNRequests = [NSMutableArray array];
+    config.protocolClasses = @[TPRNTransport.class];
     config.URLCache = nil;
     config.HTTPCookieStorage = nil;
     config.URLCredentialStorage = nil;
@@ -40,7 +69,6 @@ static void TPRNWrite(BOOL complete, BOOL pass, NSDictionary *native) {
     network.sessionConfiguration = config;
     TPRNDelegate = MLRNTransformRequest.sharedInstance;
     if (!TPRNDelegate || network.delegate != TPRNDelegate) return NO;
-    TPRNOrigin = origin;
     TPRNRunID = run;
     TPRNDirectory = directory;
     TPRNWrite(NO, NO, TPTransport.snapshot);
@@ -56,7 +84,8 @@ static void TPRNWrite(BOOL complete, BOOL pass, NSDictionary *native) {
         BOOL pass = delegateOK && idle && [native[@"ledgerOK"] isEqual:@YES] &&
             [native[@"blockedBeforeDispatch"] isEqual:@0] && [native[@"started"] isEqual:@3] &&
             [native[@"tlsVerifiedExchanges"] isEqual:@3] && [native[@"ledger"][@"tiles"] isEqual:@1];
-        if (pass || !delegateOK || [native[@"blockedBeforeDispatch"] unsignedIntegerValue] ||
+        BOOL blocked = [native[@"blockedBeforeDispatch"] unsignedIntegerValue] > 0;
+        if (pass || !delegateOK || (blocked && idle && [native[@"started"] unsignedIntegerValue] >= 3) ||
             [native[@"started"] unsignedIntegerValue] > 3 || NSProcessInfo.processInfo.systemUptime >= deadline) {
             [timer invalidate];
             TPRNWrite(YES, pass, native);
