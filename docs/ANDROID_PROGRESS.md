@@ -2,6 +2,14 @@
 
 마지막 갱신: 2026-11-10, Asia/Seoul.
 
+## 11월 10일 P3-02 후속: OkHttp 실제 합성 전송 경계
+
+`abdb4b4`에서 전용 HTTP/1.1 client를 추가했습니다. URL 변환 뒤 출처와 리소스를 검사하고 헤더를 고정합니다. 각 Call에 한 번의 전송 시도를 허용하고, 리다이렉트와 추가 HTTP 교환을 막습니다. 변환 과정에서 Call의 내부 상태를 잃은 요청은 연결 전에 거절합니다.
+
+JDK 17과 해시가 확인된 캐시 의존성으로 localhost 서버 두 개를 사용했습니다. `503 Retry-After: 0`에서 OkHttp 대조군은 실제 요청 2회, 보호 client는 1회였습니다. URL 변환의 두 번째 `proceed`도 전송되지 않았습니다. 정상 변환에서는 고정 User-Agent와 identity encoding이 도착했고 인증·쿠키는 없었습니다. 변환으로 다른 포트를 가리키거나 302를 반환했을 때 해당 서버 도착은 0회였습니다. `FixtureHttpClientTest`와 앞선 `FixtureRequestPolicyTest`가 통과했습니다. 300분 잔여는 시작 35%, 검사 후 27%였습니다. [실행 방법](../qa/map-transport/android/host-transport/README.md)
+
+이 시험의 한 번 제한은 OkHttp Call별 HTTP 교환에 적용됩니다. 별도의 MapLibre 새 Call, TLS/HTTP2, 예약·바이트 상한과 실제 Android/MapLibre 실행은 보류입니다. 다음은 비동기 callback이 본문을 닫기까지 자리를 유지하며 최대 4개인지 합성 서버와 대조하는 단계입니다.
+
 ## 11월 10일 P3-02 후속: 합성 지도 요청 주소와 헤더 검사
 
 사용자가 Android도 중지 지시 또는 300분 잔여 20% 미만까지 진행하라고 지시했습니다. `53ff46e`에서 재개해 userdata 생성기 보류와 분리하고 P3-02의 호스트 작업을 이어갔습니다. 이 단위의 300분 잔여는 시작 42%, 검사 후 35%였습니다.
