@@ -1,6 +1,17 @@
 # Android 개발·검증 기록
 
-마지막 갱신: 2026-11-03, Asia/Seoul.
+마지막 갱신: 2026-11-10, Asia/Seoul.
+
+## 11월 10일 캐시된 userdata 생성 경로 읽기 전용 확인
+
+Android 소스 `82c41b505bf8361188d13b03f8dd2adea2a5eebc`에서 재개했고, 공통의 버전 전용 probe는 `bda9fff0d6cce8256db6f6f67eb03e101a2b6f6a` 기준으로 읽었습니다. 300분 사용량 잔여는 시작 61%, 저장 전 55%였습니다.
+
+- **설치본 식별.** SDK launcher·macOS arm64 QEMU·`source.properties`의 SHA-256이 10월 31일 버전 조회 근거와 3/3 일치했습니다. 그때 조회한 버전은 `37.2.12.0`, 빌드는 `16428233`, 소스 변경 번호는 `CL:N/A`였습니다. 공식 릴리스는 버전을 확인하는 근거입니다. 배포 빌드에 대응하는 정확한 소스 커밋은 확인되지 않았습니다. [공식 릴리스 기록](https://developer.android.com/studio/releases/emulator#37.2.12)
+- **설치본의 호출 경로.** `nm`과 `llvm-objdump`로 동일 QEMU를 읽었습니다. `_main`은 내부 `createUserData`를 호출한 뒤 기능 플래그를 확인하고 조건에 따라 암호화 파티션 준비로 진행합니다. `createUserData` 안에는 `empty_data_disk` 문자열과 내장 `android_createEmptyExt4Image` 호출이 있습니다. 일반 시작 코드에는 `enter_qemu_main_loop`를 스레드에 넘기는 경로가 있고, 이어지는 `_run_qemu_main`·`_main_impl`에는 보드 초기화 호출이 있습니다. 공개 AOSP 소스에서도 userdata 생성은 일반 시작 과정에 들어 있습니다. [AOSP 생성 분기](https://android.googlesource.com/platform/external/qemu/+/emu-master-dev/android-qemu2-glue/main.cpp#476) · [AOSP 시작 과정](https://android.googlesource.com/platform/external/qemu/+/emu-master-dev/android-qemu2-glue/main.cpp#2504) · [AOSP QEMU 루프 진입](https://android.googlesource.com/platform/external/qemu/+/emu-master-dev/android-qemu2-glue/main.cpp#3558)
+- **전용 진입점 보류.** 검토한 실행 인터페이스에서 생성까지 도달하고 보드·게스트 초기화 전에 성공으로 반환하는 별도 경로와 고정 인자를 확인하지 못했습니다. 기존 고정 인자 `-version`은 버전 출력에서 반환합니다. `NO_VERIFIED_PRODUCER_ONLY_ENTRY`와 native admission 차단을 유지합니다. [AOSP 버전 출력 경로](https://android.googlesource.com/platform/external/qemu/+/emu-master-dev/android/android-emu/android/main-common.c#1692) · [공식 실행 옵션](https://developer.android.com/studio/run/emulator-commandline)
+- **이번 검사.** `python3 -B -m unittest discover -s qa/map-transport/android -p 'test_producer_request.py'`로 호스트 회귀 21개 통과했습니다. 생성기·formatter·이미지/마운트·AVD·emulator/ADB·Android 실행은 보류입니다. 체크리스트 완료 수에는 반영하지 않습니다. 해시와 정적 관측 위치, 실행 결과는 Git 제외 `docs/test-results/android-producer-entry-20261110/completion-summary.json`에 남겼습니다.
+
+다음 증거는 설치 빌드에 연결되는 배포 출처와 생성 전용 진입점의 정확한 고정 호출 규약입니다. 해당 진입점의 성공 및 오류 경로가 보드·게스트 초기화 전에 반환함을 먼저 확인해야 합니다. 이번 변경은 이 진행 기록만 로컬에 저장합니다.
 
 ## 11월 3일 후속 재개: producer 요청 사전 검사 구현
 
