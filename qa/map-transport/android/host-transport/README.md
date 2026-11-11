@@ -18,3 +18,5 @@ bash qa/map-transport/android/host-transport/run-tests.sh \
 `FixtureBudgetTest`는 세션의 전체 시도·타일 시도·고정 바이트 예약을 전송 전에 차감하고 완료 후에도 유지하는지 확인합니다. 같은 타일 경로를 반복하는 새 Call도 예약을 사용합니다. 이 단계의 메모리 상태는 재실행 때 보존되지 않습니다.
 
 전용 client는 응답을 `FixtureBody.guard`로 감싸 callback이 보는 스트림에 요청별 예약을 적용합니다. 응답이 거절돼도 선행 예약을 유지합니다.
+
+`FixtureBudget.open`은 private 디렉터리의 고정 파일에 예약을 append하고 강제 저장합니다. 같은 장부의 중복 writer, 설정 변경과 불완전한 기록을 거절합니다. 호출자는 client가 끝난 뒤 budget도 닫아 파일 lock을 해제합니다. `FixtureJournalTest`가 재개방, 전송 전 기록, 동시 예약과 잘린/손상된 장부를 검증합니다. 테스트는 소유 임시 파일만 정리합니다.
