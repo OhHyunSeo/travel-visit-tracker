@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AppRegistry, StyleSheet, Text, View } from 'react-native';
+import { AppRegistry, NativeModules, StyleSheet, Text, View } from 'react-native';
 import { Camera, Map, TransformRequestManager } from '@maplibre/maplibre-react-native';
 
 function Trial({ origin }) {
@@ -21,7 +21,9 @@ function Trial({ origin }) {
       <Text style={styles.label}>{rendered ? '지도 렌더 이벤트 수신' : '지도 연결 시험 중'}</Text>
       {ready && (
         <Map style={styles.map} mapStyle={`${origin}/resource/style/${path}`}
-          onDidFinishRenderingMapFully={() => setRendered(true)}>
+          onDidFinishRenderingMapFully={async () => {
+            if (!rendered && await NativeModules.TPRNProbe.confirmRendered()) setRendered(true);
+          }}>
           <Camera initialViewState={{ center: [0, 0], zoom: 0 }} />
         </Map>
       )}

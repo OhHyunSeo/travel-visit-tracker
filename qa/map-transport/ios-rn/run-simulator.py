@@ -93,7 +93,8 @@ def run(app, output, directory):
                     "--predicate", 'process == "TripPainting"'))
             ledger = json.loads((documents / "ledger.json").read_text())
             save(output, "ledger", ledger)
-            save(output, "summary", verify(result, ledger, server, origin, certificate, run_id, pid, runtime=RUNTIME))
+            save(output, "summary", verify(result, ledger, server, origin, certificate, run_id, pid,
+                                           runtime=RUNTIME, initial_style="local-empty"))
         finally:
             if fixture.poll() is None:
                 fixture.terminate()

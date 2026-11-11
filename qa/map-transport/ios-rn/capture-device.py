@@ -25,7 +25,8 @@ def copy_result(device, run, name, deadline):
         return _read(destination)
 
 
-def capture(device, origin, certificate, output):
+def capture(device, origin, certificate, output, *, initial_style="local-empty"):
+    _need(initial_style in ("local-empty", "sdk-default"), "invalid initial style mode")
     _need(urlsplit(_origin(origin)).hostname != "127.0.0.1", "use the Mac's private LAN address")
     lock = _device(device, ("info", "lockState"), deadline=time.monotonic() + 8)
     _need(lock.get("passcodeRequired") is False and lock.get("unlockedSinceBoot") is True,
@@ -40,6 +41,7 @@ def capture(device, origin, certificate, output):
 
     run = "rn-device-" + secrets.token_hex(12)
     environment = {"QA_RUN_ID": run, "QA_SERVER_ORIGIN": origin,
+                   "QA_INITIAL_STYLE": initial_style,
                    "QA_TLS_LEAF_DER_BASE64": base64.b64encode(certificate).decode("ascii")}
     launch = _device(device, ("process", "launch"),
                      ("--terminate-existing", "--environment-variables", json.dumps(environment), BUNDLE),
@@ -72,7 +74,8 @@ def capture(device, origin, certificate, output):
     _need(len(matching) == 1 and _pid(matching[0].get("processIdentifier")) == pid,
           "the original QA process was not observed at completion")
     save(output, "process-after", {"process": pid})
-    return verify(result, ledger, server, origin, certificate, run, pid, runtime="physical-iphone")
+    return verify(result, ledger, server, origin, certificate, run, pid,
+                  runtime="physical-iphone", initial_style=initial_style)
 
 
 def main():
@@ -80,10 +83,12 @@ def main():
     parser.add_argument("--device", required=True, type=uuid.UUID, help="CoreDevice identifier")
     parser.add_argument("--origin", required=True, help="exact private HTTPS fixture origin")
     parser.add_argument("--certificate", required=True, type=Path, help="the fixture's public DER certificate")
+    parser.add_argument("--initial-style", choices=("local-empty", "sdk-default"), default="local-empty")
     parser.add_argument("evidence", type=Path, help="a new evidence directory")
     args = parser.parse_args()
     try:
-        summary = capture(str(args.device).upper(), args.origin, args.certificate.read_bytes(), args.evidence)
+        summary = capture(str(args.device).upper(), args.origin, args.certificate.read_bytes(), args.evidence,
+                          initial_style=args.initial_style)
         save(args.evidence, "summary", summary)
     except (EvidenceError, OSError, KeyError) as error:
         parser.exit(1, f"Trial could not be verified: {error}\n")

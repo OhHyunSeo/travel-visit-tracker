@@ -1,6 +1,10 @@
 # React Native에서 지도 요청 확인하기
 
-작은 React Native 앱에서 실제 MapLibre 지도를 엽니다. 시작할 때 시험용 HTTPS 전송을 먼저 설정하고 MapLibre RN의 URL 변경 기능을 연결합니다. JavaScript는 첫 스타일 주소를 바꿉니다. 지도 렌더가 끝났다는 이벤트를 받으면 빈 스타일을 한 번 더 요청합니다. 서버에서 바뀐 스타일, 타일 한 장, 빈 스타일 순서가 맞고 앱의 요청 장부와도 일치해야 통과입니다.
+작은 React Native 앱에서 실제 MapLibre 지도를 엽니다. 시작할 때 시험용 HTTPS 전송을 먼저 설정하고 MapLibre RN의 URL 변경 기능을 연결합니다. JavaScript는 첫 스타일 주소를 바꿉니다. 타일을 받은 뒤 지도 렌더 이벤트가 오면 빈 스타일을 한 번 더 요청합니다. 서버에서 바뀐 스타일, 타일 한 장, 빈 스타일 순서가 맞고 앱의 요청 장부와도 일치해야 통과입니다.
+
+기본 시험은 `local-empty`입니다. 지도 뷰를 만들기 전에 SDK의 기본 스타일을 별도 시험 저장소의 빈 파일로 지정합니다. `--initial-style sdk-default`는 원인 확인용 대조 시험입니다. 이 경우 SDK 기본 스타일과 정확히 일치한 추가 요청 한 건이 전송 전에 차단되는지 따로 판정합니다. 두 모드를 서로 바꿔 기록하면 결과 검사가 거절합니다.
+
+MapLibre 6.31의 기본 스타일은 `maplibre://maps/style` 별칭입니다. SDK가 HTTP 요청으로 바꾸는 설정까지 대조해 기본 스타일 요청을 식별합니다. [지도 뷰 초기화](https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/platform/ios/src/MLNMapView.mm#L474), [기본 서버 설정](https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/src/mln/util/tile_server_options.cpp#L195)
 
 ## Mac에서 실행
 
