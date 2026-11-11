@@ -2,6 +2,9 @@
 
 마지막 갱신: 2026-11-11, Asia/Seoul.
 
+## 11월 11일 P3-02 후속: 종료 지연 시 장부 lock 보존
+
+`53082d1`에서 활성 읽기를 취소한 callback을 보류했습니다. 세션 close는 5초 뒤 lock 보존 오류를 반환했고, 새 writer와 추가 예약을 거절했습니다. callback을 반환시킨 뒤 close를 다시 호출하자 lock이 해제됐고, 장부를 재개방해 기존 1회·4바이트를 복원했습니다. `FixtureSessionCloseTest`를 포함해 Java 호스트 9묶음이 통과했습니다. 다음은 취소된 리소스 요청에 늦은 성공 callback이 전달되지 않도록 요청 소유권을 연결하는 단계입니다.
 ## 11월 11일 P3-02 후속: 공유 동시 수와 client 종료 소유권
 
 `ddaee5c`에서 네 자리의 dispatcher를 다운로드 예산 객체가 소유하도록 연결했습니다. 같은 예산의 client들은 비동기 자리와 예약을 공유합니다. client 종료는 자기 Call만 취소하며 다른 client의 executor를 끝내지 않습니다. 다운로드 세션 종료는 새 예약을 차단하고 callback이 끝난 뒤 장부 lock을 해제합니다.
