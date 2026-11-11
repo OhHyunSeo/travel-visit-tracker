@@ -2,6 +2,14 @@
 
 마지막 갱신: 2026-11-11, Asia/Seoul.
 
+## 11월 11일 P3-02 후속: 서명된 Android 시험 APK와 합성 스타일 서버
+
+Android `4233323`에서 별도 `app.trippainting.maptransportqa.sdk` arm64 Debug APK를 만들었습니다. 기존 Android 36 도구와 JDK 17, Gradle 9.3.1, 별도 시험 프로젝트의 AGP 9.1.1을 사용했습니다. 최종 `assembleDebug` 35개 task가 통과했습니다. APK 서명과 16KiB ZIP 정렬, 패키지 ID와 진입 클래스, 네트워크 권한과 패키지 전용 서명 권한, 백업·평문 통신 비활성화, 공개 인증서·포트, AAR 및 APK의 MapLibre 라이브러리 SHA-256을 대조했습니다. 위치 권한은 합쳐진 manifest에서 제외됐습니다. [AGP 호환성](https://developer.android.com/build/releases/agp-9-1-0-release-notes)
+
+Mac loopback 서버는 고정 TLS 인증서로 124바이트의 지도 스타일을 한 번 반환했고, 잘못된 경로와 query에는 404, POST에는 405를 반환했습니다. 이 서버는 검사 종료 시 닫았습니다. 생성한 APK 중 처음 빌드한 중복본과 전용 Gradle 캐시 525MiB를 정리했고, 검증된 19MiB APK와 합성 TLS 자료를 보존했습니다. 그 사이 디스크 가용량은 약 547MiB 늘었습니다. 기존 SDK·AVD와 개인 앱 자료는 보존했습니다.
+
+APK와 Mac 서버까지 확인했습니다. Android 기기 설치·실행, JNI 초기화, 렌더링과 기기 측 실제 저장은 보류입니다. 다음 런타임 시험은 별도 Android 환경에서 앱의 loopback이 합성 서버에 도달하는 경로가 필요합니다. 기존 AVD 시작이나 native admission 변경은 하지 않았습니다.
+
 ## 11월 11일 P3-02 후속: 별도 Android 시험 앱 시작 코드 컴파일
 
 격리 시험 앱에 별도 패키지 ID를 적용했습니다. Application에서 주소와 인증서를 고정하고 앱 전용 장부를 연 뒤 MapLibre 공급자를 설치합니다. MapLibre 리소스 경로가 앱 내부 파일 디렉터리 안인지 확인합니다. Activity는 합성 스타일의 `fixture-background` 레이어가 로드되면 예약 합계를 기록합니다.
