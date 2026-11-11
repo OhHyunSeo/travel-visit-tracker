@@ -90,7 +90,7 @@ public final class FixtureCancellationTest {
     }
   }
 
-  public static void main(String[] args) throws Exception {
+  private static void scenario(boolean tls) throws Exception {
     CountDownLatch release = new CountDownLatch(1);
     CountDownLatch reading = new CountDownLatch(4);
     CountDownLatch cancelObserved = new CountDownLatch(1);
@@ -98,9 +98,10 @@ public final class FixtureCancellationTest {
     CountDownLatch fifthArrived = new CountDownLatch(1);
     AtomicInteger requests = new AtomicInteger();
     ExecutorService workers = Executors.newFixedThreadPool(5);
-    HttpServer server = HttpServer.create();
+    java.security.KeyStore keys = tls ? FixtureTlsTest.keys("loopback") : null;
+    HttpServer server = tls ? FixtureTlsTest.server(keys) : HttpServer.create();
     try {
-      server.bind(new InetSocketAddress("127.0.0.1", 0), 0);
+      if (!tls) server.bind(new InetSocketAddress("127.0.0.1", 0), 0);
       server.setExecutor(workers);
       server.createContext("/", exchange -> {
         requests.incrementAndGet();
@@ -110,8 +111,12 @@ public final class FixtureCancellationTest {
       });
       server.start();
       int port = server.getAddress().getPort();
-      String base = "http://127.0.0.1:" + port + "/resource/tile/h_";
-      try (FixtureHttpClient client = new FixtureHttpClient(port, chain -> chain.proceed(chain.request()))) {
+      String base = (tls ? "https" : "http") + "://127.0.0.1:" + port + "/resource/tile/h_";
+      try (FixtureBudget budget = new FixtureBudget(10, 10, 4, 40);
+           FixtureHttpClient client = tls
+               ? FixtureHttpClient.https(port, chain -> chain.proceed(chain.request()), budget,
+                   (java.security.cert.X509Certificate) keys.getCertificate("fixture"))
+               : new FixtureHttpClient(port, chain -> chain.proceed(chain.request()), budget)) {
         List<Read> reads = new ArrayList<>();
         List<Call> calls = new ArrayList<>();
         for (int index = 0; index < 4; index++) {
@@ -144,13 +149,20 @@ public final class FixtureCancellationTest {
         check(reads.stream().allMatch(read -> read.callbacks.get() == 1) && fifth.callbacks.get() == 1,
             "exactly one callback per Call after duplicate cancellation");
         check(requests.get() == 5, "no automatic replay after active cancellation");
+        check(budget.snapshot().attempts == 5 && budget.snapshot().reservedBytes == 20, "cancelled reservation retained");
       }
-      System.out.println("FixtureCancellation PASS: active cancel closes body, slot waits for callback, fifth completes, 5 callbacks");
+      System.out.println("FixtureCancellation " + (tls ? "HTTPS" : "HTTP")
+          + " PASS: active cancel closes body, slot waits for callback, fifth completes, 20 reserved");
     } finally {
       exitCallback.countDown();
       release.countDown();
       server.stop(0);
       workers.shutdownNow();
     }
+  }
+
+  public static void main(String[] args) throws Exception {
+    scenario(false);
+    scenario(true);
   }
 }

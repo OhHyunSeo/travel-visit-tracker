@@ -79,7 +79,7 @@ public final class FixtureBodyQueueTest {
     }
   }
 
-  public static void main(String[] args) throws Exception {
+  private static void scenario(boolean tls) throws Exception {
     CountDownLatch release = new CountDownLatch(1);
     CountDownLatch reading = new CountDownLatch(4);
     AtomicInteger opened = new AtomicInteger();
@@ -87,9 +87,10 @@ public final class FixtureBodyQueueTest {
     Set<String> paths = ConcurrentHashMap.newKeySet();
     AtomicInteger received = new AtomicInteger();
     ExecutorService workers = Executors.newFixedThreadPool(6);
-    HttpServer server = HttpServer.create();
+    java.security.KeyStore keys = tls ? FixtureTlsTest.keys("loopback") : null;
+    HttpServer server = tls ? FixtureTlsTest.server(keys) : HttpServer.create();
     try {
-      server.bind(new InetSocketAddress("127.0.0.1", 0), 0);
+      if (!tls) server.bind(new InetSocketAddress("127.0.0.1", 0), 0);
       server.setExecutor(workers);
       server.createContext("/", exchange -> {
         String path = exchange.getRequestURI().getPath();
@@ -99,14 +100,18 @@ public final class FixtureBodyQueueTest {
       });
       server.start();
       int port = server.getAddress().getPort();
-      String base = "http://127.0.0.1:" + port;
-      try (FixtureHttpClient client = new FixtureHttpClient(port, chain -> chain.proceed(chain.request()))) {
+      String base = (tls ? "https" : "http") + "://127.0.0.1:" + port;
+      try (FixtureBudget budget = new FixtureBudget(10, 10, 4, 40);
+           FixtureHttpClient client = tls
+               ? FixtureHttpClient.https(port, chain -> chain.proceed(chain.request()), budget,
+                   (java.security.cert.X509Certificate) keys.getCertificate("fixture"))
+               : new FixtureHttpClient(port, chain -> chain.proceed(chain.request()), budget)) {
         List<CompletableFuture<Integer>> held = HELD.stream().map(path -> {
           CompletableFuture<Integer> result = new CompletableFuture<>();
           enqueue(client, base, path, reading, result);
           return result;
         }).collect(java.util.stream.Collectors.toList());
-        check(reading.await(2, TimeUnit.SECONDS), "first four callbacks read an incomplete body");
+        check(reading.await(3, TimeUnit.SECONDS), "first four callbacks read an incomplete body");
         CompletableFuture<Integer> waiting = new CompletableFuture<>();
         CompletableFuture<Integer> cancelled = new CompletableFuture<>();
         enqueue(client, base, WAITING, null, waiting);
@@ -126,12 +131,19 @@ public final class FixtureBodyQueueTest {
         }
         check(peak.get() == 4 && received.get() == 5 && paths.contains(WAITING) && !paths.contains(CANCELLED),
             "server saw five requests and a peak of four held bodies");
+        check(budget.snapshot().attempts == 5 && budget.snapshot().reservedBytes == 20, "only transmitted calls charged");
       }
-      System.out.println("FixtureBodyQueue PASS: 4 held, 2 queued, 1 cancelled before send, 5 received");
+      System.out.println("FixtureBodyQueue " + (tls ? "HTTPS" : "HTTP")
+          + " PASS: 4 held, 2 queued, 1 cancelled before send, 5 received, 20 reserved");
     } finally {
       release.countDown();
       server.stop(0);
       workers.shutdownNow();
     }
+  }
+
+  public static void main(String[] args) throws Exception {
+    scenario(false);
+    scenario(true);
   }
 }
