@@ -6,7 +6,9 @@
 
 공통 검사와 양쪽 JS/Hermes 생성, 새 결과 대조 회귀 10개와 iPhone 서명 빌드가 통과했습니다. 처음 준비한 대조 시험은 별칭을 HTTP 주소로 취급한 검사 때문에 결과를 만들지 못했습니다. 별칭의 실제 HTTP 주소를 SDK 설정과 대조하도록 보완해 다시 빌드했습니다. 개발자 신뢰 거절, 이 준비 오류, 잠금과 로컬 네트워크 거절 시도는 통과에서 제외했습니다. iPhone은 셀룰러, Mac은 iPhone 핫스팟이며 권한 허용 뒤 통과했습니다. [실행 방법](../qa/map-transport/ios-rn/README.md)
 
-로컬 시작 파일도 기기에서 받아 내용을 대조했습니다. 시험 앱과 소유 서버를 정리했고 기존 여행색칠 설치 정보는 전후가 같았습니다. 원문은 Git 제외 `docs/test-results/sdk-rn-bootstrap-20261111/`, 검증 앱은 `qa/map-transport/ios-rn/.build/pinned-rn-bootstrap-20261111/`에 보관했습니다. 이번 생성 파일 40개와 중간 빌드를 정리했습니다. 다음은 제품의 Expo 초기화에 로컬 시작 설정을 반영할 경로를 검토하는 작업입니다. 전체 24/54, P3-02 부분, G1~G4 미완료입니다.
+로컬 시작 파일도 기기에서 받아 내용을 대조했습니다. 시험 앱과 소유 서버를 정리했고 기존 여행색칠 설치 정보는 전후가 같았습니다. 원문은 Git 제외 `docs/test-results/sdk-rn-bootstrap-20261111/`, 검증 앱은 `qa/map-transport/ios-rn/.build/pinned-rn-bootstrap-20261111/`에 보관했습니다. 이번 생성 파일 40개와 중간 빌드를 정리했습니다.
+
+후속 제품 경로 검토도 마쳤습니다. Expo의 AppDelegate hook과 Xcode 자원 등록을 함께 사용하며, React factory 생성 전 호출 위치와 반복 생성의 중복 방지를 메모리 사본에서 확인했습니다. 다음은 이 config plugin과 native helper, 빈 스타일 자원 및 자원 오류 시 처리를 구현하는 작업입니다. 전체 24/54, P3-02 부분, G1~G4 미완료입니다.
 
 ## 11월 10일 5시간 한도에 맞춰 양쪽 저장
 

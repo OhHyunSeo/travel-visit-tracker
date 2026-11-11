@@ -4,6 +4,8 @@
 
 실제 iPhone의 별도 앱에서 SDK 기본 스타일 요청을 식별했습니다. React Native가 지도 뷰를 만들 때 SDK 기본 스타일을 먼저 여는 경로이며, 로컬 빈 파일을 기본값으로 설정한 경우 이 추가 HTTP 요청이 없어졌습니다. 같은 서명 앱의 두 모드에서 합성 HTTPS 세 건과 렌더 확인을 대조했습니다. 다음 제품 적용 검토는 Expo 초기화에서 지도를 만들기 전에 이 설정을 호출하는 경로입니다. [실기기 결과와 범위](RESUME.md)
 
+제품 적용 위치도 검토했습니다. Expo의 `withAppDelegate`에서 React factory 생성 전에 호출을 넣고, `withXcodeProject`로 native helper와 빈 스타일 자원을 함께 등록하는 경로입니다. 설치된 Expo의 문자열 삽입 도구를 메모리 속 AppDelegate 사본에 적용해 위치, 중복 삽입 방지와 템플릿 변경 시 거절을 확인했습니다. 다음 구현에는 helper·자원 등록과 자원 오류 때 외부 기본값으로 돌아가지 않는 처리가 필요합니다. 이 검토의 근거는 로컬 `sdk-rn-bootstrap-20261111/expo-hook-review.json`에 남겼습니다.
+
 ## 2026-11-02 최신: HTTPS 장부와 대기열 확인
 
 선택적 loopback TLS를 같은 영속 장부·전역 자리 수명에 연결했고 Mac 실제 gate8개를 통과했습니다. 기존 TLS기본7과 구분하며, pin/한도/origin 고정·실패/명시적 재시도·대기/취소 및 실제 CLI SIGKILL 뒤 기존 미확정4개·예약 보존을 확인했습니다. [세부 범위](../qa/map-transport/ios/README.md)를 따릅니다. native permit과 보류 응답 본문 수를 관측했으며 모든 TLS socket 수나 OS 전체 수신량을 보장한 결과는 아닙니다.
