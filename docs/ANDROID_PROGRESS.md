@@ -2,6 +2,11 @@
 
 마지막 갱신: 2026-11-11, Asia/Seoul.
 
+## 11월 11일 5시간 잔여 18% 저장·중지
+
+최종 실행 소스는 `a40ad55`입니다. 저장 뒤 300분 잔여를 18%로 확인해 추가 항목을 시작하지 않고 중지합니다. Java 호스트 14묶음과 추가 HTTPS 본문 대기·활성 취소·프로세스 종료 사례 3개가 통과했습니다. 전용 임시 서버·자식과 인증서·키·컴파일 폴더는 runner에서 정리했습니다. 고정 소스 SHA와 최종 검사 범위는 Git 제외 `docs/test-results/android-host-transport-20261111/completion-summary.json`에 저장합니다.
+
+다음 새 재개에서는 실제 MapLibre Android ModuleProvider에 연결할 어댑터 소스와 라이브러리 loader 위임을 먼저 확인합니다. 현재 host-contract 서명 검증 뒤에는 실제 SDK·JNI·RN 연결, 조건부·range 요청, offline pack 귀속, Android·실기기·HTTP/2와 OS 실제 수신량 검증이 남아 있습니다. userdata 생성 전용 진입점과 native admission의 미입증 조건도 유지합니다. 체크리스트 전체 수는 공통 담당의 기존 24/54·P3-02 부분 완료·G1~G4 미완료를 따릅니다. 이번 Android는 공통/iOS·기존 SDK/AVD·개인 자료와 공유 생성 폴더를 편집하지 않았으며 새 native build·push/PR/CI는 실행하지 않았습니다.
 ## 11월 11일 P3-02 후속: HTTPS 프로세스 종료와 장부 복구
 
 `71096f6`에서 인증서가 고정된 HTTPS 본문 수신 중 자식을 강제 종료했습니다. exit 137과 wait 완료 뒤 장부가 이전 1회·타일 1회·4바이트를 복원했습니다. 새 client가 같은 타일을 받아 총 2회·8바이트가 됐고 세 번째 Call은 전송되지 않았습니다. 해당 서버 도착은 정확히 2회였습니다. 기존 HTTP의 전송 전·본문 중 종료 사례도 통과했습니다.
