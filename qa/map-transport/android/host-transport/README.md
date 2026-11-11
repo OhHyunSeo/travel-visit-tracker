@@ -33,7 +33,7 @@ MapLibre OpenGL 13.6.1 AAR과 기존 Android 36 `android.jar`를 네 번째와 �
 
 `FixtureSessionCloseTest`는 callback이 지연된 실제 close timeout에서 writer lock을 보존하고, callback 종료 후 close 재시도로 장부를 재개방하는지 확인합니다.
 
-`FixtureMapLibreRequest`는 취소된 리소스 객체에 늦은 완료를 전달하지 않는 합성 어댑터입니다. `FixtureMapLibreRequestTest`가 정상 변환·본문·응답 헤더, 한 번 실행, 취소와 같은 타일 재로딩의 예약을 검증합니다. 조건부·range 요청은 지원하지 않습니다.
+`FixtureMapLibreRequest`는 취소된 리소스 객체에 늦은 완료를 전달하지 않는 합성 어댑터입니다. `FixtureMapLibreRequestTest`가 정상 변환·본문·응답 헤더, 한 번 실행, 취소와 같은 타일 재로딩의 예약을 검증합니다. `FixtureConditionalRequestTest`는 단일 ETag 우선 또는 HTTP 날짜로 재검증하고, 조건부 요청에 대한 빈 304만 받으며, 전송한 모든 요청의 예약을 보존하는지 검사합니다. Range 요청은 계속 거절합니다.
 
 `sdk-contract`는 [MapLibre Native 13.6.1 HttpRequest](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/http/HttpRequest.java)와 [HttpResponder](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/http/HttpResponder.java)의 공개 API 서명만 포함합니다. 라이선스는 해당 폴더의 `LICENSE.maplibre`에 보존했습니다. 이 runner는 그 인터페이스로 호스트 컴파일하며, 실제 SDK 바이너리·JNI·RN 연결은 별도 검증 범위입니다. Android 빌드에서는 이 호스트 계약 파일을 포함하지 않습니다.
 

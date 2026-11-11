@@ -22,11 +22,19 @@ final class FixtureBody {
       throw new IOException("Encoded fixture body refused");
     }
     List<String> lengths = response.headers("Content-Length");
+    ResponseBody body = response.body();
+    if (response.code() == 304) {
+      if (response.request().tag(FixtureRequestPolicy.Validator.class) == null
+          || !response.headers("Transfer-Encoding").isEmpty() || (!lengths.isEmpty() && !lengths.equals(List.of("0")))
+          || body == null || body.contentLength() != 0) {
+        throw new IOException("Fixture 304 requires a validator and an empty body");
+      }
+      return 0;
+    }
     if (!response.headers("Transfer-Encoding").isEmpty() || lengths.size() != 1 || !lengths.get(0).matches("[0-9]{1,5}")) {
       throw new IOException("Fixture requires one fixed Content-Length");
     }
     int length = Integer.parseInt(lengths.get(0));
-    ResponseBody body = response.body();
     if (length < 1 || length > reservation || body == null || body.contentLength() != length) {
       throw new IOException("Fixture body exceeds reservation or length disagrees");
     }

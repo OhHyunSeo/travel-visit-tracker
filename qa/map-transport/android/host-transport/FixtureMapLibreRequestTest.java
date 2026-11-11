@@ -98,7 +98,7 @@ public final class FixtureMapLibreRequestTest {
           new FixtureMapLibreRequest(client).executeRequest(invalid, 0, base + "/resource/style/sdk",
               field == 0 ? "bytes=0-1" : "", field == 1 ? "etag" : "", field == 2 ? "modified" : "", false);
           check("failure:2".equals(invalid.result.get(2, TimeUnit.SECONDS)) && invalid.callbacks.get() == 1,
-              "unsupported conditional/range metadata refused");
+              "invalid conditional or unsupported range metadata refused");
         }
         HttpRequest active = new FixtureMapLibreRequest(client);
         execute(active, cancelled, base + "/resource/tile/0_0_0");

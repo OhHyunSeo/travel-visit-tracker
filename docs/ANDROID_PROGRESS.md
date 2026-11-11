@@ -2,6 +2,12 @@
 
 마지막 갱신: 2026-11-11, Asia/Seoul.
 
+## 11월 11일 P3-02 후속: Android 조건부 HTTPS 요청
+
+MapLibre Android 13.6.1의 ETag 우선순위를 따릅니다. 합성 어댑터가 검증한 단일 ETag 또는 GMT HTTP 날짜만 요청에 추가하고, 변환기가 추가한 임의 조건부 헤더는 제거합니다. 조건부 304는 빈 본문으로 전달합니다. 조건 없는 304, 양수 길이의 304, 잘못된 태그와 날짜는 거절합니다. 합성 서버에 도착한 5회는 응답 수락 여부와 관계없이 각각 4바이트를 예약했습니다. [MapLibre 기본 요청 구현](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/module/http/HttpRequestImpl.java)
+
+배포 AAR Java 호스트 17묶음과 Android 36 소스·DEX 검사가 통과했습니다. 보존한 서명 APK는 직전 패키징 단위의 기본 스타일 실행용입니다. 이번 변경의 APK 재패키징·기기 설치, JNI callback과 팩 귀속은 보류입니다. 다음은 단일 닫힌 바이트 범위와 206의 정확한 범위를 검사하는 것입니다.
+
 ## 11월 11일 P3-02 후속: 서명된 Android 시험 APK와 합성 스타일 서버
 
 Android `4233323`에서 별도 `app.trippainting.maptransportqa.sdk` arm64 Debug APK를 만들었습니다. 기존 Android 36 도구와 JDK 17, Gradle 9.3.1, 별도 시험 프로젝트의 AGP 9.1.1을 사용했습니다. 최종 `assembleDebug` 35개 task가 통과했습니다. APK 서명과 16KiB ZIP 정렬, 패키지 ID와 진입 클래스, 네트워크 권한과 패키지 전용 서명 권한, 백업·평문 통신 비활성화, 공개 인증서·포트, AAR 및 APK의 MapLibre 라이브러리 SHA-256을 대조했습니다. 위치 권한은 합쳐진 manifest에서 제외됐습니다. [AGP 호환성](https://developer.android.com/build/releases/agp-9-1-0-release-notes)
