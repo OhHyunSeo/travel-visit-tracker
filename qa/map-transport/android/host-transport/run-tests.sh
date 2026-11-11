@@ -25,7 +25,8 @@ qa_root=$(cd -- "$(dirname -- "$0")" && pwd)
 qa_temp=$(mktemp -d "${TMPDIR:-/tmp}/trip-map-host.XXXXXXXX")
 trap 'rm -rf -- "$qa_temp"' EXIT
 qa_classpath="$1:$2:$3"
-javac --release 11 -cp "$qa_classpath" -d "$qa_temp" "$qa_root"/*.java
+javac --release 11 -cp "$qa_classpath" -d "$qa_temp" "$qa_root"/*.java \
+  "$qa_root"/sdk-contract/org/maplibre/android/http/*.java
 for qa_test in "$qa_root"/*Test.java; do
   qa_name=${qa_test##*/}
   java -cp "$qa_temp:$qa_classpath" "app.trippainting.maptransportqa.${qa_name%.java}"

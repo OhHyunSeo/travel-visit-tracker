@@ -2,6 +2,11 @@
 
 마지막 갱신: 2026-11-11, Asia/Seoul.
 
+## 11월 11일 P3-02 후속: 리소스 어댑터의 취소·완료 소유권
+
+`d9434e1`에서 합성 `FixtureMapLibreRequest`를 추가했습니다. MapLibre Native 13.6.1의 공개 HttpRequest/HttpResponder 서명으로 호스트 컴파일하고, 요청 객체 한 번 실행·본문 전체 확인·동기화된 완료/취소 소유권을 검증했습니다. 전송 전 취소, 진행 중 중복 취소의 responder 호출은 0회였고 정상 결과는 한 번만 전달됐습니다. 같은 타일을 새 객체로 다시 요청하면 기존 취소 예약을 남긴 채 총 3회·타일 2회·12바이트가 됐습니다. 조건부·range 입력은 합성 경로에서 요청 전에 거절했습니다.
+
+Java 호스트 10묶음이 통과했습니다. 실제 SDK 바이너리·ModuleProvider·JNI·RN과 Android 실행은 보류입니다. 호스트용 API 서명은 `sdk-contract`에 두고 출처와 BSD-2-Clause 고지를 보존했습니다. 다음은 영속 예약 실패가 실제 요청 송신을 막는지, 어댑터 완료 경쟁에서 callback 수가 유지되는지 검증하는 것입니다. [공개 요청 인터페이스](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/http/HttpRequest.java) · [공개 응답 인터페이스](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/http/HttpResponder.java)
 ## 11월 11일 P3-02 후속: 종료 지연 시 장부 lock 보존
 
 `53082d1`에서 활성 읽기를 취소한 callback을 보류했습니다. 세션 close는 5초 뒤 lock 보존 오류를 반환했고, 새 writer와 추가 예약을 거절했습니다. callback을 반환시킨 뒤 close를 다시 호출하자 lock이 해제됐고, 장부를 재개방해 기존 1회·4바이트를 복원했습니다. `FixtureSessionCloseTest`를 포함해 Java 호스트 9묶음이 통과했습니다. 다음은 취소된 리소스 요청에 늦은 성공 callback이 전달되지 않도록 요청 소유권을 연결하는 단계입니다.
