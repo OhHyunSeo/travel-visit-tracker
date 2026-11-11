@@ -5,6 +5,7 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import okhttp3.Headers;
 import okhttp3.HttpUrl;
@@ -22,6 +23,41 @@ final class FixtureRequestPolicy {
   private static final Pattern SPRITE = Pattern.compile("/resource/sprite/mixed(?:@2x)?\\.(?:json|png)");
   private static final Pattern ETAG = Pattern.compile("(?:W/)?\"[\\x21\\x23-\\x7e]{0,120}\"");
   private static final Pattern HTTP_DATE = Pattern.compile("[A-Z][a-z]{2}, [0-9]{2} [A-Z][a-z]{2} [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT");
+  private static final String DECIMAL = "(?:0|[1-9][0-9]{0,18})";
+  private static final Pattern RANGE = Pattern.compile("bytes=(" + DECIMAL + ")-(" + DECIMAL + ")");
+  private static final Pattern RESOURCE_LENGTH = Pattern.compile(DECIMAL);
+
+  static final class ByteRange {
+    private final long first;
+    private final long last;
+    final int length;
+
+    private ByteRange(long first, long last) {
+      if (last < first || last - first >= 65_536) throw new IllegalArgumentException("Invalid fixture byte range");
+      this.first = first;
+      this.last = last;
+      this.length = (int) (last - first + 1);
+    }
+
+    static ByteRange parse(String value) {
+      if (value.isEmpty()) return null;
+      Matcher match = RANGE.matcher(value);
+      if (!match.matches()) throw new IllegalArgumentException("Invalid fixture byte range");
+      return new ByteRange(Long.parseLong(match.group(1)), Long.parseLong(match.group(2)));
+    }
+
+    boolean matchesContentRange(String header) {
+      String prefix = "bytes " + first + "-" + last + "/";
+      if (!header.startsWith(prefix)) return false;
+      String total = header.substring(prefix.length());
+      if (!RESOURCE_LENGTH.matcher(total).matches()) return false;
+      try {
+        return Long.parseLong(total) > last;
+      } catch (NumberFormatException error) {
+        return false;
+      }
+    }
+  }
 
   static final class Validator {
     private final String header;
@@ -83,6 +119,8 @@ final class FixtureRequestPolicy {
         "User-Agent", USER_AGENT, "Accept-Encoding", "identity"));
     Validator validator = transformed.tag(Validator.class);
     if (validator != null) request.header(validator.header, validator.value);
+    ByteRange range = transformed.tag(ByteRange.class);
+    if (range != null) request.header("Range", "bytes=" + range.first + "-" + range.last);
     return request.build();
   }
 }

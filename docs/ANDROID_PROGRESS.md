@@ -2,6 +2,12 @@
 
 마지막 갱신: 2026-11-11, Asia/Seoul.
 
+## 11월 11일 P3-02 후속: Android 단일 바이트 범위와 팩 귀속 조사
+
+합성 어댑터는 요청별 예약 안의 단일 닫힌 범위만 전송합니다. 시작·끝·전체 길이와 일치하는 단일 `Content-Range`, 정확한 고정 길이와 206, 또는 검증자를 보낸 요청의 빈 304만 받습니다. 서버가 범위를 무시하고 돌려준 200, 범위나 길이가 다른 206, multipart, 범위를 보내지 않은 206은 거절했습니다. 합성 서버의 요청 7회, 타일 1회, 예약 28바이트를 대조했습니다. 예약을 넘는 범위와 열린 범위, 접미 범위, 다중 범위, 역순·오버플로는 전송하지 않았습니다. 배포 AAR Java 호스트 18묶음과 Android 36 소스·DEX 검사가 통과했습니다.
+
+배포 클래스의 `OfflineRegion`은 ID·메타데이터를 제공합니다. Java HTTP 요청에는 요청 포인터, URL, 범위·검증자와 오프라인 용도의 불리언 값이 전달됩니다. 이 인터페이스만으로는 어떤 팩의 요청인지 결정할 수 없어 장부를 시험 세션 단위로 유지합니다. 팩 귀속에는 별도 연결과 검증이 필요합니다. [MapLibre Java 요청 인터페이스](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/http/HttpRequest.java)
+
 ## 11월 11일 P3-02 후속: Android 조건부 HTTPS 요청
 
 MapLibre Android 13.6.1의 ETag 우선순위를 따릅니다. 합성 어댑터가 검증한 단일 ETag 또는 GMT HTTP 날짜만 요청에 추가하고, 변환기가 추가한 임의 조건부 헤더는 제거합니다. 조건부 304는 빈 본문으로 전달합니다. 조건 없는 304, 양수 길이의 304, 잘못된 태그와 날짜는 거절합니다. 합성 서버에 도착한 5회는 응답 수락 여부와 관계없이 각각 4바이트를 예약했습니다. [MapLibre 기본 요청 구현](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/module/http/HttpRequestImpl.java)

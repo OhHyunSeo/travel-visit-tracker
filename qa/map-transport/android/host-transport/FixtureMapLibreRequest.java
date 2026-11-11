@@ -27,9 +27,10 @@ final class FixtureMapLibreRequest implements HttpRequest {
     executed = true;
     if (terminal) return;
     try {
-      if (!dataRange.isEmpty()) throw new IllegalArgumentException("Range fixture requests are unsupported");
+      FixtureRequestPolicy.ByteRange range = FixtureRequestPolicy.ByteRange.parse(dataRange);
       FixtureRequestPolicy.Validator validator = FixtureRequestPolicy.Validator.select(etag, modified);
       call = client.newCall(new Request.Builder().url(resourceUrl)
+          .tag(FixtureRequestPolicy.ByteRange.class, range)
           .tag(FixtureRequestPolicy.Validator.class, validator).build());
       call.enqueue(new Callback() {
         @Override public void onFailure(Call failed, IOException error) { failure(responder, error); }

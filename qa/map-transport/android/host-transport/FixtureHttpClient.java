@@ -61,6 +61,8 @@ final class FixtureHttpClient implements AutoCloseable {
         .addInterceptor(chain -> {
           Request request = policy.prepare(chain.request());
           if (request.tag(Exchange.class) == null) throw new ProtocolException("Fixture exchange context lost");
+          FixtureRequestPolicy.ByteRange range = request.tag(FixtureRequestPolicy.ByteRange.class);
+          if (range != null && range.length > budget.bytesPerAttempt) throw new ProtocolException("Fixture byte range exceeds reservation");
           return chain.proceed(request);
         })
         .addNetworkInterceptor(chain -> {

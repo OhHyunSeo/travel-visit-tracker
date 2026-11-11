@@ -22,11 +22,12 @@ final class FixtureBody {
       throw new IOException("Encoded fixture body refused");
     }
     List<String> lengths = response.headers("Content-Length");
+    List<String> contentRanges = response.headers("Content-Range");
     ResponseBody body = response.body();
     if (response.code() == 304) {
       if (response.request().tag(FixtureRequestPolicy.Validator.class) == null
           || !response.headers("Transfer-Encoding").isEmpty() || (!lengths.isEmpty() && !lengths.equals(List.of("0")))
-          || body == null || body.contentLength() != 0) {
+          || !contentRanges.isEmpty() || body == null || body.contentLength() != 0) {
         throw new IOException("Fixture 304 requires a validator and an empty body");
       }
       return 0;
@@ -37,6 +38,14 @@ final class FixtureBody {
     int length = Integer.parseInt(lengths.get(0));
     if (length < 1 || length > reservation || body == null || body.contentLength() != length) {
       throw new IOException("Fixture body exceeds reservation or length disagrees");
+    }
+    FixtureRequestPolicy.ByteRange range = response.request().tag(FixtureRequestPolicy.ByteRange.class);
+    if (range == null) {
+      if (response.code() == 206 || !contentRanges.isEmpty()) throw new IOException("Unsolicited fixture partial response");
+    } else if (response.code() != 206 || length != range.length || contentRanges.size() != 1
+        || !range.matchesContentRange(contentRanges.get(0))
+        || (body.contentType() != null && "multipart".equals(body.contentType().type()))) {
+      throw new IOException("Fixture partial response does not match requested byte range");
     }
     return length;
   }
