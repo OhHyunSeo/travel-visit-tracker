@@ -28,18 +28,23 @@ final class FixtureHttpClient implements AutoCloseable {
   }
 
   FixtureHttpClient(int port, Interceptor transform) {
-    this(port, transform, new FixtureBudget(100, 40, 256, 8192), true);
+    this(port, transform, new FixtureBudget(100, 40, 256, 8192), true, null);
   }
 
   FixtureHttpClient(int port, Interceptor transform, FixtureBudget budget) {
-    this(port, transform, budget, false);
+    this(port, transform, budget, false, null);
   }
 
-  private FixtureHttpClient(int port, Interceptor transform, FixtureBudget budget, boolean ownsBudget) {
+  static FixtureHttpClient https(int port, Interceptor transform, FixtureBudget budget,
+      java.security.cert.X509Certificate certificate) throws java.security.GeneralSecurityException, java.io.IOException {
+    return new FixtureHttpClient(port, transform, budget, false, new FixtureTls(certificate));
+  }
+
+  private FixtureHttpClient(int port, Interceptor transform, FixtureBudget budget, boolean ownsBudget, FixtureTls tls) {
     this.budget = budget;
     this.ownsBudget = ownsBudget;
-    FixtureRequestPolicy policy = new FixtureRequestPolicy(port);
-    client = new OkHttpClient.Builder()
+    FixtureRequestPolicy policy = new FixtureRequestPolicy(port, tls == null ? "http" : "https");
+    OkHttpClient.Builder builder = new OkHttpClient.Builder()
         .dispatcher(budget.dispatcher())
         .proxy(Proxy.NO_PROXY)
         .protocols(List.of(Protocol.HTTP_1_1))
@@ -69,8 +74,9 @@ final class FixtureHttpClient implements AutoCloseable {
           // A cancellation, rejected response or later retry gets no refund.
           budget.reserve(kind);
           return FixtureBody.guard(chain.proceed(request), budget.bytesPerAttempt);
-        })
-        .build();
+        });
+    if (tls != null) tls.configure(builder);
+    client = builder.build();
   }
 
   synchronized Call newCall(Request request) {

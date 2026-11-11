@@ -2,6 +2,8 @@
 
 JDK 17과 기존 캐시의 OkHttp 4.12.0, Okio 3.6.0, Kotlin stdlib 2.2.21을 사용합니다. 검사 스크립트가 의존성 해시를 확인하고 임시 폴더에서 컴파일합니다. 서버는 `127.0.0.1`의 임시 포트에만 열립니다.
 
+JDK의 keytool로 소유 임시 폴더에 두 시험 인증서를 생성합니다. HTTPS client는 지정한 인증서를 연결별로 신뢰하고 공개키 pin과 기본 hostname 확인을 함께 사용합니다. `FixtureTlsTest`가 정상 TLSv1.3·HTTP/1.1 수신, 다른 인증서·호스트 불일치와 HTTP downgrade 거절을 확인합니다. 키와 인증서는 runner 종료 때 함께 제거됩니다.
+
 ```sh
 bash qa/map-transport/android/host-transport/run-tests.sh \
   "$QA_OKHTTP_JAR" "$QA_OKIO_JAR" "$QA_KOTLIN_STDLIB_JAR"

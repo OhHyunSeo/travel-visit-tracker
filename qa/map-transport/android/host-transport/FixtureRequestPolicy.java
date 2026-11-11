@@ -19,15 +19,22 @@ final class FixtureRequestPolicy {
   private static final Pattern SPRITE = Pattern.compile("/resource/sprite/mixed(?:@2x)?\\.(?:json|png)");
 
   private final int port;
+  private final String scheme;
 
   FixtureRequestPolicy(int port) {
+    this(port, "http");
+  }
+
+  FixtureRequestPolicy(int port, String scheme) {
     if (port < 1 || port > 65535) throw new IllegalArgumentException("Invalid fixture port");
+    if (!"http".equals(scheme) && !"https".equals(scheme)) throw new IllegalArgumentException("Invalid fixture scheme");
     this.port = port;
+    this.scheme = scheme;
   }
 
   Kind classify(Request request) throws IOException {
     HttpUrl url = request.url();
-    if (!"GET".equals(request.method()) || request.body() != null || !"http".equals(url.scheme())
+    if (!"GET".equals(request.method()) || request.body() != null || !scheme.equals(url.scheme())
         || !"127.0.0.1".equals(url.host()) || url.port() != port || !url.encodedUsername().isEmpty()
         || !url.encodedPassword().isEmpty() || url.encodedQuery() != null || url.encodedFragment() != null) {
       throw new IOException("Request is outside the fixture origin or request shape");

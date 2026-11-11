@@ -27,7 +27,14 @@ trap 'rm -rf -- "$qa_temp"' EXIT
 qa_classpath="$1:$2:$3"
 javac --release 11 -cp "$qa_classpath" -d "$qa_temp" "$qa_root"/*.java \
   "$qa_root"/sdk-contract/org/maplibre/android/http/*.java
+for qa_identity in loopback localhost; do
+  qa_san='DNS:localhost'
+  if [[ $qa_identity == loopback ]]; then qa_san='DNS:localhost,IP:127.0.0.1'; fi
+  keytool -genkeypair -alias fixture -keyalg EC -groupname secp256r1 \
+    -dname 'CN=localhost' -validity 1 -ext "SAN=$qa_san" -storetype PKCS12 \
+    -keystore "$qa_temp/$qa_identity.p12" -storepass fixture-only-password -noprompt >/dev/null 2>&1
+done
 for qa_test in "$qa_root"/*Test.java; do
   qa_name=${qa_test##*/}
-  java -cp "$qa_temp:$qa_classpath" "app.trippainting.maptransportqa.${qa_name%.java}"
+  java -Dtrip.fixture.tlsRoot="$qa_temp" -cp "$qa_temp:$qa_classpath" "app.trippainting.maptransportqa.${qa_name%.java}"
 done
