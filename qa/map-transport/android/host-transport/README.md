@@ -12,3 +12,5 @@ bash qa/map-transport/android/host-transport/run-tests.sh \
 `FixtureBodyQueueTest`는 비동기 callback 안에서 네 본문을 읽는 동안 두 호출이 대기하는지 서버와 대조합니다. 대기 호출 하나를 취소한 뒤에는 다섯 번째만 도착해야 합니다. 이 동시 수는 비동기 `enqueue`와 callback 내부 본문 읽기·닫기에 적용됩니다.
 
 `FixtureBody`는 한 응답의 예약 범위 안에서 정상적인 identity 본문을 전부 읽고 확인한 뒤 반환합니다. `FixtureHttpClientTest`는 localhost의 크기 초과·chunked·gzip 헤더와 메모리의 길이 불일치를 거절하는지 확인합니다. 이 상한은 검사 코드가 수락하는 본문에 적용됩니다. 운영체제와 OkHttp가 먼저 받아 둔 바이트는 측정하지 않습니다.
+
+`FixtureCancellationTest`는 전송 중 취소로 본문이 닫힌 뒤에도 callback 반환까지 자리를 유지하는지 확인합니다. 대기한 다섯 번째 요청의 서버 도착, 중복 취소의 callback 횟수와 자동 재전송 여부를 함께 대조합니다.
