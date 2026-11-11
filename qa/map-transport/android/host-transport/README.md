@@ -32,3 +32,5 @@ bash qa/map-transport/android/host-transport/run-tests.sh \
 `sdk-contract`는 [MapLibre Native 13.6.1 HttpRequest](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/http/HttpRequest.java)와 [HttpResponder](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/http/HttpResponder.java)의 공개 API 서명만 포함합니다. 라이선스는 해당 폴더의 `LICENSE.maplibre`에 보존했습니다. 이 runner는 그 인터페이스로 호스트 컴파일하며, 실제 SDK 바이너리·JNI·RN 연결은 별도 검증 범위입니다. Android 빌드에서는 이 호스트 계약 파일을 포함하지 않습니다.
 
 `FixturePersistenceFailureTest`는 장부의 부분 tail, 수정 시각과 권한 변경을 만들고 실패 시 HTTP 요청 0회와 파일 보존을 대조합니다.
+
+`FixtureAdapterRaceTest`는 응답 마지막 바이트 반환과 취소를 두 스레드에서 경쟁시켜 완료 횟수와 취소 반환 이후의 전달을 대조합니다.
