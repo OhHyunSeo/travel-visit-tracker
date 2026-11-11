@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" tools:node="remove" />
+    <application
+        android:name="app.trippainting.maptransportqa.FixtureApplication"
+        android:allowBackup="false"
+        android:label="Map transport fixture"
+        android:usesCleartextTraffic="false">
+        <meta-data android:name="com.mapbox.SetStorageExternal" android:value="false" />
+        <activity android:name="app.trippainting.maptransportqa.FixtureMapActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

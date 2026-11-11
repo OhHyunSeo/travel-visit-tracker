@@ -2,6 +2,12 @@
 
 마지막 갱신: 2026-11-11, Asia/Seoul.
 
+## 11월 11일 P3-02 후속: 별도 Android 시험 앱 시작 코드 컴파일
+
+격리 시험 앱에 별도 패키지 ID를 적용했습니다. Application에서 주소와 인증서를 고정하고 앱 전용 장부를 연 뒤 MapLibre 공급자를 설치합니다. MapLibre 리소스 경로가 앱 내부 파일 디렉터리 안인지 확인합니다. Activity는 합성 스타일의 `fixture-background` 레이어가 로드되면 예약 합계를 기록합니다.
+
+JDK 17, 기존 Android 36 API, MapLibre OpenGL 13.6.1 배포본으로 시작 소스를 컴파일했습니다. DEX에서 Application·Activity·공급자 클래스 3개를 확인했고, 같은 의존성 검증을 쓰는 호스트 검사 16묶음도 통과했습니다. 다음은 별도 APK를 패키징하고 ID·권한·자원과 서명을 확인하는 단계입니다. 이 단위의 검증 범위는 Android API 컴파일과 호스트 Java입니다.
+
 ## 11월 11일 P3-02 후속: 배포 SDK NativeHttpRequest의 Java 전송 경로
 
 `4a514b0`에서 배포 JAR의 `NativeHttpRequest` Java 객체를 포인터 0으로 만들어 공급자 선택과 취소를 실행했습니다. 사설 HTTPS 서버에 변환된 스타일 1회와 같은 타일 2회가 도착했습니다. 첫 타일의 본문 수신 중 두 번 취소하자 dispatcher가 비었고 예약은 남았습니다. 두 번째 타일에 새 예약을 쓰고 한도 초과와 HTTP downgrade를 거절했습니다. 합계 3회·타일 2회·12바이트였습니다.
