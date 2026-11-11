@@ -58,7 +58,13 @@ public final class FixtureHttpClientTest {
   }
 
   private static void expectBodyRefusal(FixtureHttpClient client, String url, String message) throws Exception {
-    expectBodyRefusal(client.newCall(request(url)).execute(), message);
+    try {
+      FixtureBody.read(client.newCall(request(url)).execute(), 2);
+    } catch (IOException error) {
+      check(error.getMessage().contains(message), "unexpected body refusal: " + error);
+      return;
+    }
+    throw new AssertionError("Unexpected accepted body: " + url);
   }
 
   private static void expectBodyRefusal(Response response, String message) throws Exception {

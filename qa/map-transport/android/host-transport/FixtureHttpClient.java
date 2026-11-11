@@ -61,7 +61,7 @@ final class FixtureHttpClient implements AutoCloseable {
           // Charge every new Call before HTTP request headers are sent.
           // A cancellation, rejected response or later retry gets no refund.
           budget.reserve(kind);
-          return chain.proceed(request);
+          return FixtureBody.guard(chain.proceed(request), budget.bytesPerAttempt);
         })
         .build();
   }

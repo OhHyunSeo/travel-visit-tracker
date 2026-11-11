@@ -68,8 +68,20 @@ public final class FixtureBudgetTest {
         check(snapshot.attempts == 2 && snapshot.tileAttempts == 0 && snapshot.reservedBytes == 8,
             "fixed byte reservation exhausted by nontile resources");
       }
-      check(requests.get() == 6, "refused requests never reached server");
-      System.out.println("FixtureBudget PASS: repeated tile, total attempts and nontile byte reservations");
+      FixtureBudget smallBody = new FixtureBudget(2, 1, 1, 2);
+      try (FixtureHttpClient client = new FixtureHttpClient(port, chain -> chain.proceed(chain.request()), smallBody)) {
+        try {
+          get(client, tile);
+          throw new AssertionError("Response exceeded its per-request reservation");
+        } catch (IOException expected) {
+          check(expected.getMessage().contains("exceeds reservation"), "stream rejected before callback body acceptance");
+        }
+        FixtureBudget.Snapshot snapshot = smallBody.snapshot();
+        check(snapshot.attempts == 1 && snapshot.tileAttempts == 1 && snapshot.reservedBytes == 1,
+            "rejected response reservation retained");
+      }
+      check(requests.get() == 7, "only admitted requests reached server");
+      System.out.println("FixtureBudget PASS: repeated tile, total attempts, nontile bytes and rejected response charge");
     } finally {
       server.stop(0);
     }

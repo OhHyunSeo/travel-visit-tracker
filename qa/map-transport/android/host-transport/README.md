@@ -16,3 +16,5 @@ bash qa/map-transport/android/host-transport/run-tests.sh \
 `FixtureCancellationTest`는 전송 중 취소로 본문이 닫힌 뒤에도 callback 반환까지 자리를 유지하는지 확인합니다. 대기한 다섯 번째 요청의 서버 도착, 중복 취소의 callback 횟수와 자동 재전송 여부를 함께 대조합니다.
 
 `FixtureBudgetTest`는 세션의 전체 시도·타일 시도·고정 바이트 예약을 전송 전에 차감하고 완료 후에도 유지하는지 확인합니다. 같은 타일 경로를 반복하는 새 Call도 예약을 사용합니다. 이 단계의 메모리 상태는 재실행 때 보존되지 않습니다.
+
+전용 client는 응답을 `FixtureBody.guard`로 감싸 callback이 보는 스트림에 요청별 예약을 적용합니다. 응답이 거절돼도 선행 예약을 유지합니다.
