@@ -22,3 +22,5 @@ bash qa/map-transport/android/host-transport/run-tests.sh \
 `FixtureBudget.open`은 private 디렉터리의 고정 파일에 예약을 append하고 강제 저장합니다. 같은 장부의 중복 writer, 설정 변경과 불완전한 기록을 거절합니다. 호출자는 client가 끝난 뒤 budget도 닫아 파일 lock을 해제합니다. `FixtureJournalTest`가 재개방, 전송 전 기록, 동시 예약과 잘린/손상된 장부를 검증합니다. 테스트는 소유 임시 파일만 정리합니다.
 
 `FixtureCrashRecoveryTest`는 전송 전과 본문 수신 중인 고정 Java 자식을 강제 종료합니다. 실제 다른 프로세스의 writer lock과 종료 후 같은 장부의 재개방·예약 보존을 대조합니다.
+
+같은 `FixtureBudget`을 사용하는 client들은 비동기 dispatcher의 네 자리를 공유합니다. client의 close는 자기 Call만 취소합니다. budget의 close는 세션 전체를 취소하고 callback 종료를 기다린 뒤 장부를 닫습니다. callback이 5초 안에 끝나지 않으면 lock을 보존한 IOException을 반환하며 종료를 다시 시도할 수 있습니다. `FixtureSharedSessionTest`는 client 사이의 자리 공유와 종료 영향을 확인합니다.

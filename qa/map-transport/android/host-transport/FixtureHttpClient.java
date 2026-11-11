@@ -8,7 +8,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import okhttp3.Authenticator;
 import okhttp3.Call;
 import okhttp3.CookieJar;
-import okhttp3.Dispatcher;
 import okhttp3.Interceptor;
 import okhttp3.OkHttpClient;
 import okhttp3.Protocol;
@@ -16,24 +15,32 @@ import okhttp3.Request;
 
 /** A dedicated HTTP/1.1 client for exercising the fixture policy on the host. */
 final class FixtureHttpClient implements AutoCloseable {
-  private static final int MAX_ASYNC_REQUESTS = 4;
   private final OkHttpClient client;
+  private final FixtureBudget budget;
+  private final boolean ownsBudget;
+  private final Owner owner = new Owner();
+  private boolean closed;
+
+  private static final class Owner {}
 
   private static final class Exchange {
     final AtomicBoolean started = new AtomicBoolean();
   }
 
   FixtureHttpClient(int port, Interceptor transform) {
-    this(port, transform, new FixtureBudget(100, 40, 256, 8192));
+    this(port, transform, new FixtureBudget(100, 40, 256, 8192), true);
   }
 
   FixtureHttpClient(int port, Interceptor transform, FixtureBudget budget) {
+    this(port, transform, budget, false);
+  }
+
+  private FixtureHttpClient(int port, Interceptor transform, FixtureBudget budget, boolean ownsBudget) {
+    this.budget = budget;
+    this.ownsBudget = ownsBudget;
     FixtureRequestPolicy policy = new FixtureRequestPolicy(port);
-    Dispatcher dispatcher = new Dispatcher();
-    dispatcher.setMaxRequests(MAX_ASYNC_REQUESTS);
-    dispatcher.setMaxRequestsPerHost(MAX_ASYNC_REQUESTS);
     client = new OkHttpClient.Builder()
-        .dispatcher(dispatcher)
+        .dispatcher(budget.dispatcher())
         .proxy(Proxy.NO_PROXY)
         .protocols(List.of(Protocol.HTTP_1_1))
         .cookieJar(CookieJar.NO_COOKIES)
@@ -66,17 +73,21 @@ final class FixtureHttpClient implements AutoCloseable {
         .build();
   }
 
-  Call newCall(Request request) {
-    return client.newCall(request);
+  synchronized Call newCall(Request request) {
+    if (closed) throw new IllegalStateException("Fixture client closed");
+    budget.dispatcher();
+    return client.newCall(request.newBuilder().tag(Owner.class, owner).build());
   }
 
   int queuedAsyncCalls() {
     return client.dispatcher().queuedCallsCount();
   }
 
-  @Override public void close() {
-    client.dispatcher().cancelAll();
+  @Override public void close() throws java.io.IOException {
+    synchronized (this) { closed = true; }
+    for (Call call : client.dispatcher().queuedCalls()) if (call.request().tag(Owner.class) == owner) call.cancel();
+    for (Call call : client.dispatcher().runningCalls()) if (call.request().tag(Owner.class) == owner) call.cancel();
     client.connectionPool().evictAll();
-    client.dispatcher().executorService().shutdown();
+    if (ownsBudget) budget.close();
   }
 }
