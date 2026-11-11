@@ -40,3 +40,5 @@ bash qa/map-transport/android/host-transport/run-tests.sh \
 본문 대기와 활성 취소 검사는 HTTP와 인증서 고정 HTTPS에서 각각 실행합니다. HTTPS에서도 대기 취소는 예약하지 않고, 이미 전송한 취소 시도는 예약을 유지합니다.
 
 `FixtureTlsDeadlineTest`는 TLS ClientHello 뒤 응답이 없는 두 연결에서 call deadline과 명시적 취소를 확인합니다. 이 단계의 HTTP 예약 0은 TLS handshake 통신량을 뜻하지 않습니다.
+
+프로세스 강제 종료 뒤 장부 복구는 HTTPS 본문 수신 중에도 실행합니다. 같은 타일의 새 HTTPS 요청이 이전 예약에 추가되는지 서버와 장부로 대조합니다.

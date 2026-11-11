@@ -36,7 +36,10 @@ public final class FixtureCrashRecoveryTest {
         new CountDownLatch(1).await(30, TimeUnit.SECONDS);
       } else {
         int port = java.net.URI.create(url).getPort();
-        try (FixtureHttpClient client = new FixtureHttpClient(port, chain -> chain.proceed(chain.request()), budget);
+        try (FixtureHttpClient client = mode.equals("send-tls")
+                 ? FixtureHttpClient.https(port, chain -> chain.proceed(chain.request()), budget,
+                     (java.security.cert.X509Certificate) FixtureTlsTest.keys("loopback").getCertificate("fixture"))
+                 : new FixtureHttpClient(port, chain -> chain.proceed(chain.request()), budget);
              Response response = client.newCall(new Request.Builder().url(url).build()).execute()) {
           InputStream body = response.body().byteStream();
           check(body.read() == 'a', "child first byte");
@@ -49,15 +52,16 @@ public final class FixtureCrashRecoveryTest {
     }
   }
 
-  private static void scenario(boolean send) throws Exception {
+  private static void scenario(boolean send, boolean tls) throws Exception {
     Path root = Files.createTempDirectory("trip-crash-journal-").toRealPath();
-    HttpServer server = HttpServer.create();
+    java.security.KeyStore keys = tls ? FixtureTlsTest.keys("loopback") : null;
+    HttpServer server = tls ? FixtureTlsTest.server(keys) : HttpServer.create();
     ExecutorService workers = Executors.newFixedThreadPool(3);
     CountDownLatch release = new CountDownLatch(1);
     AtomicInteger requests = new AtomicInteger();
     Process process = null;
     try {
-      server.bind(new InetSocketAddress("127.0.0.1", 0), 0);
+      if (!tls) server.bind(new InetSocketAddress("127.0.0.1", 0), 0);
       server.setExecutor(workers);
       server.createContext("/", exchange -> {
         requests.incrementAndGet();
@@ -77,10 +81,11 @@ public final class FixtureCrashRecoveryTest {
       });
       server.start();
       int port = server.getAddress().getPort();
-      String url = "http://127.0.0.1:" + port + "/resource/tile/0_0_0";
+      String url = (tls ? "https" : "http") + "://127.0.0.1:" + port + "/resource/tile/0_0_0";
       String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
-      process = new ProcessBuilder(java, "-cp", System.getProperty("java.class.path"),
-          FixtureCrashRecoveryTest.class.getName(), send ? "send" : "reserve-only", root.toString(), url)
+      process = new ProcessBuilder(java, "-Dtrip.fixture.tlsRoot=" + System.getProperty("trip.fixture.tlsRoot"),
+          "-cp", System.getProperty("java.class.path"), FixtureCrashRecoveryTest.class.getName(),
+          send ? (tls ? "send-tls" : "send") : "reserve-only", root.toString(), url)
           .redirectErrorStream(true).start();
       Process child = process;
       String ready = workers.submit(() -> new BufferedReader(new InputStreamReader(
@@ -96,7 +101,10 @@ public final class FixtureCrashRecoveryTest {
       check(process.waitFor(3, TimeUnit.SECONDS) && process.exitValue() != 0, "child terminated and reaped");
       release.countDown();
       try (FixtureBudget restored = open(root);
-           FixtureHttpClient client = new FixtureHttpClient(port, chain -> chain.proceed(chain.request()), restored)) {
+           FixtureHttpClient client = tls
+               ? FixtureHttpClient.https(port, chain -> chain.proceed(chain.request()), restored,
+                   (java.security.cert.X509Certificate) keys.getCertificate("fixture"))
+               : new FixtureHttpClient(port, chain -> chain.proceed(chain.request()), restored)) {
         FixtureBudget.Snapshot state = restored.snapshot();
         check(state.attempts == 1 && state.tileAttempts == 1 && state.reservedBytes == 4, "crash reservation restored");
         try (Response response = client.newCall(new Request.Builder().url(url).build()).execute()) {
@@ -110,7 +118,7 @@ public final class FixtureCrashRecoveryTest {
         }
       }
       check(requests.get() == (send ? 2 : 1), "exact server count after recovery");
-      System.out.println("FixtureCrashRecovery PASS: " + (send ? "active body" : "before send")
+      System.out.println("FixtureCrashRecovery " + (tls ? "HTTPS" : "HTTP") + " PASS: " + (send ? "active body" : "before send")
           + ", child exit=" + process.exitValue() + ", retained reservation=4, final=8");
     } finally {
       if (process != null && process.isAlive()) {
@@ -131,7 +139,8 @@ public final class FixtureCrashRecoveryTest {
       child(args[0], Path.of(args[1]), args[2]);
       return;
     }
-    scenario(false);
-    scenario(true);
+    scenario(false, false);
+    scenario(true, false);
+    scenario(true, true);
   }
 }
