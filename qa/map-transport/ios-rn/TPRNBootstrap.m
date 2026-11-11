@@ -1,6 +1,7 @@
 #import "TPRNBootstrap.h"
 #import "TPTransport.h"
 #import "MLRNTransformRequest.h"
+#import "TripPainting-Swift.h"
 #import <React/RCTBridgeModule.h>
 #import <MapLibre/MLNNetworkConfiguration.h>
 #import <MapLibre/MLNSettings.h>
@@ -77,7 +78,7 @@ static void TPRNWrite(BOOL complete, BOOL pass, NSDictionary *native) {
     NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:@"\\A[A-Za-z0-9_-]{1,64}\\z" options:0 error:nil];
     if (!origin.length || ![TPTransport safePrivateFixtureTLSOrigin:origin] || !leaf || !run.length || run.length > 64 ||
         [pattern numberOfMatchesInString:run options:0 range:NSMakeRange(0, run.length)] != 1 ||
-        ![@[@"local-empty", @"sdk-default"] containsObject:mode]) return NO;
+        ![@[@"local-empty", @"local-missing", @"sdk-default"] containsObject:mode]) return NO;
 
     NSURL *documents = [[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     NSURL *directory = [documents URLByAppendingPathComponent:run];
@@ -98,21 +99,13 @@ static void TPRNWrite(BOOL complete, BOOL pass, NSDictionary *native) {
     }
     TPRNInitialStyleMode = mode;
     TPRNRenderConfirmed = NO;
-    TPRNLocalBootstrap = [mode isEqual:@"local-empty"];
+    TPRNLocalBootstrap = ![mode isEqual:@"sdk-default"];
     if (TPRNLocalBootstrap) {
-        NSURL *file = [directory URLByAppendingPathComponent:@"bootstrap-style.json"];
-        NSData *empty = [NSJSONSerialization dataWithJSONObject:@{@"version": @8, @"sources": @{}, @"layers": @[]}
-                                                       options:0 error:nil];
-        if (![empty writeToURL:file options:NSDataWritingAtomic error:nil]) return NO;
-        MLNTileServerOptions *options = MLNSettings.tileServerOptions;
-        if (!options) return NO;
-        MLNDefaultStyle *style = [MLNDefaultStyle new];
-        style.url = file;
-        style.name = @"TPRN local bootstrap";
-        style.version = 1;
-        options.defaultStyles = @[style];
-        options.defaultStyle = style;
-        MLNSettings.tileServerOptions = options;
+        BOOL missing = [mode isEqual:@"local-missing"];
+        NSURL *styleDirectory = missing ? directory : NSBundle.mainBundle.bundleURL;
+        NSURL *file = [styleDirectory URLByAppendingPathComponent:@"TripPaintingBootstrapStyle.json"];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:file.path] == missing) return NO;
+        if (![TripPaintingMapBootstrap configureInDirectory:styleDirectory]) return NO;
         if (![MLNStyle.defaultStyleURL isEqual:file]) return NO;
     } else if (![@[@"http", @"https"] containsObject:TPRNOriginalDefaultStyle.scheme]) {
         return NO;

@@ -50,6 +50,11 @@ class InitialStyleEvidenceTests(unittest.TestCase):
     def test_local_bootstrap_requires_only_the_three_fixture_resources(self):
         self.assertEqual(check(evidence(), "local-empty")["blockedSdkDefaultStyle"], 0)
 
+    def test_missing_resource_uses_the_local_request_boundary(self):
+        self.assertEqual(check(evidence("local-missing"), "local-missing")["blockedSdkDefaultStyle"], 0)
+        with self.assertRaises(EvidenceError):
+            check(evidence("local-missing"), "local-empty")
+
     def test_baseline_identifies_the_single_blocked_default_style(self):
         self.assertEqual(check(evidence("sdk-default"), "sdk-default")["blockedSdkDefaultStyle"], 1)
 

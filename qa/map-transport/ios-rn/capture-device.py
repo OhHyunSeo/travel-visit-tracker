@@ -10,7 +10,7 @@ import time
 from urllib.parse import urlsplit
 import uuid
 
-from rn_evidence import BUNDLE, save, verify
+from rn_evidence import BUNDLE, INITIAL_STYLES, save, verify
 from action_delivery import CoreDeviceError, _device, _pid, _read
 from tls_cancel_capture import FixtureControl
 from tls_result import EvidenceError, _need, _origin, _same
@@ -26,7 +26,7 @@ def copy_result(device, run, name, deadline):
 
 
 def capture(device, origin, certificate, output, *, initial_style="local-empty"):
-    _need(initial_style in ("local-empty", "sdk-default"), "invalid initial style mode")
+    _need(initial_style in INITIAL_STYLES, "invalid initial style mode")
     _need(urlsplit(_origin(origin)).hostname != "127.0.0.1", "use the Mac's private LAN address")
     lock = _device(device, ("info", "lockState"), deadline=time.monotonic() + 8)
     _need(lock.get("passcodeRequired") is False and lock.get("unlockedSinceBoot") is True,
@@ -83,7 +83,7 @@ def main():
     parser.add_argument("--device", required=True, type=uuid.UUID, help="CoreDevice identifier")
     parser.add_argument("--origin", required=True, help="exact private HTTPS fixture origin")
     parser.add_argument("--certificate", required=True, type=Path, help="the fixture's public DER certificate")
-    parser.add_argument("--initial-style", choices=("local-empty", "sdk-default"), default="local-empty")
+    parser.add_argument("--initial-style", choices=INITIAL_STYLES, default="local-empty")
     parser.add_argument("evidence", type=Path, help="a new evidence directory")
     args = parser.parse_args()
     try:

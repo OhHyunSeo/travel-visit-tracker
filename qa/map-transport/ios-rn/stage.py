@@ -2,10 +2,12 @@
 
 import argparse
 import json
+import os
 from pathlib import Path
 import plistlib
 import shutil
 import subprocess
+import sys
 
 
 HERE = Path(__file__).resolve().parent
@@ -27,10 +29,15 @@ def stage(name, sdk):
     for item in ('Podfile.lock', 'Podfile.properties.json'):
         shutil.copyfile(PRODUCT / 'ios' / item, ios / item)
     (target / 'node_modules').symlink_to(PRODUCT / 'node_modules', target_is_directory=True)
+    subprocess.run([
+        os.environ.get('TP_RN_NODE', 'node'), str(HERE / 'stage-bootstrap.cjs'), str(target),
+        str(PRODUCT / 'plugins/with-ios-map-bootstrap.js'),
+    ], check=True, stdout=sys.stderr)
     cached_packages = PRODUCT / '.build' / ('device' if sdk == 'iphoneos' else 'ios') / 'SourcePackages'
     subprocess.run(['cp', '-cR', '-P', str(cached_packages), str(target / 'SourcePackages')], check=True)
 
     app = ios / 'TripPainting'
+    shutil.copyfile(app / 'AppDelegate.swift', target / 'ProductAppDelegate.swift')
     for name in ('AppDelegate.swift', 'TPRNBootstrap.h', 'TPRNBootstrap.m'):
         shutil.copyfile(HERE / name, app / name)
     for name in ('TPTransport.h', 'TPTransport.m', 'TPHTTPExchange.h', 'TPHTTPExchange.m'):

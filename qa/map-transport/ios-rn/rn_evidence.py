@@ -6,6 +6,7 @@ import sys
 
 
 BUNDLE = "app.trippainting.rnmapqa"
+INITIAL_STYLES = ("local-empty", "local-missing", "sdk-default")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ios-maplibre"))
 from tls_result import _certificate, _need, _same
 
@@ -15,7 +16,7 @@ def save(output, name, value):
 
 
 def verify(result, ledger, server, origin, certificate, run, pid, *, runtime, initial_style=None):
-    _need(initial_style in (None, "local-empty", "sdk-default"), "invalid initial style mode")
+    _need(initial_style is None or initial_style in INITIAL_STYLES, "invalid initial style mode")
     expected_blocks = int(initial_style == "sdk-default")
     _need(result.get("complete") is True and result.get("pass") is True
           and result.get("delegatePreserved") is True and result.get("runID") == run
@@ -24,7 +25,7 @@ def verify(result, ledger, server, origin, certificate, run, pid, *, runtime, in
     if initial_style is not None:
         _need(_same(result.get("rnSchema"), 2) and result.get("initialStyleMode") == initial_style
               and result.get("renderConfirmedAfterTile") is True
-              and result.get("localBootstrap") is (initial_style == "local-empty"),
+              and result.get("localBootstrap") is (initial_style != "sdk-default"),
               "initial style or render evidence differs")
         observed = result.get("observedRequests")
         _need(isinstance(observed, list) and len(observed) == 3 + expected_blocks,

@@ -23,6 +23,8 @@ iPhone 서명 팀은 로컬 `.env.local`의 `APPLE_TEAM_ID`로 설정합니다. 
 
 iOS의 Expo 모듈은 현재 Xcode에서 직접 컴파일하도록 `app.config.ts`에 `usePrecompiledModules: false`를 선언했습니다. 다른 Swift SDK로 만든 사전 컴파일 인터페이스를 읽다 실패한 문제를 피하기 위한 설정이며, 바꾼 뒤에는 iOS 설정 재생성과 의존성 연결이 필요합니다. [Expo 공식 안내](https://docs.expo.dev/guides/prebuilt-expo-modules/)
 
+iOS 지도는 앱에 포함된 빈 스타일로 시작합니다. 기존 iOS 프로젝트에 이 설정을 적용하려면 `npm run prebuild -- --platform ios`로 네이티브 설정을 생성한 뒤 개발 빌드를 다시 만듭니다.
+
 아이폰에서 개발 앱을 더 이상 사용할 수 없다고 하면 개발용 서명 만료와 개발자 신뢰 상태를 확인합니다. 기록이 있는 앱을 삭제하지 말고 같은 앱 ID와 개발자로 업데이트한 뒤 기록 보존을 대조합니다. 최신 빌드와 기기 확인 범위는 [재개 안내](../docs/RESUME.md)를 따릅니다.
 
 ## 개발 서버 연결
