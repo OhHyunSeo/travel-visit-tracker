@@ -38,3 +38,5 @@ bash qa/map-transport/android/host-transport/run-tests.sh \
 `FixtureAdapterRaceTest`는 응답 마지막 바이트 반환과 취소를 두 스레드에서 경쟁시켜 완료 횟수와 취소 반환 이후의 전달을 대조합니다.
 
 본문 대기와 활성 취소 검사는 HTTP와 인증서 고정 HTTPS에서 각각 실행합니다. HTTPS에서도 대기 취소는 예약하지 않고, 이미 전송한 취소 시도는 예약을 유지합니다.
+
+`FixtureTlsDeadlineTest`는 TLS ClientHello 뒤 응답이 없는 두 연결에서 call deadline과 명시적 취소를 확인합니다. 이 단계의 HTTP 예약 0은 TLS handshake 통신량을 뜻하지 않습니다.
