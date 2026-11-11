@@ -20,3 +20,5 @@ bash qa/map-transport/android/host-transport/run-tests.sh \
 전용 client는 응답을 `FixtureBody.guard`로 감싸 callback이 보는 스트림에 요청별 예약을 적용합니다. 응답이 거절돼도 선행 예약을 유지합니다.
 
 `FixtureBudget.open`은 private 디렉터리의 고정 파일에 예약을 append하고 강제 저장합니다. 같은 장부의 중복 writer, 설정 변경과 불완전한 기록을 거절합니다. 호출자는 client가 끝난 뒤 budget도 닫아 파일 lock을 해제합니다. `FixtureJournalTest`가 재개방, 전송 전 기록, 동시 예약과 잘린/손상된 장부를 검증합니다. 테스트는 소유 임시 파일만 정리합니다.
+
+`FixtureCrashRecoveryTest`는 전송 전과 본문 수신 중인 고정 Java 자식을 강제 종료합니다. 실제 다른 프로세스의 writer lock과 종료 후 같은 장부의 재개방·예약 보존을 대조합니다.
