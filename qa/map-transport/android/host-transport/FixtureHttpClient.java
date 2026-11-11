@@ -24,6 +24,10 @@ final class FixtureHttpClient implements AutoCloseable {
   }
 
   FixtureHttpClient(int port, Interceptor transform) {
+    this(port, transform, new FixtureBudget(100, 40, 256, 8192));
+  }
+
+  FixtureHttpClient(int port, Interceptor transform, FixtureBudget budget) {
     FixtureRequestPolicy policy = new FixtureRequestPolicy(port);
     Dispatcher dispatcher = new Dispatcher();
     dispatcher.setMaxRequests(MAX_ASYNC_REQUESTS);
@@ -49,11 +53,14 @@ final class FixtureHttpClient implements AutoCloseable {
         })
         .addNetworkInterceptor(chain -> {
           Request request = chain.request();
-          policy.classify(request);
+          FixtureRequestPolicy.Kind kind = policy.classify(request);
           Exchange exchange = request.tag(Exchange.class);
           if (exchange == null || !exchange.started.compareAndSet(false, true)) {
             throw new ProtocolException("Additional fixture exchange refused");
           }
+          // Charge every new Call before HTTP request headers are sent.
+          // A cancellation, rejected response or later retry gets no refund.
+          budget.reserve(kind);
           return chain.proceed(request);
         })
         .build();

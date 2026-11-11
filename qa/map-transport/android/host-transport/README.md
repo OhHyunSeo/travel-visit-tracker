@@ -14,3 +14,5 @@ bash qa/map-transport/android/host-transport/run-tests.sh \
 `FixtureBody`는 한 응답의 예약 범위 안에서 정상적인 identity 본문을 전부 읽고 확인한 뒤 반환합니다. `FixtureHttpClientTest`는 localhost의 크기 초과·chunked·gzip 헤더와 메모리의 길이 불일치를 거절하는지 확인합니다. 이 상한은 검사 코드가 수락하는 본문에 적용됩니다. 운영체제와 OkHttp가 먼저 받아 둔 바이트는 측정하지 않습니다.
 
 `FixtureCancellationTest`는 전송 중 취소로 본문이 닫힌 뒤에도 callback 반환까지 자리를 유지하는지 확인합니다. 대기한 다섯 번째 요청의 서버 도착, 중복 취소의 callback 횟수와 자동 재전송 여부를 함께 대조합니다.
+
+`FixtureBudgetTest`는 세션의 전체 시도·타일 시도·고정 바이트 예약을 전송 전에 차감하고 완료 후에도 유지하는지 확인합니다. 같은 타일 경로를 반복하는 새 Call도 예약을 사용합니다. 이 단계의 메모리 상태는 재실행 때 보존되지 않습니다.
