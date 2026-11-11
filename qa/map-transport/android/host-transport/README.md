@@ -11,6 +11,8 @@ bash qa/map-transport/android/host-transport/run-tests.sh \
 
 MapLibre OpenGL 13.6.1 AAR과 기존 Android 36 `android.jar`를 네 번째와 다섯 번째 인수로 넘기면 배포 SDK의 Java 클래스로 컴파일합니다. 이 모드는 AAR과 `classes.jar`의 해시를 확인하며 `sdk-binding/FixtureModuleProviderTest`도 실행합니다. 기존 로더 위임, 중복·늦은 설치 거절과 합성 요청의 예약을 확인합니다. `android.jar`는 호스트에서 API 타입을 해석하는 데 사용합니다. [MapLibre Maven 배포본](https://repo.maven.apache.org/maven2/org/maplibre/gl/android-sdk-opengl/13.6.1/android-sdk-opengl-13.6.1.aar)
 
+`FixtureNativeRequestTest`는 실제 배포 JAR의 `NativeHttpRequest`에 포인터 0을 전달해 JVM에서 공급자 선택과 HTTPS 취소·재요청을 대조합니다. JNI 호출은 실제 Android 시험에 남아 있습니다.
+
 `FixtureRequestPolicyTest`는 리소스 분류, 허용 범위와 정확한 헤더를 확인합니다. `FixtureHttpClientTest`는 합성 URL 변환, 원래 인증 헤더 제거, 다른 출처와 리다이렉트 거절, `503 Retry-After: 0`과 변환 interceptor의 중복 호출 때 실제 전송 횟수를 대조합니다. 전송 허용 횟수는 OkHttp Call마다 한 번입니다. 다음 Call까지 묶는 영속 장부와 본문 예산, MapLibre와 Android에서의 동작은 별도 검증 범위입니다.
 
 `FixtureBodyQueueTest`는 비동기 callback 안에서 네 본문을 읽는 동안 두 호출이 대기하는지 서버와 대조합니다. 대기 호출 하나를 취소한 뒤에는 다섯 번째만 도착해야 합니다. 이 동시 수는 비동기 `enqueue`와 callback 내부 본문 읽기·닫기에 적용됩니다.

@@ -2,6 +2,12 @@
 
 마지막 갱신: 2026-11-11, Asia/Seoul.
 
+## 11월 11일 P3-02 후속: 배포 SDK NativeHttpRequest의 Java 전송 경로
+
+`4a514b0`에서 배포 JAR의 `NativeHttpRequest` Java 객체를 포인터 0으로 만들어 공급자 선택과 취소를 실행했습니다. 사설 HTTPS 서버에 변환된 스타일 1회와 같은 타일 2회가 도착했습니다. 첫 타일의 본문 수신 중 두 번 취소하자 dispatcher가 비었고 예약은 남았습니다. 두 번째 타일에 새 예약을 쓰고 한도 초과와 HTTP downgrade를 거절했습니다. 합계 3회·타일 2회·12바이트였습니다.
+
+배포 JAR 호스트 16묶음이 통과했습니다. 실제 SDK Java 경로를 거쳤으며 JNI callback은 포인터 0으로 건너뛰었습니다. 다음은 별도 Android 시험 앱의 초기화·저장 격리와 실제 Android API로 컴파일할 수 있는지 확인하는 단계입니다. [SDK NativeHttpRequest 소스](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/http/NativeHttpRequest.java)
+
 ## 11월 11일 P3-02 후속: 배포 JAR로 ModuleProvider와 로더 위임 확인
 
 Android `bf4b0f5`에서 재개했습니다. RN 로컬 설정의 OpenGL 13.6.1에 맞춰 Maven Central AAR 15,598,638바이트를 Android 작업 폴더의 Git 제외 공간에 받았습니다. 배포 SHA-1을 대조한 뒤 AAR SHA-256 `0a8ea4f5bfd268e050c72025d0f2952b60861863eba6caf84e19b8da583f3a42`, `classes.jar` SHA-256 `ac36e99396ebb01ff781e090c7b9b1557b4d1ccecac653ef511c775a3570136b`를 고정했습니다. 네이티브 `.so`는 추출하지 않았습니다. [Maven 배포본](https://repo.maven.apache.org/maven2/org/maplibre/gl/android-sdk-opengl/13.6.1/android-sdk-opengl-13.6.1.aar)
