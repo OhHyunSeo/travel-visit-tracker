@@ -2,6 +2,14 @@
 
 마지막 갱신: 2026-11-11, Asia/Seoul.
 
+## 11월 11일 P3-02 후속: 배포 JAR로 ModuleProvider와 로더 위임 확인
+
+Android `bf4b0f5`에서 재개했습니다. RN 로컬 설정의 OpenGL 13.6.1에 맞춰 Maven Central AAR 15,598,638바이트를 Android 작업 폴더의 Git 제외 공간에 받았습니다. 배포 SHA-1을 대조한 뒤 AAR SHA-256 `0a8ea4f5bfd268e050c72025d0f2952b60861863eba6caf84e19b8da583f3a42`, `classes.jar` SHA-256 `ac36e99396ebb01ff781e090c7b9b1557b4d1ccecac653ef511c775a3570136b`를 고정했습니다. 네이티브 `.so`는 추출하지 않았습니다. [Maven 배포본](https://repo.maven.apache.org/maven2/org/maplibre/gl/android-sdk-opengl/13.6.1/android-sdk-opengl-13.6.1.aar)
+
+격리 QA용 `FixtureModuleProvider`가 MapLibre 인스턴스 생성 전에 설치되고, 리소스마다 어댑터를 새로 만들며 이전 공급자의 라이브러리 로더를 위임합니다. 배포 JAR의 실제 `LibraryLoader` Java 초기화에서 이전 공급자 호출을 확인했습니다. 공급자를 통한 합성 HTTP 요청 1회·예약 4바이트, 중복 설치 거절, 합성 초기화 상태에서 늦은 설치 거절도 통과했습니다. JDK 17에서 실제 AAR 클래스+기존 Android 36 `android.jar`로 15묶음, 기존 호스트 서명 모드로 14묶음이 통과했습니다. 300분 잔여는 시작 95%, 배포 검사 후 81%였습니다.
+
+이 결과는 배포 SDK의 Java 클래스 및 localhost 전송까지입니다. 다음은 실제 `NativeHttpRequest` Java 경로의 공급자 선택·취소를 확인하는 것입니다. JNI 로드·렌더링·Android 기기 검증은 보류입니다. [MapLibre 공급자](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/ModuleProvider.java) · [SDK 요청 연결](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/http/NativeHttpRequest.java)
+
 ## 11월 11일 5시간 잔여 18% 저장·중지
 
 최종 실행 소스는 `a40ad55`입니다. 저장 뒤 300분 잔여를 18%로 확인해 추가 항목을 시작하지 않고 중지합니다. Java 호스트 14묶음과 추가 HTTPS 본문 대기·활성 취소·프로세스 종료 사례 3개가 통과했습니다. 전용 임시 서버·자식과 인증서·키·컴파일 폴더는 runner에서 정리했습니다. 고정 소스 SHA와 최종 검사 범위는 Git 제외 `docs/test-results/android-host-transport-20261111/completion-summary.json`에 저장합니다.
