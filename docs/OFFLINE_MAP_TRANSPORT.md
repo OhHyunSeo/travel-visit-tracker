@@ -1,5 +1,9 @@
 # 오프라인 지도 요청 제어 검토
 
+## 2026-11-12 글꼴과 스프라이트 주소 조사
+
+보관한 Liberty 스타일의 명시적인 글꼴 스택은 Noto Sans Italic, Regular, Bold였습니다. 현재 iOS와 Android SDK 소스에서 글꼴 스택을 URL 인코딩하고 범위의 시작과 끝을 붙이는 것을 확인했습니다. 스프라이트는 화면 배율이 1보다 클 때 `@2x`를 붙인 `.json`과 `.png`를 사용합니다. 다음 작업은 이 주소들을 통제된 서버에서 실제 SDK가 요청한 값과 대조하는 것입니다. [iOS SDK 소스](https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/src/mln/storage/resource.cpp#L51) · [Android SDK 소스](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/src/mln/storage/resource.cpp#L51)
+
 ## 2026-11-12 계획한 타일 주소 범위 확인
 
 계획을 만든 타일 템플릿과 실제 주소를 글자 그대로 비교합니다. 벡터와 래스터의 줌, X·Y 좌표가 범위 안일 때만 해당 타일로 분류합니다. 버전이나 호스트가 다르거나 쿼리, 프래그먼트, 다른 인코딩이 들어간 주소는 제외합니다. 보관본의 세 지역에서 주소 908개와 그 주소에 쿼리를 더한 거절 908개를 확인했습니다.
