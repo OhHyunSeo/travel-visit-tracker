@@ -44,7 +44,9 @@ bash qa/map-transport/android/host-transport/http2/run-test.sh \
   "$okhttp_jar" "$okio_jar" "$kotlin_jar" "$mockwebserver_jar" "$junit_jar" "$hamcrest_jar"
 ```
 
-이 검사는 별도로 HTTP/2를 선택해 TLS 연결 하나의 네 콜백이 응답을 보유할 때 다섯 번째 요청이 대기하고, 대기 중 취소한 요청은 서버에 도착하지 않는지 확인합니다. 실제 전송 및 초과 본문 거절에도 요청별 예약이 남는지 확인합니다. 별도 사례는 본문 수신 도중 타일을 취소해도 다른 요청과 새 타일 요청이 같은 연결에서 완료되며 두 타일 시도의 예약이 모두 남는지 검사합니다. 기본 시험 APK와 기존 runner는 HTTP/1.1 경로를 사용합니다.
+뒤에 고정 MapLibre AAR와 Android `android.jar`를 추가하면 공개 서명 사본 대신 배포 클래스에 어댑터를 연결합니다.
+
+이 검사는 별도로 HTTP/2를 선택해 TLS 연결 하나의 네 콜백이 응답을 보유할 때 다섯 번째 요청이 대기하고, 대기 중 취소한 요청은 서버에 도착하지 않는지 확인합니다. 실제 전송 및 초과 본문 거절에도 요청별 예약이 남는지 확인합니다. 수신 도중 타일을 취소해도 다른 요청과 새 타일 요청이 같은 연결에서 완료되며 두 타일 시도의 예약이 모두 남는지 검사합니다. 조건부 요청과 단일 바이트 범위에서는 허용된 304·206만 전달합니다. 기본 시험 APK와 기존 runner는 HTTP/1.1 경로를 사용합니다.
 
 `sdk-contract`는 [MapLibre Native 13.6.1 HttpRequest](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/http/HttpRequest.java)와 [HttpResponder](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/http/HttpResponder.java)의 공개 API 서명만 포함합니다. 라이선스는 해당 폴더의 `LICENSE.maplibre`에 보존했습니다. 이 runner는 그 인터페이스로 호스트 컴파일하며, 실제 SDK 바이너리·JNI·RN 연결은 별도 검증 범위입니다. Android 빌드에서는 이 호스트 계약 파일을 포함하지 않습니다.
 

@@ -3,6 +3,7 @@ package app.trippainting.maptransportqa;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
@@ -25,6 +26,7 @@ import okhttp3.mockwebserver.Dispatcher;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
+import org.maplibre.android.http.HttpResponder;
 
 public final class FixtureHttp2Test {
   private static final String WARM = "/resource/style/sdk";
@@ -82,13 +84,15 @@ public final class FixtureHttp2Test {
     }
   }
 
-  private static void checkRequests(MockWebServer server, List<String> expected) throws InterruptedException {
+  private static List<RecordedRequest> checkRequests(MockWebServer server, List<String> expected) throws InterruptedException {
     require(server.getRequestCount() == expected.size(), "exact server request count");
+    List<RecordedRequest> requests = new ArrayList<>();
     List<String> paths = new ArrayList<>();
     List<Integer> sequences = new ArrayList<>();
     for (int index = 0; index < expected.size(); index++) {
       RecordedRequest request = server.takeRequest(1, TimeUnit.SECONDS);
       require(request != null && "identity".equals(request.getHeader("Accept-Encoding")), "one recorded identity request");
+      requests.add(request);
       paths.add(request.getPath());
       sequences.add(request.getSequenceNumber());
     }
@@ -100,6 +104,7 @@ public final class FixtureHttp2Test {
     for (int index = 0; index < sequences.size(); index++) {
       require(sequences.get(index) == index, "all requests reuse one connection");
     }
+    return requests;
   }
 
   private static void queueAndBudget(SSLSocketFactory tls, X509Certificate certificate) throws Exception {
@@ -207,6 +212,69 @@ public final class FixtureHttp2Test {
     System.out.println("Fixture HTTP/2 PASS: active tile cancellation, sibling and retry on one connection, four requests and 16 reserved bytes");
   }
 
+  private static String adapterResponse(FixtureHttpClient client, String url, String range, String etag, String date)
+      throws Exception {
+    CompletableFuture<String> result = new CompletableFuture<>();
+    new FixtureMapLibreRequest(client).executeRequest(new HttpResponder() {
+      @Override public void onResponse(int code, String responseTag, String modified, String cache, String expires,
+          String retry, String rate, byte[] body) {
+        result.complete(code + ":" + responseTag + ":" + new String(body, StandardCharsets.UTF_8));
+      }
+
+      @Override public void handleFailure(int type, String error) {
+        result.complete("failure:" + type);
+      }
+    }, 0, url, range, etag, date, false);
+    return result.get(2, TimeUnit.SECONDS);
+  }
+
+  private static void conditionalAndRange(SSLSocketFactory tls, X509Certificate certificate) throws Exception {
+    String unchanged = "/resource/style/empty";
+    String partial = "/resource/style/multi";
+    String mismatched = "/resource/style/blocked";
+    String date = "Thu, 12 Nov 2026 10:00:00 GMT";
+    try (MockWebServer server = server(tls); FixtureBudget budget = new FixtureBudget(8, 3, 4, 32)) {
+      server.setDispatcher(new Dispatcher() {
+        @Override public MockResponse dispatch(RecordedRequest request) {
+          String path = request.getPath();
+          if (unchanged.equals(path)) return new MockResponse().setResponseCode(304).setHeader("ETag", "\"v2\"");
+          if (partial.equals(path) || mismatched.equals(path)) {
+            String contentRange = partial.equals(path) ? "bytes 2-3/6" : "bytes 1-2/6";
+            return new MockResponse().setResponseCode(206).setHeader("ETag", "\"v2\"")
+                .setHeader("Content-Range", contentRange).setBody("cd");
+          }
+          return new MockResponse().setBody("ab");
+        }
+      });
+      server.start(InetAddress.getByName("127.0.0.1"), 0);
+      int port = server.getPort();
+      String origin = "https://127.0.0.1:" + port;
+      try (FixtureHttpClient client = FixtureHttpClient.httpsWithHttp2(port, chain -> chain.proceed(chain.request()),
+          budget, certificate)) {
+        warm(client, origin);
+        require("304:\"v2\":".equals(adapterResponse(client, origin + unchanged, "", "W/\"v2\"", date)),
+            "valid ETag gets an empty 304");
+        require("206:\"v2\":cd".equals(adapterResponse(client, origin + partial, "bytes=2-3", "", date)),
+            "valid range and date get a bounded 206");
+        require("failure:2".equals(adapterResponse(client, origin + mismatched, "bytes=2-3", "", "")),
+            "wrong content range refused");
+        require("failure:2".equals(adapterResponse(client, origin + unchanged, "", "", "")), "unsolicited 304 refused");
+        require("failure:2".equals(adapterResponse(client, origin + partial, "bytes=-2", "", "")), "suffix range refused");
+        List<RecordedRequest> requests = checkRequests(server, List.of(WARM, unchanged, partial, mismatched, unchanged));
+        RecordedRequest conditional = requests.get(1);
+        require("W/\"v2\"".equals(conditional.getHeader("If-None-Match"))
+            && conditional.getHeader("If-Modified-Since") == null, "ETag precedence on HTTP/2");
+        RecordedRequest range = requests.get(2);
+        require("bytes=2-3".equals(range.getHeader("Range")) && date.equals(range.getHeader("If-Modified-Since")),
+            "date and validated range reached the server");
+        FixtureBudget.Snapshot totals = budget.snapshot();
+        require(totals.attempts == 5 && totals.tileAttempts == 0 && totals.reservedBytes == 20,
+            "only transmitted requests were charged");
+      }
+    }
+    System.out.println("Fixture HTTP/2 PASS: conditional 304 and bounded 206, five requests and 20 reserved bytes");
+  }
+
   public static void main(String[] args) throws Exception {
     KeyStore keys = FixtureTlsTest.keys("loopback");
     KeyManagerFactory managers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
@@ -216,5 +284,6 @@ public final class FixtureHttp2Test {
     X509Certificate certificate = (X509Certificate) keys.getCertificate("fixture");
     queueAndBudget(tls.getSocketFactory(), certificate);
     activeCancellation(tls.getSocketFactory(), certificate);
+    conditionalAndRange(tls.getSocketFactory(), certificate);
   }
 }
