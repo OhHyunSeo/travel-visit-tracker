@@ -22,10 +22,12 @@ import okhttp3.Callback;
 import okhttp3.Protocol;
 import okhttp3.Request;
 import okhttp3.Response;
+import okhttp3.internal.http2.ErrorCode;
 import okhttp3.mockwebserver.Dispatcher;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
+import okhttp3.mockwebserver.SocketPolicy;
 import org.maplibre.android.http.HttpResponder;
 
 public final class FixtureHttp2Test {
@@ -275,6 +277,54 @@ public final class FixtureHttp2Test {
     System.out.println("Fixture HTTP/2 PASS: conditional 304 and bounded 206, five requests and 20 reserved bytes");
   }
 
+  private static void refusedCall(FixtureHttpClient client, Request request, String failure) throws IOException {
+    try (Response ignored = client.newCall(request).execute()) {
+      throw new AssertionError("Expected fixture call failure: " + failure);
+    } catch (IOException expected) {
+      require(expected.getMessage().contains(failure), "unexpected fixture call failure: " + expected);
+    }
+  }
+
+  private static void followUps(SSLSocketFactory tls, X509Certificate certificate) throws Exception {
+    String tile = "/resource/tile/h_2_0_0";
+    try (MockWebServer server = server(tls); FixtureBudget budget = new FixtureBudget(5, 4, 4, 20)) {
+      server.enqueue(new MockResponse().setBody("ab"));
+      server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.RESET_STREAM_AT_START)
+          .setHttp2ErrorCode(ErrorCode.REFUSED_STREAM.getHttpCode()));
+      server.enqueue(new MockResponse().setResponseCode(503).setHeader("Retry-After", "0").setBody("ab"));
+      server.enqueue(new MockResponse().setBody("ab"));
+      server.start(InetAddress.getByName("127.0.0.1"), 0);
+      int port = server.getPort();
+      String origin = "https://127.0.0.1:" + port;
+      try (FixtureHttpClient client = FixtureHttpClient.httpsWithHttp2(port, chain -> chain.proceed(chain.request()),
+          budget, certificate)) {
+        warm(client, origin);
+        Request request = new Request.Builder().url(origin + tile).build();
+        refusedCall(client, request, "REFUSED_STREAM");
+        require(server.getRequestCount() == 2, "the stream reset did not cause another exchange");
+        refusedCall(client, request, "Additional fixture exchange refused");
+        require(server.getRequestCount() == 3, "503 automatic follow-up never reached the server");
+        try (Response fresh = client.newCall(request).execute()) {
+          require(fresh.protocol() == Protocol.HTTP_2 && fresh.code() == 200 && "ab".equals(fresh.body().string()),
+              "explicit new call may complete after two refusals");
+        }
+        List<RecordedRequest> observed = new ArrayList<>();
+        require(server.getRequestCount() == 4, "exact request count after explicit new call");
+        for (int index = 0; index < 4; index++) {
+          RecordedRequest item = server.takeRequest(1, TimeUnit.SECONDS);
+          require(item != null && item.getSequenceNumber() == index, "all calls use one TLS connection");
+          observed.add(item);
+        }
+        require(WARM.equals(observed.get(0).getPath()) && observed.get(1).getPath() == null
+            && tile.equals(observed.get(2).getPath()) && tile.equals(observed.get(3).getPath()), "expected warm, reset and two tile records");
+        FixtureBudget.Snapshot totals = budget.snapshot();
+        require(totals.attempts == 4 && totals.tileAttempts == 3 && totals.reservedBytes == 16,
+            "reset and 503 keep reservations without charging a refused follow-up");
+      }
+    }
+    System.out.println("Fixture HTTP/2 PASS: stream reset and 503 do not cause another exchange, four attempts and 16 reserved bytes");
+  }
+
   public static void main(String[] args) throws Exception {
     KeyStore keys = FixtureTlsTest.keys("loopback");
     KeyManagerFactory managers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
@@ -285,5 +335,6 @@ public final class FixtureHttp2Test {
     queueAndBudget(tls.getSocketFactory(), certificate);
     activeCancellation(tls.getSocketFactory(), certificate);
     conditionalAndRange(tls.getSocketFactory(), certificate);
+    followUps(tls.getSocketFactory(), certificate);
   }
 }
