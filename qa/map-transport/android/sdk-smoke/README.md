@@ -58,3 +58,24 @@ The server binds only to Mac loopback and serves a fixed JSON style at
 connection that reaches this server at the app's loopback address. A successful
 run records `TRANSPORT_READY`, `SERVED_STYLE`, and `STYLE_LOADED` with one
 attempt, zero tile attempts, and a 4,096-byte reservation in a fresh app sandbox.
+
+## Prepare an emulator loopback connection
+
+The signed APK connects to guest `127.0.0.1`. On a separately admitted Android
+Emulator, the relay can forward that connection to the Mac loopback alias
+`10.0.2.2` on the same port embedded in the APK. TLS still runs from the APK to
+the Mac server. The relay takes one TCP connection, forwards up to 65,536 bytes
+in each direction, and times out after 30 seconds. The style response closes
+its connection after the single response.
+
+```sh
+bash qa/map-transport/android/sdk-smoke/build-relay.sh \
+  "$android_jar" "$android_build_tools" "$new_relay_jar"
+```
+
+The command compiles the relay against Android 36, verifies its DEX entry point,
+and requires a new output path. For a guest run, stage the JAR as a read-only
+file in a newly owned guest shell directory, then use `CLASSPATH` pointing to
+that file with `app_process /system/bin FixtureLoopbackRelay <fixture_port>`.
+Keep the guest relay in the foreground to capture `RELAY_READY` and
+`RELAY_COMPLETE`. Host-only preparation does not require ADB or an emulator.

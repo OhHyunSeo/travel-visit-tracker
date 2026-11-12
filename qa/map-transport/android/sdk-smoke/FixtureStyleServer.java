@@ -21,9 +21,16 @@ public final class FixtureStyleServer {
     }
     int port = Integer.parseInt(args[1]);
     if (port < 1024 || port > 65535) throw new IllegalArgumentException("Invalid fixture port");
+    HttpsServer server = bind(Path.of(args[0]), port);
+    Runtime.getRuntime().addShutdownHook(new Thread(() -> server.stop(0)));
+    server.start();
+    System.out.println("STYLE_SERVER_READY port=" + port);
+  }
+
+  static HttpsServer bind(Path keyStore, int port) throws Exception {
     char[] password = "fixture-only-password".toCharArray();
     KeyStore keys = KeyStore.getInstance("PKCS12");
-    try (InputStream input = Files.newInputStream(Path.of(args[0]))) {
+    try (InputStream input = Files.newInputStream(keyStore)) {
       keys.load(input, password);
     }
     KeyManagerFactory managers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
@@ -35,6 +42,7 @@ public final class FixtureStyleServer {
     server.setHttpsConfigurator(new HttpsConfigurator(tls));
     server.createContext("/", exchange -> {
       try {
+        exchange.getResponseHeaders().set("Connection", "close");
         if (!"/resource/style/sdk".equals(exchange.getRequestURI().toASCIIString())) {
           exchange.sendResponseHeaders(404, -1);
           return;
@@ -53,8 +61,6 @@ public final class FixtureStyleServer {
         exchange.close();
       }
     });
-    Runtime.getRuntime().addShutdownHook(new Thread(() -> server.stop(0)));
-    server.start();
-    System.out.println("STYLE_SERVER_READY port=" + port);
+    return server;
   }
 }
