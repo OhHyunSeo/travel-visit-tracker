@@ -109,6 +109,8 @@ export function planBackgroundMap(
     !revision ||
     typeof revision.styleSha256 !== 'string' ||
     typeof revision.tileVersion !== 'string' ||
+    revision.styleSha256.length !== 64 ||
+    revision.tileVersion.length !== 18 ||
     !/^[a-f0-9]{64}$/.test(revision.styleSha256) ||
     !/^\d{8}_\d{6}_pt$/.test(revision.tileVersion)
   )

@@ -8,6 +8,18 @@ import {
 type ReviewedMetadata = BackgroundMapRevision & Readonly<{ tileJsonSha256: string }>;
 type MetadataBytes = Readonly<{ style: Uint8Array; tileJson: Uint8Array }>;
 type Sha256 = (bytes: Uint8Array) => Promise<string>;
+type BackgroundMapMetadata = Readonly<{
+  plan: BackgroundMapPlan;
+  tileJsonSha256: string;
+  offlineStyleJson: string;
+  resources: Readonly<{ vector: string; raster: string; glyphs: string; sprite: string }>;
+}>;
+type TileCoordinates = Readonly<{
+  source: 'vector' | 'raster';
+  zoom: number;
+  x: number;
+  y: number;
+}>;
 
 export class BackgroundMapMetadataError extends Error {
   constructor(public readonly reason: 'reference' | 'size' | 'digest' | 'style' | 'tile-json') {
@@ -21,6 +33,8 @@ const raster = `${origin}/natural_earth/ne2sr/{z}/{x}/{y}.png`;
 const glyphs = `${origin}/fonts/{fontstack}/{range}.pbf`;
 const spritePattern = /^https:\/\/tiles\.openfreemap\.org\/sprites\/[a-zA-Z0-9_-]{1,64}\/ofm$/;
 const sha256Pattern = /^[a-f0-9]{64}$/;
+const coordinatesPattern = /^(0|[1-9]\d?)\/(0|[1-9]\d{0,6})\/(0|[1-9]\d{0,6})$/;
+const coordinateTemplate = '{z}/{x}/{y}';
 const maxDocumentBytes = 64 * 1024;
 
 function snapshot(bytes: Uint8Array): Uint8Array {
@@ -56,7 +70,7 @@ function readStyleSources(style: Record<string, unknown>) {
     style.version !== 8 ||
     style.glyphs !== glyphs ||
     typeof style.sprite !== 'string' ||
-    !spritePattern.test(style.sprite) ||
+    style.sprite.match(spritePattern)?.[0] !== style.sprite ||
     !Array.isArray(style.layers) ||
     !style.layers.length ||
     Object.keys(style).length !== 5 ||
@@ -74,6 +88,34 @@ function readStyleSources(style: Record<string, unknown>) {
     throw new BackgroundMapMetadataError('style');
   }
   return { sprite: style.sprite, rasterSource };
+}
+
+function matchTile(
+  metadata: BackgroundMapMetadata,
+  url: string,
+  source: TileCoordinates['source'],
+): TileCoordinates | undefined {
+  const [prefix, suffix] = metadata.resources[source].split(coordinateTemplate);
+  if (!prefix || !suffix || !url.startsWith(prefix) || !url.endsWith(suffix)) return;
+  const coordinates = url.slice(prefix.length, -suffix.length);
+  const match = coordinatesPattern.exec(coordinates);
+  if (!match || match[0] !== coordinates) return;
+  const zoom = Number(match[1]);
+  const x = Number(match[2]);
+  const y = Number(match[3]);
+  const range = metadata.plan.tileRanges.find(
+    (item) => item.source === source && item.zoom === zoom,
+  );
+  if (range && x >= range.minX && x <= range.maxX && y >= range.minY && y <= range.maxY)
+    return { source, zoom, x, y };
+}
+
+/** Classifies a literal tile URL against a plan produced from verified metadata. */
+export function matchBackgroundMapTileRequest(
+  metadata: BackgroundMapMetadata,
+  url: string,
+): TileCoordinates | undefined {
+  return matchTile(metadata, url, 'vector') ?? matchTile(metadata, url, 'raster');
 }
 
 function readCoverage(value: unknown, region: BackgroundMapPlan['bounds']) {
@@ -103,16 +145,13 @@ export async function planBackgroundMapFromMetadata(
   digestSha256: Sha256,
   minZoom?: number,
   maxZoom?: number,
-): Promise<
-  Readonly<{
-    plan: BackgroundMapPlan;
-    tileJsonSha256: string;
-    offlineStyleJson: string;
-    resources: Readonly<{ vector: string; raster: string; glyphs: string; sprite: string }>;
-  }>
-> {
+): Promise<BackgroundMapMetadata> {
   const { styleSha256, tileJsonSha256, tileVersion } = reference;
-  if (typeof tileJsonSha256 !== 'string' || !sha256Pattern.test(tileJsonSha256)) {
+  if (
+    typeof tileJsonSha256 !== 'string' ||
+    tileJsonSha256.length !== 64 ||
+    !sha256Pattern.test(tileJsonSha256)
+  ) {
     throw new BackgroundMapMetadataError('reference');
   }
   const plan = planBackgroundMap(regionId, { styleSha256, tileVersion }, minZoom, maxZoom);

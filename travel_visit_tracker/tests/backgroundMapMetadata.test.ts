@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { regions } from '../src/data/regions';
-import { planBackgroundMapFromMetadata } from '../src/domain/backgroundMapMetadata';
+import {
+  matchBackgroundMapTileRequest,
+  planBackgroundMapFromMetadata,
+} from '../src/domain/backgroundMapMetadata';
 
 const origin = 'https://tiles.openfreemap.org';
 const tileVersion = '20261025_080012_pt';
@@ -142,6 +145,7 @@ describe('background map metadata verification', () => {
       },
     },
     { ...style, sprite: `${sprite}?revision=2` },
+    { ...style, sprite: `${sprite}\n` },
     { ...style, glyphs: 'https://other.invalid/fonts/{fontstack}/{range}.pbf' },
     { ...style, imports: [{ id: 'remote', url: 'https://other.invalid/style' }] },
   ])(
@@ -178,5 +182,90 @@ describe('background map metadata verification', () => {
     await expect(
       planBackgroundMapFromMetadata(regionId, bytes, reference, digest),
     ).rejects.toMatchObject({ reason: 'style' });
+  });
+});
+
+function tileUrl(template: string, zoom: number, x: number, y: number) {
+  return template.replace('{z}/{x}/{y}', `${zoom}/${x}/${y}`);
+}
+
+describe('literal tile URLs for a verified plan', () => {
+  it.each(['vector', 'raster'] as const)(
+    'includes both boundaries of the %s range',
+    async (source) => {
+      const { bytes, reference } = fixture();
+      const result = await planBackgroundMapFromMetadata(regionId, bytes, reference, digest);
+      const range = result.plan.tileRanges.find((item) => item.source === source)!;
+      for (const [x, y] of [
+        [range.minX, range.minY],
+        [range.maxX, range.maxY],
+      ]) {
+        const url = tileUrl(result.resources[source], range.zoom, x, y);
+        expect(matchBackgroundMapTileRequest(result, url)).toEqual({
+          source,
+          zoom: range.zoom,
+          x,
+          y,
+        });
+      }
+      for (const [x, y] of [
+        [range.minX - 1, range.minY],
+        [range.maxX + 1, range.maxY],
+        [range.minX, range.minY - 1],
+        [range.maxX, range.maxY + 1],
+      ]) {
+        expect(
+          matchBackgroundMapTileRequest(
+            result,
+            tileUrl(result.resources[source], range.zoom, x, y),
+          ),
+        ).toBeUndefined();
+      }
+    },
+  );
+
+  it('uses the selected vector zooms and keeps raster at the planned zoom', async () => {
+    const { bytes, reference } = fixture();
+    const result = await planBackgroundMapFromMetadata(regionId, bytes, reference, digest, 10, 11);
+    const rasterRange = result.plan.tileRanges.find((item) => item.source === 'raster')!;
+    const vectorRange = result.plan.tileRanges.find((item) => item.source === 'vector')!;
+    for (const zoom of [9, 12]) {
+      expect(
+        matchBackgroundMapTileRequest(
+          result,
+          tileUrl(vector, zoom, vectorRange.minX, vectorRange.minY),
+        ),
+      ).toBeUndefined();
+    }
+    expect(
+      matchBackgroundMapTileRequest(result, tileUrl(raster, 7, rasterRange.minX, rasterRange.minY)),
+    ).toBeUndefined();
+    expect(
+      matchBackgroundMapTileRequest(result, tileUrl(raster, 6, rasterRange.minX, rasterRange.minY))
+        ?.source,
+    ).toBe('raster');
+  });
+
+  it('rejects alternate origins, versions, encodings and URL decorations', async () => {
+    const { bytes, reference } = fixture();
+    const result = await planBackgroundMapFromMetadata(regionId, bytes, reference, digest);
+    const { zoom, minX, minY } = result.plan.tileRanges[0];
+    const url = tileUrl(vector, zoom, minX, minY);
+    const original = `${zoom}/${minX}/${minY}`;
+    for (const candidate of [
+      url.replace('https:', 'http:'),
+      url.replace('.org/', '.org:443/'),
+      url.replace('.org/', '.org.other.invalid/'),
+      url.replace('tiles.openfreemap.org', 'test@tiles.openfreemap.org'),
+      url.replace(tileVersion, '20261026_080012_pt'),
+      url.replace(original, `0${original}`),
+      url.replace(original, `${zoom}%2f${minX}/${minY}`),
+      url.replace(original, `${zoom}//${minX}/${minY}`),
+      url.replace('.pbf', '\n.pbf'),
+      `${url}?token=unreviewed`,
+      `${url}#fragment`,
+      `${origin}/planet`,
+    ])
+      expect(matchBackgroundMapTileRequest(result, candidate)).toBeUndefined();
   });
 });
