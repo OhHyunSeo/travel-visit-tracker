@@ -43,6 +43,22 @@ be new. The reusable Gradle cache is scoped to the Android QA `.build` folder.
 Fresh builds use different signing keys, so use a fresh fixture installation
 for each build. No production app signing material is used.
 
+## Check the APK and host identity before a run
+
+With JDK 17 and OpenSSL 3, verify the retained build and its matching private
+key before starting the server or a guest. Use the APK SHA-256 recorded at
+packaging.
+
+```sh
+bash qa/map-transport/android/sdk-smoke/verify-runtime-inputs.sh \
+  "$verified_apk" "$recorded_sha256" "$fixture_p12" "$android_build_tools"
+```
+
+The command verifies the APK signature, package and ABI, loopback certificate,
+matching server key, and at least 15 minutes of certificate validity. It prints
+the port from the APK for the server and relay. If the test identity expires,
+generate a fresh loopback certificate and package a new APK at a separate path.
+
 ## Serve the synthetic style
 
 Use the PKCS#12 key store that produced the APK's public certificate. The key
