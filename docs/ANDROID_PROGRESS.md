@@ -2,6 +2,12 @@
 
 마지막 갱신: 2026-11-12, Asia/Seoul.
 
+## 11월 12일 P3-02 후속: 복제한 Kotlin 시작 코드와 공급자 위임 검증
+
+`1d8889d`에서 재개했습니다. 생성된 Kotlin `MainApplication`을 임시 폴더에 복제하고 시험 전용 패키지에 `FixtureReactBootstrap.install(this)`를 넣었습니다. Kotlin 2.2.21로 Android 36 API, 배포 MapLibre 13.6.1, 실제 RN MapLibre 11.5.0 변환기와 함께 컴파일했습니다. RN·Expo의 나머지 시작 API는 컴파일용 대역을 사용했습니다. JVM 바이트코드에서 `super.onCreate()` → 시험 공급자 설치 → `loadReactNative()` 호출 순서를 확인했습니다.
+
+호스트에서 같은 초기화 함수의 포트·인증서 입력 경로를 호출하고 등록된 SDK 공급자로 실제 요청을 보냈습니다. RN 변환기가 바꾼 허용 주소로 요청 1회가 도착했습니다. 고정 User-Agent, Range·ETag, 예약 4바이트를 대조했고 변환기가 추가한 인증 헤더는 제거됐습니다. 쿼리와 다른 포트는 전송 전에 거절됐습니다. 임시 Kotlin 시험 함수가 Java 패키지 내부 타입을 노출한다는 컴파일 경고 두 건이 있었으며 제품 코드는 변경하지 않았습니다. 실제 Android `onCreate()` 실행, APK 설치와 렌더링은 보류입니다. 개인 AVD·앱·SDK와 공통·iOS 폴더를 보존했습니다.
+
 ## 11월 12일 P3-02 후속: React Native 시작과 실제 요청 변환 조사
 
 생성된 Kotlin `MainApplication`은 `super.onCreate()` 뒤 `loadReactNative(this)`를 실행합니다. 설치된 MapLibre React Native 11.5.0의 eager `MLRNMapViewModule`은 UI 스레드에서 `MapLibre.getInstance()`를 호출합니다. Node 24.21.0의 Expo `withMainApplication`을 메모리 사본에서 실행해 두 호출 사이의 삽입, 반복 적용 중복 방지, 앵커 누락·중복 거절을 확인했습니다. 생성 파일이나 제품 소스는 편집하지 않았습니다.
