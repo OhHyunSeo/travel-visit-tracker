@@ -2,6 +2,12 @@
 
 마지막 갱신: 2026-11-12, Asia/Seoul.
 
+## 11월 12일 P3-02 후속: Android 합성 전송의 HTTP/2 공유 연결 호스트 검사
+
+JDK 17과 MockWebServer 4.12.0에서 TLS/HTTP/2를 협상했습니다. 연결 하나에서 콜백 네 개가 본문을 보유하는 동안 두 요청이 대기했습니다. 그중 하나는 전송 전에 취소됐고 다른 하나는 자리가 난 뒤 완료됐습니다. 준비 요청을 포함해 같은 연결의 순번 0~6, 서버 요청 7회·타일 2회·예약 28바이트를 대조했습니다. 예약을 넘는 본문도 거절했고 이미 기록한 예약은 남았습니다. [MockWebServer 배포 소스](https://github.com/square/okhttp/blob/parent-4.12.0/mockwebserver/src/main/kotlin/okhttp3/mockwebserver/MockWebServer.kt)
+
+별도 HTTP/2 호스트 검사와 기존 배포 MapLibre JAR 호스트 18묶음이 모두 통과했습니다. 시험 APK의 기존 HTTP/1.1 경로를 유지하며 Android 게스트에서 HTTP/2는 보류입니다. 다음은 수신 도중 한 스트림의 취소와 같은 연결의 후속 요청을 확인하는 것입니다.
+
 ## 11월 12일 P3-02 후속: 배포 MapLibre Java 요청·중계·장부 연결
 
 보관 APK의 포트와 인증서를 사용하고, MapLibre OpenGL 13.6.1 배포 JAR의 `NativeHttpRequest`에서 실제 공급자와 OkHttp 경로를 호출했습니다. Mac의 두 loopback 포트로 중계를 대체해 서버의 응답 1회·124바이트와 HTTP 200을 확인했습니다. 중계가 전달한 TLS 데이터는 합계 2,452바이트였고, 새 장부의 스타일 예약 1회·타일 0회·예약 4,096바이트와 52바이트 장부 파일을 대조했습니다. 소유 임시 서버·파일은 검사 뒤 정리했습니다.

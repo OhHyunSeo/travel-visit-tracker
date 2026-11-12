@@ -13,8 +13,9 @@ import okhttp3.OkHttpClient;
 import okhttp3.Protocol;
 import okhttp3.Request;
 
-/** A dedicated HTTP/1.1 client for exercising the fixture policy on the host. */
+/** A dedicated loopback client for exercising the fixture transport policy. */
 final class FixtureHttpClient implements AutoCloseable {
+  private static final List<Protocol> HTTP_1_ONLY = List.of(Protocol.HTTP_1_1);
   private final OkHttpClient client;
   private final FixtureBudget budget;
   private final boolean ownsBudget;
@@ -28,26 +29,32 @@ final class FixtureHttpClient implements AutoCloseable {
   }
 
   FixtureHttpClient(int port, Interceptor transform) {
-    this(port, transform, new FixtureBudget(100, 40, 256, 8192), true, null);
+    this(port, transform, new FixtureBudget(100, 40, 256, 8192), true, null, HTTP_1_ONLY);
   }
 
   FixtureHttpClient(int port, Interceptor transform, FixtureBudget budget) {
-    this(port, transform, budget, false, null);
+    this(port, transform, budget, false, null, HTTP_1_ONLY);
   }
 
   static FixtureHttpClient https(int port, Interceptor transform, FixtureBudget budget,
       java.security.cert.X509Certificate certificate) throws java.security.GeneralSecurityException, java.io.IOException {
-    return new FixtureHttpClient(port, transform, budget, false, new FixtureTls(certificate));
+    return new FixtureHttpClient(port, transform, budget, false, new FixtureTls(certificate), HTTP_1_ONLY);
   }
 
-  private FixtureHttpClient(int port, Interceptor transform, FixtureBudget budget, boolean ownsBudget, FixtureTls tls) {
+  static FixtureHttpClient httpsWithHttp2(int port, Interceptor transform, FixtureBudget budget,
+      java.security.cert.X509Certificate certificate) throws java.security.GeneralSecurityException, java.io.IOException {
+    return new FixtureHttpClient(port, transform, budget, false, new FixtureTls(certificate), List.of(Protocol.HTTP_2, Protocol.HTTP_1_1));
+  }
+
+  private FixtureHttpClient(int port, Interceptor transform, FixtureBudget budget, boolean ownsBudget, FixtureTls tls,
+      List<Protocol> protocols) {
     this.budget = budget;
     this.ownsBudget = ownsBudget;
     FixtureRequestPolicy policy = new FixtureRequestPolicy(port, tls == null ? "http" : "https");
     OkHttpClient.Builder builder = new OkHttpClient.Builder()
         .dispatcher(budget.dispatcher())
         .proxy(Proxy.NO_PROXY)
-        .protocols(List.of(Protocol.HTTP_1_1))
+        .protocols(protocols)
         .cookieJar(CookieJar.NO_COOKIES)
         .authenticator(Authenticator.NONE)
         .proxyAuthenticator(Authenticator.NONE)

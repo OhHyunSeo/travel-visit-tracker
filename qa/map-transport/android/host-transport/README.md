@@ -35,6 +35,17 @@ MapLibre OpenGL 13.6.1 AAR과 기존 Android 36 `android.jar`를 네 번째와 �
 
 `FixtureMapLibreRequest`는 취소된 리소스 객체에 늦은 완료를 전달하지 않는 합성 어댑터입니다. `FixtureMapLibreRequestTest`가 정상 변환·본문·응답 헤더, 한 번 실행, 취소와 같은 타일 재로딩의 예약을 검증합니다. `FixtureConditionalRequestTest`는 단일 ETag 우선 또는 HTTP 날짜로 재검증하고, 조건부 요청에 대한 빈 304만 받으며, 전송한 모든 요청의 예약을 보존하는지 검사합니다. `FixtureRangeRequestTest`는 요청별 예약 안의 단일 닫힌 바이트 범위만 전송하고, 일치하는 206과 고정 길이 또는 조건부 빈 304만 받는지 검사합니다.
 
+### 선택적 HTTP/2 호스트 검사
+
+JDK 17과 기존 세 의존성, MockWebServer 4.12.0, JUnit 4.13.2, Hamcrest Core 1.3이 필요합니다. 각 JAR의 해시를 확인한 뒤 합성 서버와 일회용 TLS 키로 실행합니다.
+
+```sh
+bash qa/map-transport/android/host-transport/http2/run-test.sh \
+  "$okhttp_jar" "$okio_jar" "$kotlin_jar" "$mockwebserver_jar" "$junit_jar" "$hamcrest_jar"
+```
+
+이 검사는 별도로 HTTP/2를 선택해 TLS 연결 하나의 네 콜백이 응답을 보유할 때 다섯 번째 요청이 대기하고, 대기 중 취소한 요청은 서버에 도착하지 않는지 확인합니다. 실제 전송 및 초과 본문 거절에도 요청별 예약이 남는지 확인합니다. 기본 시험 APK와 기존 runner는 HTTP/1.1 경로를 사용합니다.
+
 `sdk-contract`는 [MapLibre Native 13.6.1 HttpRequest](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/http/HttpRequest.java)와 [HttpResponder](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/http/HttpResponder.java)의 공개 API 서명만 포함합니다. 라이선스는 해당 폴더의 `LICENSE.maplibre`에 보존했습니다. 이 runner는 그 인터페이스로 호스트 컴파일하며, 실제 SDK 바이너리·JNI·RN 연결은 별도 검증 범위입니다. Android 빌드에서는 이 호스트 계약 파일을 포함하지 않습니다.
 
 `FixturePersistenceFailureTest`는 장부의 부분 tail, 수정 시각과 권한 변경을 만들고 실패 시 HTTP 요청 0회와 파일 보존을 대조합니다.
