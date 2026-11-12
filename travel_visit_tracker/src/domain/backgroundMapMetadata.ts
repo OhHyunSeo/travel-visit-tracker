@@ -48,7 +48,7 @@ function onlyEntry(list: unknown, value: string): boolean {
   return Array.isArray(list) && list.length === 1 && list[0] === value;
 }
 
-function readSprite(style: Record<string, unknown>): string {
+function readStyleSources(style: Record<string, unknown>) {
   const sources = object(style.sources);
   const vectorSource = object(sources?.openmaptiles);
   const rasterSource = object(sources?.ne2_shaded);
@@ -73,7 +73,26 @@ function readSprite(style: Record<string, unknown>): string {
   ) {
     throw new BackgroundMapMetadataError('style');
   }
-  return style.sprite;
+  return { sprite: style.sprite, rasterSource };
+}
+
+function readCoverage(value: unknown, region: BackgroundMapPlan['bounds']) {
+  if (!Array.isArray(value) || value.length !== 4 || !value.every(Number.isFinite))
+    throw new BackgroundMapMetadataError('tile-json');
+  const [west, south, east, north] = value as [number, number, number, number];
+  if (
+    west < -180 ||
+    south < -90 ||
+    east > 180 ||
+    north > 90 ||
+    west > region[0] ||
+    south > region[1] ||
+    east < region[2] ||
+    north < region[3]
+  ) {
+    throw new BackgroundMapMetadataError('tile-json');
+  }
+  return [west, south, east, north];
 }
 
 /** Checks two local documents against a separately reviewed reference before planning a region. */
@@ -88,6 +107,7 @@ export async function planBackgroundMapFromMetadata(
   Readonly<{
     plan: BackgroundMapPlan;
     tileJsonSha256: string;
+    offlineStyleJson: string;
     resources: Readonly<{ vector: string; raster: string; glyphs: string; sprite: string }>;
   }>
 > {
@@ -106,7 +126,8 @@ export async function planBackgroundMapFromMetadata(
   if (actualStyle !== styleSha256 || actualTileJson !== tileJsonSha256)
     throw new BackgroundMapMetadataError('digest');
 
-  const sprite = readSprite(readJson(styleBytes, 'style'));
+  const style = readJson(styleBytes, 'style');
+  const { sprite, rasterSource } = readStyleSources(style);
   const tileJson = readJson(tileJsonBytes, 'tile-json');
   const vector = `${vectorMetadata}/${tileVersion}/{z}/{x}/{y}.pbf`;
   if (
@@ -120,14 +141,36 @@ export async function planBackgroundMapFromMetadata(
     typeof tileJson.maxzoom !== 'number' ||
     !Number.isInteger(tileJson.maxzoom) ||
     tileJson.maxzoom < backgroundMapPolicy.maxZoom ||
-    tileJson.maxzoom > 22
+    tileJson.maxzoom > 22 ||
+    typeof tileJson.attribution !== 'string' ||
+    !tileJson.attribution.trim() ||
+    tileJson.attribution.length > 4096
   ) {
     throw new BackgroundMapMetadataError('tile-json');
   }
 
+  const bounds = readCoverage(tileJson.bounds, plan.bounds);
+  // Inline the verified TileJSON fields so MapLibre cannot resolve a newer /planet version.
+  const offlineStyleJson = JSON.stringify({
+    ...style,
+    sources: {
+      ne2_shaded: rasterSource,
+      openmaptiles: {
+        type: 'vector',
+        tiles: [vector],
+        scheme: 'xyz',
+        bounds,
+        minzoom: tileJson.minzoom,
+        maxzoom: tileJson.maxzoom,
+        attribution: tileJson.attribution,
+      },
+    },
+  });
+
   return Object.freeze({
     plan,
     tileJsonSha256,
+    offlineStyleJson,
     resources: Object.freeze({ vector, raster, glyphs, sprite }),
   });
 }

@@ -18,9 +18,19 @@ const style = {
   },
   glyphs,
   sprite,
-  layers: [{ id: 'background', type: 'background' }],
+  layers: [
+    { id: 'background', type: 'background' },
+    { id: 'water', type: 'fill', source: 'openmaptiles', 'source-layer': 'water' },
+  ],
 };
-const tileJson = { tilejson: '3.0.0', tiles: [vector], minzoom: 0, maxzoom: 14 };
+const tileJson = {
+  tilejson: '3.0.0',
+  tiles: [vector],
+  minzoom: 0,
+  maxzoom: 14,
+  bounds: [-180, -85.05113, 180, 85.05113],
+  attribution: 'OpenFreeMap · OpenStreetMap',
+};
 
 const encode = (value: unknown) => Buffer.from(JSON.stringify(value));
 const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
@@ -43,6 +53,26 @@ describe('background map metadata verification', () => {
     expect(result.resources).toEqual({ vector, raster, glyphs, sprite });
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.resources)).toBe(true);
+  });
+
+  it('uses the pinned tile template directly and preserves the other style fields', async () => {
+    const { bytes, reference } = fixture();
+    const result = await planBackgroundMapFromMetadata(regionId, bytes, reference, digest);
+    expect(JSON.parse(result.offlineStyleJson)).toEqual({
+      ...style,
+      sources: {
+        ne2_shaded: style.sources.ne2_shaded,
+        openmaptiles: {
+          type: 'vector',
+          tiles: [vector],
+          scheme: 'xyz',
+          bounds: tileJson.bounds,
+          minzoom: tileJson.minzoom,
+          maxzoom: tileJson.maxzoom,
+          attribution: tileJson.attribution,
+        },
+      },
+    });
   });
 
   it.each(['style', 'tileJson'] as const)(
@@ -131,7 +161,12 @@ describe('background map metadata verification', () => {
     { ...tileJson, maxzoom: 11 },
     { ...tileJson, minzoom: 9 },
     { ...tileJson, scheme: 'tms' },
-  ])('rejects tile metadata outside the reviewed revision or zoom scheme', async (value) => {
+    { ...tileJson, attribution: '  ' },
+    { ...tileJson, attribution: undefined },
+    { ...tileJson, bounds: [-180, -85, 180] },
+    { ...tileJson, bounds: [-180, -85, 180, 20] },
+    { ...tileJson, bounds: [-181, -85, 180, 85] },
+  ])('rejects inconsistent or incomplete tile metadata', async (value) => {
     const { bytes, reference } = fixture(encode(style), encode(value));
     await expect(
       planBackgroundMapFromMetadata(regionId, bytes, reference, digest),
