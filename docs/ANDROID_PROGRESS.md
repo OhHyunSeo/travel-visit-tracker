@@ -2,6 +2,14 @@
 
 마지막 갱신: 2026-11-12, Asia/Seoul.
 
+## 11월 12일 P3-02 후속: React Native 시작과 실제 요청 변환 조사
+
+생성된 Kotlin `MainApplication`은 `super.onCreate()` 뒤 `loadReactNative(this)`를 실행합니다. 설치된 MapLibre React Native 11.5.0의 eager `MLRNMapViewModule`은 UI 스레드에서 `MapLibre.getInstance()`를 호출합니다. Node 24.21.0의 Expo `withMainApplication`을 메모리 사본에서 실행해 두 호출 사이의 삽입, 반복 적용 중복 방지, 앵커 누락·중복 거절을 확인했습니다. 생성 파일이나 제품 소스는 편집하지 않았습니다.
+
+RN의 `MLRNTransformRequestModule`은 `HttpRequestUtil.setOkHttpClient()`를 통해 SDK 기본 `HttpRequestImpl`의 클라이언트를 바꿉니다. 별도 공급자가 같은 변환이 필요하면 실제 변환기를 연결하고 그 결과에 주소·헤더 제한을 적용해야 합니다. 설치된 `TransformRequestInterceptor.kt`를 Kotlin 2.2.21로 호스트에 컴파일해 확인했습니다. Android 빌드 버전과 로그 API만 호스트 대역을 썼습니다. 허용 주소의 변환, 고정 User-Agent·identity와 어댑터의 Range·ETag 유지, RN이 추가한 인증 헤더 제거를 확인했습니다. RN이 추가한 query와 다른 포트는 모두 전송 전에 차단됐습니다. 서버 1회·예약 4바이트였습니다. 최신 시험 앱 Java/DEX의 Android 36 검사도 통과했습니다.
+
+설치된 SDK로 읽기 전용 준비 점검을 다시 실행했고, fresh AVD의 고정 용량, 전체 쓰기 제한, 첫 부팅 용량, userdata 생성 경계가 미입증이라 실행 허용은 `false`입니다. 이번에 새로 실행한 Android 기기 시험은 없습니다. 다음 실제 단계는 검증된 격리 환경에서 보관 APK·중계·합성 서버를 시작해 기기 화면과 앱·서버·장부를 대조하는 것입니다. 개인 AVD·앱·SDK와 공통·iOS 폴더는 보존했고 P3-02를 완료 처리하지 않았습니다.
+
 ## 11월 12일 P3-02 후속: HTTP/2 스트림 거절과 503 후속 전송 차단
 
 합성 서버에서 첫 타일 스트림을 `REFUSED_STREAM`으로 종료했습니다. 다음 Call에는 `Retry-After: 0`인 503을 반환했고, 자동 후속 시도는 서버에 보내기 전에 전송 제한으로 차단됐습니다. 직접 새로 시작한 같은 타일 Call은 완료됐습니다. 준비 요청을 포함해 같은 TLS 연결에서 기록 네 개, 타일 시도 3회, 본문 예약 16바이트를 대조했습니다. 배포 클래스와 HTTP/2 호스트 사례 네 개를 모두 통과했습니다.
