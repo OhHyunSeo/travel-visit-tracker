@@ -2,6 +2,12 @@
 
 마지막 갱신: 2026-11-13, Asia/Seoul.
 
+## 11월 13일 P3-02 후속: 고정 볼륨 안의 독립 userdata 이미지 준비
+
+SDK에 설치된 해시 고정 도구로 768MiB 전용 볼륨 안에 512MiB ext4를 새로 만들고 QCOW2로 변환했습니다. 원본 논리·할당량은 536,870,912바이트였고, QCOW2 게스트 용량은 동일하며 호스트 논리·할당량은 모두 917,504바이트였습니다. 헤더와 `qemu-img info`에서 외부 backing이 없음을 확인했습니다. `fsck.ext4 -fn`, `qemu-img check`, raw/QCOW2 가상 내용 비교가 통과했고 새 볼륨과 두 이미지를 제거했습니다. Android 준비 회귀 122개도 통과했습니다. [QEMU 디스크 도구](https://www.qemu.org/docs/master/tools/qemu-img.html)
+
+AOSP의 일반 시작 코드에는 기존 userdata가 있는 경우와 새로 만드는 경우가 나뉩니다. 이 결과는 독립 파일의 형식과 일치 검증이며, 그 파일이 API 37에서 첫 부팅·암호화·APK 설치를 감당한다는 근거는 아직 없습니다. 외부 backing과 개인 AVD를 사용하지 않았고 에뮬레이터를 시작하지 않았습니다. [AOSP userdata 선택](https://android.googlesource.com/platform/external/qemu/+/emu-master-dev/android-qemu2-glue/main.cpp#2244)
+
 ## 11월 13일 P3-02 후속: 전용 Android 설치 전 호환성 확인
 
 이미 확인된 연결에서 부팅 완료, Android API 36 이상, arm64-v8a, 제품 앱과 이전 시험 앱의 부재를 읽기 전용으로 확인하는 검사를 추가했습니다. 호환되지 않으면 설치 전에 중단하며 패키지 출력이 비정상이거나 원래 앱이 있으면 거절합니다. 합성 명령을 포함한 기기 준비·수집 회귀 34개가 통과했습니다. 실제 기기에서의 준비 검사와 설치·실행은 남아 있습니다.

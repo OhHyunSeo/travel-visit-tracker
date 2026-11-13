@@ -130,7 +130,7 @@ def probe_capacity(root: Path, mount: Path, free: int, environment: dict) -> dic
         canary.unlink(missing_ok=True)
 
 
-def run(*, fill: bool = False) -> dict:
+def run(*, fill: bool = False, volume_check=None) -> dict:
     if sys.platform != 'darwin':
         raise ComponentError('The volume component requires macOS')
     temporary = Path(tempfile.gettempdir()).resolve(strict=True)
@@ -165,6 +165,7 @@ def run(*, fill: bool = False) -> dict:
         if capacity != VOLUME_BYTES or not 0 < free < capacity:
             raise ComponentError('Mounted filesystem does not match the candidate capacity')
         fill_result = probe_capacity(root, mount, free, environment) if fill else None
+        volume_result = volume_check(mount) if volume_check else None
         if backing_identity(image) != identity:
             raise ComponentError('Backing image changed identity while mounted')
     finally:
@@ -182,7 +183,8 @@ def run(*, fill: bool = False) -> dict:
             raise ComponentError(f'Owned volume cleanup is unconfirmed at {root}: {error}') from error
     return {'backingBytes': VOLUME_BYTES, 'backingAllocatedBytes': VOLUME_BYTES,
             'filesystemCapacityBytes': capacity, 'filesystemFreeBytes': free,
-            'fillProbe': fill_result, 'ownedVolumeRemoved': True, 'nativeAdmissionEnabled': False}
+            'fillProbe': fill_result, 'volumeCheck': volume_result,
+            'ownedVolumeRemoved': True, 'nativeAdmissionEnabled': False}
 
 
 if __name__ == '__main__':
