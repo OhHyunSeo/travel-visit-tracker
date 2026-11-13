@@ -9,6 +9,15 @@ import org.maplibre.android.maps.Style;
 
 public final class FixtureMapActivity extends Activity {
   private MapView mapView;
+  private boolean fixtureStyleLoaded;
+  private final MapView.OnDidFinishRenderingFrameListener renderedFrame = (fully, encodingTime, renderTime) -> {
+    if (fully && fixtureStyleLoaded && mapView != null) reportRenderedFrame();
+  };
+
+  private void reportRenderedFrame() {
+    mapView.removeOnDidFinishRenderingFrameListener(renderedFrame);
+    Log.i(FixtureApplication.LOG_TAG, "FRAME_RENDERED fully=true");
+  }
 
   @Override protected void onCreate(Bundle state) {
     super.onCreate(state);
@@ -21,11 +30,16 @@ public final class FixtureMapActivity extends Activity {
     }
     mapView = new MapView(this);
     mapView.onCreate(state);
+    mapView.addOnDidFinishRenderingFrameListener(renderedFrame);
     mapView.addOnDidFailLoadingMapListener(message -> Log.e(FixtureApplication.LOG_TAG, "STYLE_LOAD_FAILED"));
     setContentView(mapView);
     mapView.getMapAsync(map -> map.setStyle(new Style.Builder().fromUri(app.styleUrl()), style -> {
-      if (style.getLayer("fixture-background") != null) app.reportStyleLoaded();
-      else Log.e(FixtureApplication.LOG_TAG, "STYLE_LAYER_MISSING");
+      if (style.getLayer("fixture-background") != null) {
+        app.reportStyleLoaded();
+        fixtureStyleLoaded = true;
+      } else {
+        Log.e(FixtureApplication.LOG_TAG, "STYLE_LAYER_MISSING");
+      }
     }));
   }
 
@@ -60,7 +74,11 @@ public final class FixtureMapActivity extends Activity {
   }
 
   @Override protected void onDestroy() {
-    if (mapView != null) mapView.onDestroy();
+    if (mapView != null) {
+      mapView.removeOnDidFinishRenderingFrameListener(renderedFrame);
+      mapView.onDestroy();
+      mapView = null;
+    }
     super.onDestroy();
   }
 }

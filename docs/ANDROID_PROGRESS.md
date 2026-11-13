@@ -1,6 +1,14 @@
 # Android 개발·검증 기록
 
-마지막 갱신: 2026-11-12, Asia/Seoul.
+마지막 갱신: 2026-11-13, Asia/Seoul.
+
+## 11월 13일 P3-02 후속: 실제 프레임 확인 신호와 새 시험 APK
+
+`ea5c77a`에서 재개했습니다. 보관 APK의 SHA-256·서명과 서버 키를 대조했고 기존 인증서는 11월 13일 21:11 KST까지 유효했습니다. 격리 Android 연결은 확인되지 않았습니다. 읽기 전용 준비 검사에서 고정 용량과 쓰기 제한, 첫 부팅과 userdata 생성이 미입증인 상태를 확인했습니다.
+
+별도 APK는 시험 배경 레이어를 로드한 뒤 MapLibre가 보고한 첫 완전 프레임을 기록합니다. 화면·장부 대조기는 `--require-render-event`에서 그 순서를 요구하고, 초기 APK는 이 옵션 없이도 대조할 수 있습니다. 새 순서와 누락·중복 거절을 포함한 합성 증거 검사 11개, Android 36 Java·DEX 검사, `assembleDebug` 35개 task를 통과했습니다. 최종 APK DEX에서 프레임 리스너와 로그를 확인했습니다. [MapLibre 렌더 콜백](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/platform/android/MapLibreAndroid/src/main/java/org/maplibre/android/maps/MapView.java)
+
+새 APK의 SHA-256은 `24dc68cfb9d213e2da83afbe297577f7d73bc408cf0484589b7711ab9334e60f`이고 새 합성 인증서는 11월 27일 10:16 KST까지 유효합니다. 서명·APK 정렬·권한·배포 라이브러리와 새 인증서를 대조했습니다. APK와 키는 Android 작업 폴더의 Git 제외 영역에 보존하고 이번 전용 Gradle 캐시를 정리했습니다. 기존 APK, 개인 AVD·앱·SDK와 공통 폴더를 보존했습니다. APK 설치, JNI 실행, 실제 화면·장부는 보류입니다.
 
 ## 11월 12일 P3-02 후속: 복제한 Kotlin 시작 코드와 공급자 위임 검증
 

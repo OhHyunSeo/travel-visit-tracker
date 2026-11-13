@@ -102,17 +102,21 @@ Start a fresh server and relay for the guest run. Collect their stdout as
 `server.log` and `relay.log`. Keep these logs local. Capture the fixture's
 `TripMapSdkFixture` tag from its current PID in `logcat -v threadtime` format
 as `app.log`. After `STYLE_LOADED`, capture `screen.png` while the fixture
-activity is still in the foreground. Read `files/transport-budget/budget.journal`
+activity is still in the foreground. For the newer frame-aware APK, wait for
+`FRAME_RENDERED fully=true` after `STYLE_LOADED` before taking the screenshot.
+Read `files/transport-budget/budget.journal`
 from the same fixture package with `run-as` and save it as `budget.journal`.
 The verifier is read-only and uses Python 3 with Pillow.
 
 ```sh
 python3 -B qa/map-transport/android/sdk-smoke/verify_device_capture.py \
-  "$capture_directory" "$verified_apk" --pid "$fixture_pid"
+  "$capture_directory" "$verified_apk" --pid "$fixture_pid" --require-render-event
 ```
 
 The output compares the APK port, server response, relay completion, current
-process logs, and the persisted style reservation. It checks the expected style
+process logs, and the persisted style reservation. The original APK built before
+the frame callback can still be checked without `--require-render-event`; its
+report records `renderEventObserved=false`. The verifier checks the expected style
 color across the center of the screenshot. The server body size, relay bytes,
 and reserved body bytes are reported separately. Preserve the original capture
 files with their device provenance. Synthetic input only tests the verifier.

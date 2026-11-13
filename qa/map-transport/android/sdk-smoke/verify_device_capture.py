@@ -47,7 +47,7 @@ def read_apk(path):
     return int(value), hashlib.sha256(data).hexdigest()
 
 
-def check_logs(capture, port, pid):
+def check_logs(capture, port, pid, require_render_event):
     server = read_bounded(capture / "server.log", LOG_LIMIT).decode().splitlines()
     if server != [f"STYLE_SERVER_READY port={port}", f"SERVED_STYLE bytes={STYLE_BYTES}"]:
         raise ValueError("Server must record one matching fixture style response")
@@ -67,9 +67,11 @@ def check_logs(capture, port, pid):
         if not match or int(match[1]) != pid or match[2] != "I":
             raise ValueError("App capture includes a failed or unexpected fixture log")
         messages.append(match[3])
-    if messages != ["TRANSPORT_READY", f"STYLE_LOADED attempts=1 tiles=0 reserved={RESERVATION}"]:
-        raise ValueError("App must start and load the style with one reservation")
-    return int(forwarded[1])
+    style_messages = ["TRANSPORT_READY", f"STYLE_LOADED attempts=1 tiles=0 reserved={RESERVATION}"]
+    rendered = messages == [*style_messages, "FRAME_RENDERED fully=true"]
+    if not rendered and (require_render_event or messages != style_messages):
+        raise ValueError("App startup, style load or completed frame evidence differs")
+    return int(forwarded[1]), rendered
 
 
 def check_journal(path):
@@ -106,11 +108,11 @@ def check_render(path):
         return {"width": width, "height": height, "matchingSamples": matching}
 
 
-def verify(capture, apk_path, pid):
+def verify(capture, apk_path, pid, *, require_render_event=False):
     if pid <= 0:
         raise ValueError("Capture requires the positive fixture process ID")
     port, apk_hash = read_apk(apk_path)
-    forwarded = check_logs(capture, port, pid)
+    forwarded, rendered = check_logs(capture, port, pid, require_render_event)
     check_journal(capture / "budget.journal")
     frame = check_render(capture / "screen.png")
     return {
@@ -122,6 +124,7 @@ def verify(capture, apk_path, pid):
         "attempts": 1,
         "tileAttempts": 0,
         "reservedBodyBytes": RESERVATION,
+        "renderEventObserved": rendered,
         "renderedFrame": frame,
     }
 
@@ -131,9 +134,10 @@ def main():
     parser.add_argument("capture", type=Path)
     parser.add_argument("apk", type=Path)
     parser.add_argument("--pid", required=True, type=int)
+    parser.add_argument("--require-render-event", action="store_true")
     args = parser.parse_args()
     try:
-        result = verify(args.capture, args.apk, args.pid)
+        result = verify(args.capture, args.apk, args.pid, require_render_event=args.require_render_event)
     except (OSError, ValueError, BadZipFile, Image.DecompressionBombError) as error:
         parser.exit(1, f"Fixture capture failed: {error}\n")
     print(json.dumps(result, sort_keys=True))

@@ -15,6 +15,7 @@ PORT = 39443
 PID = 4310
 APP_READY = f"11-12 07:00:01.022  {PID}  4310 I TripMapSdkFixture: TRANSPORT_READY\n"
 APP_STYLE = f"11-12 07:00:02.022  {PID}  4320 I TripMapSdkFixture: STYLE_LOADED attempts=1 tiles=0 reserved=4096\n"
+APP_FRAME = f"11-12 07:00:02.045  {PID}  4320 I TripMapSdkFixture: FRAME_RENDERED fully=true\n"
 
 
 def checked(value):
@@ -46,6 +47,18 @@ class CaptureTest(unittest.TestCase):
         self.assertEqual(result["styleBodyBytes"], 124)
         self.assertEqual(result["reservedBodyBytes"], 4096)
         self.assertEqual(result["renderedFrame"]["matchingSamples"], 25)
+        self.assertFalse(result["renderEventObserved"])
+
+    def test_accepts_full_frame_after_style(self):
+        (self.root / "app.log").write_text(APP_READY + APP_STYLE + APP_FRAME)
+        self.assertTrue(verify(self.root, self.apk, PID, require_render_event=True)["renderEventObserved"])
+
+    def test_required_full_frame_must_follow_style(self):
+        for messages in (APP_READY + APP_STYLE, APP_READY + APP_FRAME + APP_STYLE, APP_READY + APP_STYLE + APP_FRAME * 2):
+            with self.subTest(messages=messages):
+                (self.root / "app.log").write_text(messages)
+                with self.assertRaisesRegex(ValueError, "completed frame"):
+                    verify(self.root, self.apk, PID, require_render_event=True)
 
     def test_rejects_mixed_pid(self):
         (self.root / "app.log").write_text(APP_READY + APP_STYLE.replace(str(PID), "9100"))
