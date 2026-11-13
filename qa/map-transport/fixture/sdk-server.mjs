@@ -57,17 +57,17 @@ function chunk(name, body) {
 }
 
 // An original 256px indexed green tile, under the existing 256-byte reservation.
-export function syntheticRasterTile() {
+export function syntheticRasterTile(size = 256) {
   const header = Buffer.alloc(13);
-  header.writeUInt32BE(256, 0);
-  header.writeUInt32BE(256, 4);
+  header.writeUInt32BE(size, 0);
+  header.writeUInt32BE(size, 4);
   header[8] = 1;
   header[9] = 3;
   return Buffer.concat([
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
     chunk("IHDR", header),
     chunk("PLTE", Buffer.from([25, 170, 80, 25, 170, 80])),
-    chunk("IDAT", deflateSync(Buffer.alloc(33 * 256))),
+    chunk("IDAT", deflateSync(Buffer.alloc((1 + size / 8) * size))),
     chunk("IEND", Buffer.alloc(0)),
   ]);
 }
@@ -81,6 +81,17 @@ export function syntheticRasterStyle(origin, blocked = false, multi = false, hel
       tileSize: 256,
       minzoom: multi || held ? 2 : 0,
       maxzoom: multi || held ? 2 : 0,
+    } },
+    layers: [{ id: "t", type: "raster", source: "t" }],
+  }));
+}
+
+function syntheticPackStyle(origin) {
+  return Buffer.from(JSON.stringify({
+    version: 8,
+    sources: { t: {
+      type: "raster", tiles: [`${origin}/resource/tile/pack_{z}_{x}_{y}`],
+      tileSize: 512, minzoom: 0, maxzoom: 0,
     } },
     layers: [{ id: "t", type: "raster", source: "t" }],
   }));
@@ -211,6 +222,7 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
       throw new Error("Policy fixture requires a distinct HTTPS port on the same private address");
   }
   const tile = syntheticRasterTile();
+  const packTile = syntheticRasterTile(512);
   const fontStack = encodedGlyph ? mixedFontStack : "QA";
   const mixedAssets = mixed ? mixedAssetBodies(fontStack) : new Map();
   const requests = [], pending = new Set(), timers = new Set(), heldBodies = new Map();
@@ -246,17 +258,21 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
       return json(404, { error: "Policy path reached the fixture" });
     }
     const mixedStyle = mixed && request.url === "/resource/style/mixed";
-    const style = mixedStyle || ["/resource/style/sdk", "/resource/style/multi", "/resource/style/blocked", "/resource/style/held", "/resource/style/empty"].includes(request.url);
+    const packStyle = request.url === "/resource/style/pack";
+    const style = mixedStyle || packStyle || ["/resource/style/sdk", "/resource/style/multi", "/resource/style/blocked", "/resource/style/held", "/resource/style/empty"].includes(request.url);
     const multiTile = /^\/resource\/tile\/2_[0-3]_[0-3]$/.test(request.url);
     const heldTile = /^\/resource\/tile\/h_2_[0-3]_[0-3]$/.test(request.url);
     const mixedTile = mixed && /^\/resource\/tile\/m_2_[0-3]_[0-3]$/.test(request.url);
     const asset = mixedAssets.get(request.url);
-    if (!style && !multiTile && !heldTile && !mixedTile && !asset && request.url !== "/resource/tile/0_0_0") return json(404, { error: "Unknown synthetic SDK resource" });
+    const offlineTile = request.url === "/resource/tile/pack_0_0_0";
+    if (!style && !multiTile && !heldTile && !mixedTile && !asset && !offlineTile && request.url !== "/resource/tile/0_0_0") return json(404, { error: "Unknown synthetic SDK resource" });
     const redirect = policyTarget && request.url === "/resource/tile/m_2_0_0";
     const body = redirect ? Buffer.alloc(0)
       : mixedStyle ? (policyTarget ? syntheticPolicyStyle(origin, policyTarget) : syntheticMixedStyle(origin, fontStack))
       : request.url === "/resource/style/empty" ? Buffer.from('{"version":8,"sources":{},"layers":[]}')
-      : style ? syntheticRasterStyle(origin, request.url.endsWith("/blocked"), request.url.endsWith("/multi"), request.url.endsWith("/held")) : (asset?.body ?? tile);
+      : packStyle ? syntheticPackStyle(origin)
+      : style ? syntheticRasterStyle(origin, request.url.endsWith("/blocked"), request.url.endsWith("/multi"), request.url.endsWith("/held"))
+      : (asset?.body ?? (offlineTile ? packTile : tile));
     if (body.length > (mixedStyle ? 1024 : 256)) return json(500, { error: "Synthetic reservation exceeded" });
     // Sprite documents finish before the barrier so SDK style loading cannot deadlock on them.
     const hold = !redirect && (heldTile || mixedTile || asset?.hold === true);

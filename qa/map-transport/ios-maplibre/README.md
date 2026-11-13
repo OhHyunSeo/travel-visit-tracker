@@ -136,6 +136,12 @@ python3 -B qa/map-transport/ios-maplibre/tls_cancel_capture.py \
 
 공백이 들어간 글꼴 이름을 검사하려면 합성 서버와 캡처 양쪽에 `--encoded-glyph`를 추가합니다. 이 경우 같은 합성 글자 A를 `Noto Sans Regular` 이름으로 요청하며, 서버와 대조기는 `Noto%20Sans%20Regular/0-255.pbf`의 정확한 경로를 요구합니다.
 
+### 오프라인 팩 한 개의 저장을 확인하는 검사
+
+새 시험 앱 저장소에서 `QA_STAGE=tls-pack`과 새 `QA_RUN_ID`, 합성 HTTPS 서버 주소 및 DER 인증서를 전달합니다. 지도 뷰를 열지 않고 줌 0의 512픽셀 래스터 타일을 포함하는 팩 하나를 만듭니다. 앱의 `result.json`에 완료 상태, 팩 ID와 진행량을 쓰고 `tls-ledger.json`에는 요청 예약을 남깁니다. 서버의 `/stats`에서는 `/resource/style/pack`과 `/resource/tile/pack_0_0_0`이 한 번씩 와야 합니다.
+
+앱을 종료한 뒤 시험 컨테이너의 `MLNOfflineStorage.databaseURL`이 가리키는 SQLite DB를 읽기 전용으로 열어 `region_resources`, `region_tiles`가 결과의 팩 ID와 연결되는지 대조할 수 있습니다. 새 앱 저장소에서만 재현하세요. 제품 앱이나 기존 지도 DB는 이 절차에 사용하지 않습니다.
+
 ```sh
 python3 -B qa/map-transport/ios-maplibre/tls_mixed_capture.py \
   --device "$TP_QA_DEVICE" --origin "$TP_QA_ORIGIN" --certificate "$TP_QA_LEAF_DER" \

@@ -11,7 +11,7 @@ static BOOL TPStarted, TPRunning, TPPriorIdle;
 static NSString *const TPEmptyStyleJSON = @"{\"version\":8,\"sources\":{},\"layers\":[]}";
 
 static BOOL TPTLSStage(NSString *stage) {
-    return [@[@"tls-render", @"tls-queue", @"tls-cancel-retry", @"tls-mixed", @"tls-policy"] containsObject:stage];
+    return [@[@"tls-render", @"tls-queue", @"tls-cancel-retry", @"tls-mixed", @"tls-policy", @"tls-pack"] containsObject:stage];
 }
 
 static BOOL TPCancellationStage(NSString *stage) {
@@ -47,6 +47,8 @@ static NSDictionary *TPControl(NSString *path) {
 @interface TPSDKController : UIViewController <MLNMapViewDelegate>
 @property UILabel *label;
 @property MLNMapView *map;
+@property MLNOfflinePack *offlinePack;
+@property NSUInteger offlineErrors;
 @property NSMutableArray *cases;
 @property NSUInteger transforms, rewrittenStyles, externalTileRequests, phase;
 @property BOOL styleLoaded, fullyRendered, finishing;
@@ -95,6 +97,7 @@ static NSDictionary *TPControl(NSString *path) {
     else if ([self.stage isEqual:@"tls-cancel-retry"]) scope = @"isolated pinned HTTPS HTTP1 SDK style cancellation and manual reload";
     else if ([self.stage isEqual:@"tls-mixed"]) scope = @"isolated pinned HTTPS HTTP1 SDK style, tile, glyph and sprite requests";
     else if ([self.stage isEqual:@"tls-policy"]) scope = @"isolated pinned HTTPS SDK origin, path and redirect refusal";
+    else if ([self.stage isEqual:@"tls-pack"]) scope = @"isolated MapLibre offline pack and private fixture HTTPS requests";
     else if (TPTLSStage(self.stage)) scope = @"isolated pinned private-fixture HTTPS HTTP1 SDK; no cancel/restart, HTTP2, RN JS bridge, provider or OS-byte acceptance";
     TPWrite(@{@"complete": @YES, @"pass": @(pass), @"reason": reason,
               @"cases": self.cases ?: @[], @"stage": self.stage ?: @"invalid", @"process": @(NSProcessInfo.processInfo.processIdentifier),
@@ -242,6 +245,7 @@ static NSDictionary *TPControl(NSString *path) {
     else if (tlsTrial) configured = [TPTransport configurePrivateFixtureTLSOrigin:TPOrigin ledgerURL:ledgerURL maxRequests:32 maxTiles:16 maxReservedBytes:8192 certificate:self.fixtureCertificate];
     else configured = [TPTransport configureOrigin:TPOrigin ledgerURL:ledgerURL maxRequests:cancelTrial ? 64 : 32 maxTiles:cancelTrial ? 32 : 16 maxReservedBytes:cancelTrial ? 16384 : 8192];
     if (!configured) { [self finish:NO reason:@"ledger not ready"]; return; }
+    if ([self.stage isEqual:@"tls-pack"]) { [self startOfflinePack]; return; }
     self.phase = tlsCancel ? 9 : (cancelTrial ? 10 : ((tlsQueue || tlsMixed) ? 2 : 1));
     // Explicit style avoids constructing a default network style before the gate.
     BOOL largeViewport = cancelTrial || tlsQueue || tlsMixed;
@@ -256,6 +260,54 @@ static NSDictionary *TPControl(NSString *path) {
     self.label.text = @"합성 지도를 확인하고 있습니다.\n기존 여행 기록은 사용하지 않습니다.";
     self.timer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) { [self inspectProgress]; }];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (tlsCancel ? 45 : 30) * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ if (!self.finishing) [self finish:NO reason:@"SDK trial deadline"]; });
+}
+- (void)startOfflinePack {
+    MLNOfflineStorage *storage = MLNOfflineStorage.sharedOfflineStorage;
+    NSString *home = [NSHomeDirectory() stringByStandardizingPath];
+    NSString *database = storage.databaseURL.URLByResolvingSymlinksInPath.path;
+    if (!database.length || ![database hasPrefix:[[home stringByResolvingSymlinksInPath] stringByAppendingString:@"/"]]) {
+        [self finish:NO reason:@"offline database is outside the trial app"];
+        return;
+    }
+    NSURL *style = [NSURL URLWithString:[TPOrigin stringByAppendingString:@"/resource/style/pack"]];
+    MLNCoordinateBounds bounds = MLNCoordinateBoundsMake(CLLocationCoordinate2DMake(1, 1), CLLocationCoordinate2DMake(2, 2));
+    MLNTilePyramidOfflineRegion *region = [[MLNTilePyramidOfflineRegion alloc] initWithStyleURL:style bounds:bounds fromZoomLevel:0 toZoomLevel:0];
+    NSData *context = [self.runID dataUsingEncoding:NSUTF8StringEncoding];
+    [storage addPackForRegion:region withContext:context completionHandler:^(MLNOfflinePack *pack, NSError *error) {
+        if (self.finishing) return;
+        if (error || !pack || ![pack.context isEqual:context] || pack.state != MLNOfflinePackStateInactive || storage.packs.count != 1) {
+            [self finish:NO reason:@"offline pack creation did not produce one inactive trial pack"];
+            return;
+        }
+        self.offlinePack = pack;
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(offlinePackError:) name:MLNOfflinePackErrorNotification object:pack];
+        [pack resume];
+        self.timer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) { [self inspectOfflinePack]; }];
+    }];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 25 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        if (!self.finishing) [self finish:NO reason:@"offline pack trial deadline"];
+    });
+}
+- (void)offlinePackError:(NSNotification *)notification {
+    self.offlineErrors++;
+}
+- (void)inspectOfflinePack {
+    NSDictionary *native = TPTransport.snapshot;
+    if (self.offlineErrors || ![native[@"ledgerOK"] isEqual:@YES] || ![native[@"blockedBeforeDispatch"] isEqual:@0]) {
+        [self finish:NO reason:@"offline pack or transport reported an error"];
+        return;
+    }
+    if (self.offlinePack.state != MLNOfflinePackStateComplete || ![self idleNative:native]) return;
+    MLNOfflinePackProgress progress = self.offlinePack.progress;
+    [self.cases addObject:@{@"contextMatches": @([self.offlinePack.context isEqual:[self.runID dataUsingEncoding:NSUTF8StringEncoding]]),
+        @"complete": @YES, @"packId": self.offlinePack.regionId ?: NSNull.null,
+        @"resources": @(progress.countOfResourcesCompleted), @"tiles": @(progress.countOfTilesCompleted),
+        @"expectedResources": @(progress.countOfResourcesExpected), @"storedBytes": @(progress.countOfBytesCompleted),
+        @"databaseInTrialApp": @YES, @"errors": @(self.offlineErrors)}];
+    BOOL counts = self.offlinePack.regionId.longLongValue > 0 && progress.countOfResourcesCompleted == 2 &&
+        progress.countOfResourcesExpected == 2 && progress.countOfTilesCompleted == 1 &&
+        [native[@"started"] isEqual:@2] && [native[@"tlsVerifiedExchanges"] isEqual:@2] && [native[@"ledger"][@"tiles"] isEqual:@1];
+    [self finish:counts && MLNNetworkConfiguration.sharedManager.delegate == self.transform reason:@"offline pack and transport reached their final counts"];
 }
 - (void)observedTransformURL:(NSString *)url {
     @synchronized(self) {

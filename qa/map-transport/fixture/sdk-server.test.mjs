@@ -339,6 +339,25 @@ function readProtoFields(bytes) {
   return fields;
 }
 
+test("offline pack fixture pairs a zoom-zero style with one 512px raster tile", async t => {
+  const fixture = await createSDKFixture({ tls: tlsMaterials() });
+  t.after(() => fixture.close());
+  const { origin } = fixture;
+  const style = JSON.parse(await (await openHTTPS(origin, "/resource/style/pack")).body);
+  assert.deepEqual(style.sources.t, {
+    type: "raster", tiles: [`${origin}/resource/tile/pack_{z}_{x}_{y}`],
+    tileSize: 512, minzoom: 0, maxzoom: 0,
+  });
+  const image = await (await openHTTPS(origin, "/resource/tile/pack_0_0_0")).body;
+  assert.ok(image.length <= 256);
+  assert.equal(image.readUInt32BE(16), 512);
+  assert.equal(image.readUInt32BE(20), 512);
+  const rejected = await openHTTPS(origin, "/resource/tile/pack_1_0_0");
+  assert.equal(rejected.response.statusCode, 404);
+  await rejected.body;
+  assert.equal(fixture.stats().resourceCount, 2);
+});
+
 test("encoded glyph fixture serves only the exact percent-encoded stack", async t => {
   const tls = tlsMaterials();
   await assert.rejects(createSDKFixture({ tls, encodedGlyph: true }), /Encoded glyphs/);
