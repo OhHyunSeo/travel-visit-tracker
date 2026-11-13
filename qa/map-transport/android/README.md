@@ -121,3 +121,5 @@ python3 -B qa/map-transport/android/avd_userdata_component.py --sdk-root "$andro
 `python3 -B qa/map-transport/android/avd_config_component.py --sdk-root "$android_sdk"`는 별도 볼륨에 AVD 설정을 만들고 고정 `-list-avds`로 그 AVD만 표시되는지 확인합니다. 원래 AVD 폴더의 읽기를 차단하며 게스트를 시작하지 않습니다.
 
 `--prepare-userdata`를 추가하면 독립적으로 검증한 새 raw 파일을 같은 전용 AVD의 `userdata-qemu.img`로 배치합니다. 확인이 끝난 뒤 파일과 볼륨을 함께 제거합니다.
+
+`--prepare-userdata`와 `--fixture-apk`, `--fixture-apk-sha256`를 함께 지정하면 검증된 APK 사본도 배치하고 첫 부팅 전 남은 볼륨 공간을 보고합니다.

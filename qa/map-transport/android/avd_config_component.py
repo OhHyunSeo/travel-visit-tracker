@@ -15,6 +15,7 @@ from single_writer_component import ComponentError, _capture
 
 EMULATOR_SHA256 = '5e2249e94368759aabd8fa942d2961cfef07b980a44639a2ec9b7ced3fbe2281'
 SYSTEM_IMAGE = Path('system-images/android-37.0/google_apis_playstore/arm64-v8a')
+MAX_FIXTURE_APK_BYTES = 32 * 1024**2
 PROFILE = '''(version 1)
 (deny default)
 (allow file-read* file-map-executable)
@@ -39,7 +40,20 @@ def prepare_config(root: Path, sdk: Path, name: str) -> Path:
     return avd
 
 
-def discover(sdk: Path, root: Path, *, with_userdata: bool = False) -> dict:
+def stage_fixture_apk(apk: Path, expected_hash: str, root: Path) -> int:
+    with apk.open('rb') as source:
+        payload = source.read(MAX_FIXTURE_APK_BYTES + 1)
+    if not 0 < len(payload) <= MAX_FIXTURE_APK_BYTES or hashlib.sha256(payload).hexdigest() != expected_hash:
+        raise ComponentError('Fixture APK size or hash differs from its checked build')
+    target = root / 'fixture.apk'
+    with target.open('xb') as output:
+        output.write(payload)
+        output.flush()
+        os.fsync(output.fileno())
+    return target.stat().st_size
+
+
+def discover(sdk: Path, root: Path, *, with_userdata: bool = False, fixture_apk: tuple[Path, str] | None = None) -> dict:
     sdk = sdk.resolve(strict=True)
     emulator = sdk / 'emulator/emulator'
     if emulator.resolve(strict=True) != emulator or not emulator.is_file() or not os.access(emulator, os.X_OK):
@@ -76,6 +90,10 @@ def discover(sdk: Path, root: Path, *, with_userdata: bool = False) -> dict:
         if set(avd.iterdir()) != {avd / 'config.ini', avd / 'userdata-qemu.img'}:
             raise ComponentError('Unexpected files in the assembled test AVD')
         result['standaloneRawUserdataStaged'] = True
+        if fixture_apk:
+            result['fixtureApkBytes'] = stage_fixture_apk(*fixture_apk, root)
+        space = os.statvfs(root)
+        result['filesystemFreeAfterStagingBytes'] = space.f_bavail * space.f_frsize
     return result
 
 
@@ -83,9 +101,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument('--sdk-root', required=True, type=Path)
     parser.add_argument('--prepare-userdata', action='store_true', help='Stage a checked standalone userdata file without booting')
+    parser.add_argument('--fixture-apk', type=Path)
+    parser.add_argument('--fixture-apk-sha256')
     args = parser.parse_args()
+    if (args.fixture_apk is None) != (args.fixture_apk_sha256 is None) or (args.fixture_apk and not args.prepare_userdata):
+        parser.error('Use --fixture-apk and --fixture-apk-sha256 with --prepare-userdata')
+    fixture = (args.fixture_apk, args.fixture_apk_sha256) if args.fixture_apk else None
     try:
         print(json.dumps(with_volume(volume_check=lambda root: discover(
-            args.sdk_root, root, with_userdata=args.prepare_userdata)), sort_keys=True))
+            args.sdk_root, root, with_userdata=args.prepare_userdata, fixture_apk=fixture)), sort_keys=True))
     except (ComponentError, OSError, ValueError, KeyError) as error:
         sys.exit(f'Dedicated AVD discovery failed: {error}')
