@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,63 @@ VOLUME_BYTES = 768 * 1024**2
 HEADROOM_BYTES = 5 * 1024**3
 HDIUTIL = '/usr/bin/hdiutil'
 DEVICE = re.compile(r'/dev/disk[0-9]+')
+VOLUME_PROFILE = '''(version 1)
+(deny default)
+(allow file-read* file-map-executable)
+(deny file-read* (subpath (param "PRIVATE_ANDROID")))
+(allow process-exec (literal (param "PYTHON")))
+(allow sysctl-read)
+(allow file-write* (subpath (param "MOUNT")))
+'''
+FILL_WORKER = '''
+import errno, json, os, pathlib, sys
+
+mount, outside = map(pathlib.Path, sys.argv[1:])
+if not os.path.ismount(mount) or mount.stat().st_dev == outside.stat().st_dev:
+    raise RuntimeError('Expected a separate mounted filesystem')
+try:
+    with outside.open('ab') as output:
+        output.write(b'outside write')
+except PermissionError:
+    pass
+else:
+    raise RuntimeError('Write outside the volume was allowed')
+
+filled = 0
+chunk = memoryview(bytes(1024 * 1024))
+created = []
+try:
+    try:
+        for index in range(48):
+            path = mount / f'fill-{index}'
+            with path.open('xb', buffering=0) as output:
+                created.append(path)
+                for _ in range(16):
+                    remaining = chunk
+                    while remaining:
+                        count = output.write(remaining)
+                        if not count:
+                            raise RuntimeError('Volume write did not advance')
+                        filled += count
+                        remaining = remaining[count:]
+                os.fsync(output.fileno())
+    except OSError as error:
+        if error.errno != errno.ENOSPC:
+            raise
+    else:
+        raise RuntimeError('Fixed volume never reported ENOSPC')
+finally:
+    for path in created:
+        path.unlink()
+
+with (mount / 'recovery-proof').open('xb') as output:
+    output.write(b'write after freeing space')
+    output.flush()
+    os.fsync(output.fileno())
+(mount / 'recovery-proof').unlink()
+print(json.dumps({'writtenBytes': filled, 'filesCreated': len(created), 'errno': errno.ENOSPC,
+                  'outsideWriteDenied': True, 'writeAfterRelease': True}))
+'''
 
 
 def image_device(info: bytes, image: Path) -> str | None:
@@ -49,7 +107,30 @@ def backing_identity(image: Path) -> tuple[int, int]:
     return value.st_dev, value.st_ino
 
 
-def run() -> dict:
+def probe_capacity(root: Path, mount: Path, free: int, environment: dict) -> dict:
+    canary = root / 'outside-canary'
+    baseline = b'trip-painting outside volume canary'
+    canary.write_bytes(baseline)
+    python = str(Path(sys.executable).resolve(strict=True))
+    try:
+        output, _ = _capture([
+            '/usr/bin/sandbox-exec', '-D', 'PYTHON=' + python, '-D', 'MOUNT=' + str(mount),
+            '-D', 'PRIVATE_ANDROID=' + str(Path.home() / '.android'), '-p', VOLUME_PROFILE,
+            python, '-I', '-S', '-B', '-c', FILL_WORKER, str(mount), str(canary),
+        ], cwd=mount, env={**environment, 'TMPDIR': str(mount)})
+        result = json.loads(output)
+        if result['errno'] != errno.ENOSPC or not free - 16 * 1024**2 < result['writtenBytes'] <= free:
+            raise ComponentError('Mounted volume exhaustion differs from the measured capacity')
+        if not result['outsideWriteDenied'] or not result['writeAfterRelease'] or result['filesCreated'] < 2:
+            raise ComponentError('Mounted volume did not pass multi-file confinement and recovery')
+        if canary.read_bytes() != baseline:
+            raise ComponentError('Outside canary changed during the mounted-volume check')
+        return result
+    finally:
+        canary.unlink(missing_ok=True)
+
+
+def run(*, fill: bool = False) -> dict:
     if sys.platform != 'darwin':
         raise ComponentError('The volume component requires macOS')
     temporary = Path(tempfile.gettempdir()).resolve(strict=True)
@@ -83,6 +164,7 @@ def run() -> dict:
         free = volume.f_bavail * volume.f_frsize
         if capacity != VOLUME_BYTES or not 0 < free < capacity:
             raise ComponentError('Mounted filesystem does not match the candidate capacity')
+        fill_result = probe_capacity(root, mount, free, environment) if fill else None
         if backing_identity(image) != identity:
             raise ComponentError('Backing image changed identity while mounted')
     finally:
@@ -100,11 +182,16 @@ def run() -> dict:
             raise ComponentError(f'Owned volume cleanup is unconfirmed at {root}: {error}') from error
     return {'backingBytes': VOLUME_BYTES, 'backingAllocatedBytes': VOLUME_BYTES,
             'filesystemCapacityBytes': capacity, 'filesystemFreeBytes': free,
-            'ownedVolumeRemoved': True, 'nativeAdmissionEnabled': False}
+            'fillProbe': fill_result, 'ownedVolumeRemoved': True, 'nativeAdmissionEnabled': False}
 
 
 if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    parser.add_argument('--fill', action='store_true', help='Check actual multi-file ENOSPC on the owned volume')
+    args = parser.parse_args()
     try:
-        print(json.dumps(run(), sort_keys=True))
+        print(json.dumps(run(fill=args.fill), sort_keys=True))
     except (ComponentError, OSError, ValueError, KeyError) as error:
         sys.exit(f'Fixed volume component failed: {error}')
