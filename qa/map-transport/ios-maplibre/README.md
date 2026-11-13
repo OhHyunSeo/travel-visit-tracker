@@ -146,6 +146,8 @@ python3 -B qa/map-transport/ios-maplibre/tls_cancel_capture.py \
 
 만료 뒤 표시를 확인하려면 다운로드 서버에 `--expire-pack`을 주고, 시험 SQLite의 두 `expires` 값이 지난 것을 확인한 다음 서버를 종료하고 `QA_PACK_EXPECT_REVALIDATION=1`을 추가해 앱을 다시 엽니다. 같은 팩이 렌더링되는 동안 전송 시작은 두 건으로 제한하며, 이 시험의 서버는 중단되어 있으므로 TLS 완료와 HTTP 송신은 각각 0건이어야 합니다.
 
+같은 만료 팩을 연결 시도 없이 표시하는 시험은 `QA_PACK_BLOCK_NETWORK=1`을 사용합니다. MapLibre 세션에서 스타일·타일 요청을 전송 계층에 넘기기 전에 거절하고, 같은 팩이 렌더링되며 새 장부 예약이 0건인지 대조합니다. 두 환경 변수는 한 실행에서 함께 사용할 수 없습니다.
+
 ```sh
 python3 -B qa/map-transport/ios-maplibre/tls_mixed_capture.py \
   --device "$TP_QA_DEVICE" --origin "$TP_QA_ORIGIN" --certificate "$TP_QA_LEAF_DER" \

@@ -18,6 +18,29 @@ static BOOL TPCancellationStage(NSString *stage) {
     return [@[@"cancel-retry", @"tls-cancel-retry"] containsObject:stage];
 }
 
+@interface TPOfflinePackNetworkBlock : NSURLProtocol
++ (NSArray<NSString *> *)attemptPaths;
+@end
+
+@implementation TPOfflinePackNetworkBlock
+static NSMutableArray<NSString *> *TPOfflinePackAttempts;
++ (BOOL)canInitWithRequest:(NSURLRequest *)request {
+    return [@[@"http", @"https"] containsObject:request.URL.scheme.lowercaseString ?: @""];
+}
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request { return request; }
++ (NSArray<NSString *> *)attemptPaths {
+    @synchronized(TPOfflinePackNetworkBlock.class) { return [TPOfflinePackAttempts copy] ?: @[]; }
+}
+- (void)startLoading {
+    @synchronized(TPOfflinePackNetworkBlock.class) {
+        if (!TPOfflinePackAttempts) TPOfflinePackAttempts = [NSMutableArray new];
+        if (TPOfflinePackAttempts.count < 3) [TPOfflinePackAttempts addObject:self.request.URL.path ?: @""];
+    }
+    [self.client URLProtocol:self didFailWithError:[NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorNotConnectedToInternet userInfo:nil]];
+}
+- (void)stopLoading {}
+@end
+
 static void TPWriteDocument(NSString *name, NSDictionary *value) {
     if (!TPRunDirectory) return;
     NSData *data = [NSJSONSerialization dataWithJSONObject:value options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys error:nil];
@@ -51,6 +74,7 @@ static NSDictionary *TPControl(NSString *path) {
 @property NSUInteger offlineErrors;
 @property NSString *priorPackRunID;
 @property BOOL expectPackRevalidation;
+@property BOOL blockPackNetwork;
 @property NSMutableArray *cases;
 @property NSUInteger transforms, rewrittenStyles, externalTileRequests, phase;
 @property BOOL styleLoaded, fullyRendered, finishing;
@@ -142,11 +166,14 @@ static NSDictionary *TPControl(NSString *path) {
     BOOL reopening = [self.stage isEqual:@"tls-pack-reopen"];
     self.priorPackRunID = env[@"QA_PACK_RUN_ID"];
     NSString *revalidation = env[@"QA_PACK_EXPECT_REVALIDATION"];
+    NSString *blockNetwork = env[@"QA_PACK_BLOCK_NETWORK"];
     self.expectPackRevalidation = reopening && [revalidation isEqual:@"1"];
+    self.blockPackNetwork = reopening && [blockNetwork isEqual:@"1"];
     BOOL packInputsOK = reopening ? self.priorPackRunID.length && ![self.priorPackRunID isEqual:runID] &&
         [[NSURL URLWithString:TPOrigin ?: @""].host isEqual:@"127.0.0.1"] &&
         [pattern numberOfMatchesInString:self.priorPackRunID options:0 range:NSMakeRange(0, self.priorPackRunID.length)] == 1 &&
-        (!revalidation || self.expectPackRevalidation) : !self.priorPackRunID && !revalidation;
+        (!revalidation || self.expectPackRevalidation) && (!blockNetwork || self.blockPackNetwork) &&
+        !(self.blockPackNetwork && self.expectPackRevalidation) : !self.priorPackRunID && !revalidation && !blockNetwork;
     self.runID = valid ? runID : nil;
     if (usesActionGate && valid) self.actionGate = [[TPFixtureActionGate alloc] initWithRunID:runID processIdentifier:NSProcessInfo.processInfo.processIdentifier cancelNonce:env[@"QA_FIXTURE_CANCEL_NONCE"] reloadNonce:env[@"QA_FIXTURE_RELOAD_NONCE"]];
     NSURL *documents = [[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
@@ -239,7 +266,8 @@ static NSDictionary *TPControl(NSString *path) {
     [self.transform addHeader:@"qa-auth" match:match name:@"Authorization" value:@"synthetic-sdk-secret-must-not-forward"];
     [self.transform addHeader:@"qa-cookie" match:match name:@"Cookie" value:@"synthetic-sdk-cookie-must-not-forward=1"];
     NSURLSessionConfiguration *configuration = NSURLSessionConfiguration.ephemeralSessionConfiguration;
-    configuration.protocolClasses = @[TPTransport.class]; configuration.URLCache = nil;
+    configuration.protocolClasses = self.blockPackNetwork ? @[TPOfflinePackNetworkBlock.class] : @[TPTransport.class];
+    configuration.URLCache = nil;
     configuration.HTTPCookieStorage = nil; configuration.URLCredentialStorage = nil;
     configuration.HTTPShouldSetCookies = NO;
     network.sessionConfiguration = configuration;
@@ -362,10 +390,21 @@ static NSDictionary *TPControl(NSString *path) {
     }
     if (!self.styleLoaded || !self.fullyRendered) return;
     if (self.expectPackRevalidation && (![self idleNative:native] || ![native[@"started"] isEqual:@2])) return;
-    [self.cases addObject:@{@"packId": self.offlinePack.regionId, @"packRunID": self.priorPackRunID,
+    NSArray<NSString *> *blocked = nil;
+    if (self.blockPackNetwork) {
+        blocked = TPOfflinePackNetworkBlock.attemptPaths;
+        if (blocked.count < 2) return;
+        if (blocked.count != 2 || ![[NSSet setWithArray:blocked] isEqual:[NSSet setWithArray:@[@"/resource/style/pack", @"/resource/tile/pack_0_0_0"]]]) {
+            [self finish:NO reason:@"unexpected denied offline requests"];
+            return;
+        }
+    }
+    NSMutableDictionary *result = [@{@"packId": self.offlinePack.regionId, @"packRunID": self.priorPackRunID,
         @"contextMatches": @YES, @"complete": @YES, @"resources": @(progress.countOfResourcesCompleted),
         @"tiles": @(progress.countOfTilesCompleted), @"storedBytes": @(progress.countOfBytesCompleted),
-        @"styleLoaded": @YES, @"fullyRendered": @YES}];
+        @"styleLoaded": @YES, @"fullyRendered": @YES} mutableCopy];
+    if (blocked) result[@"blockedRequests"] = blocked;
+    [self.cases addObject:result];
     NSString *reason = self.expectPackRevalidation ? @"expired pack rendered after bounded connection attempts" :
         @"reopened pack rendered without transport requests";
     [self finish:MLNNetworkConfiguration.sharedManager.delegate == self.transform reason:reason];
