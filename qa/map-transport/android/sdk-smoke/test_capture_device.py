@@ -1,3 +1,4 @@
+import hashlib
 import io
 from pathlib import Path
 import stat
@@ -33,6 +34,7 @@ class CaptureTest(unittest.TestCase):
         self.apk = self.root / "test.apk"
         with ZipFile(self.apk, "w") as archive:
             archive.writestr("assets/fixture-port", b"39443")
+        self.apk_hash = hashlib.sha256(self.apk.read_bytes()).hexdigest()
 
         image = io.BytesIO()
         Image.new("RGB", (100, 120), (23, 120, 120)).save(image, format="PNG")
@@ -57,7 +59,7 @@ class CaptureTest(unittest.TestCase):
         return result
 
     def collect(self, server=GOOD_SERVER):
-        return collect(self.command, self.output, self.apk, server, GOOD_RELAY)
+        return collect(self.command, self.output, self.apk, server, GOOD_RELAY, expected_apk_sha256=self.apk_hash)
 
     def test_captures_and_verifies_current_foreground_fixture(self):
         report = self.collect()
@@ -109,3 +111,21 @@ class CaptureTest(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             self.collect()
         self.assertEqual(len(self.calls), 8)
+
+    def test_refuses_different_apk_before_guest_commands(self):
+        self.apk_hash = '0' * 64
+        with self.assertRaisesRegex(ValueError, "differs from the checked build"):
+            self.collect()
+        self.assertEqual(len(self.calls), 8)
+        self.assertFalse(self.output.exists())
+
+    def test_does_not_accept_apk_replaced_mid_capture(self):
+        def replace_at_end(limit, *args):
+            result = self.command(limit, *args)
+            if not self.calls:
+                with ZipFile(self.apk, "a") as archive:
+                    archive.writestr("different-file", b"replacement")
+            return result
+
+        with self.assertRaisesRegex(ValueError, "changed during capture"):
+            collect(replace_at_end, self.output, self.apk, GOOD_SERVER, GOOD_RELAY, expected_apk_sha256=self.apk_hash)

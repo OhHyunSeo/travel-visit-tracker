@@ -140,7 +140,8 @@ and reserved body bytes are reported separately. Preserve the original capture
 files with their device provenance. Synthetic input only tests the verifier.
 
 An admitted guest runner can call `capture_device.collect()` after the relay
-exits. `capture_transport.for_admitted_transport()` can supply its command
+exits. Pass the expected hash from the APK's preflight to reject a changed host
+artifact before or during capture. `capture_transport.for_admitted_transport()` can supply its command
 callback using an existing transport ID and the runner's identity check. The
 callback checks identity before and after each command, enforces stdout and
 stderr limits and a deadline, and fails on a nonzero exit. The collector

@@ -34,7 +34,7 @@ def write_capture(path, content):
         target.write(content)
 
 
-def collect(command, destination, apk, server_log, relay_log):
+def collect(command, destination, apk, server_log, relay_log, *, expected_apk_sha256):
     """Use command(max_output_bytes, *adb_args) with a pinned, admitted transport.
 
     The caller supplies a read-only transport that fails on nonzero exit,
@@ -45,10 +45,13 @@ def collect(command, destination, apk, server_log, relay_log):
         raise ValueError("Use an absolute path for a new capture directory")
     if any(not log or len(log) > LOG_LIMIT for log in (server_log, relay_log)):
         raise ValueError("Server or relay log is missing or exceeds the capture limit")
+    apk = Path(apk)
+    port, apk_hash = read_apk(apk)
+    if apk_hash != expected_apk_sha256:
+        raise ValueError("Fixture APK differs from the checked build")
     destination.mkdir(mode=0o700)
     write_capture(destination / "server.log", server_log)
     write_capture(destination / "relay.log", relay_log)
-    port, _ = read_apk(Path(apk))
     check_transport_logs(destination, port)
 
     pid = running_pid(command)
@@ -66,4 +69,7 @@ def collect(command, destination, apk, server_log, relay_log):
     if running_pid(command) != pid:
         raise ValueError("Fixture PID changed during journal capture")
     write_capture(destination / "budget.journal", journal)
-    return verify(destination, Path(apk), pid, require_render_event=True)
+    result = verify(destination, apk, pid, require_render_event=True)
+    if result["apkSha256"] != apk_hash:
+        raise ValueError("Fixture APK changed during capture")
+    return result
