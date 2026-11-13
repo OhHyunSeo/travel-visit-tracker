@@ -98,4 +98,4 @@ python3 -B qa/map-transport/android/single_writer_component.py --run-component -
 python3 -B qa/map-transport/android/ext4_component.py --sdk-root "$android_sdk"
 ```
 
-macOS에서 해시가 고정된 SDK `bin64/mkfs.ext4`를 새 8MiB 일반 파일에 실행합니다. OS 프로필에서 이 파일의 데이터 쓰기만 허용하고 파일 크기 제한과 코어 덤프 제한을 적용합니다. 허용 밖의 별도 표식 파일 형식화와 한 블록 초과 형식화가 실패하는지도 확인합니다. 정상 출력의 identity, 논리 크기와 할당량, ext4 superblock을 검사한 뒤 임시 파일을 정리합니다. SDK 내장 userdata 생성기, 실제 AVD의 고정 용량과 첫 부팅은 별도 검증입니다. 이 명령은 에뮬레이터를 시작하지 않으며 실행 허용 상태를 바꾸지 않습니다.
+macOS에서 해시가 고정된 SDK `bin64/mkfs.ext4`를 새 8MiB 일반 파일에 실행합니다. OS 프로필에서 이 파일의 데이터 쓰기만 허용하고 파일 크기 제한과 코어 덤프 제한을 적용합니다. 허용 밖의 별도 표식 파일 형식화와 한 블록 초과 형식화가 실패하는지도 확인합니다. 정상 출력의 identity, 논리 크기와 할당량, ext4 superblock을 검사하고, 같은 SDK의 `fsck.ext4 -fn`을 쓰기가 금지된 상태에서 실행합니다. 읽기 검사 전후 전체 이미지의 SHA-256을 대조한 뒤 임시 파일을 정리합니다. SDK 내장 userdata 생성기, 실제 AVD의 고정 용량과 첫 부팅은 별도 검증입니다. 이 명령은 에뮬레이터를 시작하지 않으며 실행 허용 상태를 바꾸지 않습니다.

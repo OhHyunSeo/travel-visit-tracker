@@ -18,16 +18,17 @@ from single_writer_component import ComponentError, _capture
 IMAGE_BYTES = 8 * 1024 * 1024
 BLOCK_BYTES = 4096
 FORMATTER_SHA256 = 'e2b6ebdad12b13c0809ba0ba70cce2a880ed6d51e5c1610c447a9e07afc4a50c'
+CHECKER_SHA256 = 'f1ea5f09075458a8d49604deedd4939bcd07eed5deb324618b1a2a6a71ec6859'
 LABEL = b'trip-fixture'
 CANARY = b'trip-painting-outside-formatter-canary\n'
-PROFILE = '''(version 1)
+READ_PROFILE = '''(version 1)
 (deny default)
 (allow file-read* file-map-executable)
 (deny file-read* (subpath (param "PRIVATE_AVD")))
-(allow process-exec (literal (param "FORMATTER")))
+(allow process-exec (literal (param "EXT4_TOOL")))
 (allow sysctl-read)
-(allow file-write-data (literal (param "QA_IMAGE")))
 '''
+FORMAT_PROFILE = READ_PROFILE + '(allow file-write-data (literal (param "QA_IMAGE")))\n'
 LAUNCH = '''
 import os, resource, sys
 cap = int(sys.argv[1])
@@ -37,14 +38,14 @@ os.execv(sys.argv[2], sys.argv[2:])
 '''
 
 
-def verify_formatter(sdk_root: Path) -> Path:
-    tool = sdk_root.resolve(strict=True) / 'emulator/bin64/mkfs.ext4'
+def verify_sdk_tool(sdk_root: Path, name: str, expected_hash: str) -> Path:
+    tool = sdk_root.resolve(strict=True) / 'emulator/bin64' / name
     if tool != tool.resolve(strict=True) or not tool.is_file() or not os.access(tool, os.X_OK):
         raise ComponentError('Expected a regular executable from the cached Android SDK')
     with tool.open('rb') as source:
         body = source.read(1024**2 + 1)
-    if len(body) > 1024**2 or hashlib.sha256(body).hexdigest() != FORMATTER_SHA256:
-        raise ComponentError('Cached ext4 formatter hash differs')
+    if len(body) > 1024**2 or hashlib.sha256(body).hexdigest() != expected_hash:
+        raise ComponentError(f'Cached {name} hash differs')
     return tool
 
 
@@ -76,10 +77,22 @@ def inspect_image(image: Path, original: os.stat_result) -> dict:
 def formatter_argv(tool: Path, image: Path, *, target: Path | None = None, blocks: int = IMAGE_BYTES // BLOCK_BYTES) -> list[str]:
     # Only the internal negative probes vary target or block count.
     return [sys.executable, '-I', '-S', '-B', '-c', LAUNCH, str(IMAGE_BYTES), '/usr/bin/sandbox-exec',
-            '-D', 'QA_IMAGE=' + str(image), '-D', 'FORMATTER=' + str(tool),
-            '-D', 'PRIVATE_AVD=' + str(Path.home() / '.android'), '-p', PROFILE, str(tool),
+            '-D', 'QA_IMAGE=' + str(image), '-D', 'EXT4_TOOL=' + str(tool),
+            '-D', 'PRIVATE_AVD=' + str(Path.home() / '.android'), '-p', FORMAT_PROFILE, str(tool),
             '-q', '-F', '-b', str(BLOCK_BYTES), '-E', 'nodiscard', '-L', LABEL.decode('ascii'),
             str(target if target is not None else image), str(blocks)]
+
+
+def check_integrity(tool: Path, image: Path, root: Path, environment: dict) -> None:
+    argv = [sys.executable, '-I', '-S', '-B', '-c', LAUNCH, '0', '/usr/bin/sandbox-exec',
+            '-D', 'EXT4_TOOL=' + str(tool), '-D', 'PRIVATE_AVD=' + str(Path.home() / '.android'),
+            '-p', READ_PROFILE, str(tool), '-fn', str(image)]
+    with image.open('rb') as source:
+        digest = hashlib.file_digest(source, 'sha256').digest()
+    _capture(argv, cwd=root, env=environment)
+    with image.open('rb') as source:
+        if hashlib.file_digest(source, 'sha256').digest() != digest:
+            raise ComponentError('Read-only ext4 check changed the image bytes')
 
 
 def expect_refusal(argv: list[str], root: Path, environment: dict, message: str) -> None:
@@ -95,7 +108,8 @@ def expect_refusal(argv: list[str], root: Path, environment: dict, message: str)
 def run(sdk_root: Path) -> dict:
     if sys.platform != 'darwin':
         raise ComponentError('The cached formatter component requires macOS')
-    tool = verify_formatter(sdk_root)
+    tool = verify_sdk_tool(sdk_root, 'mkfs.ext4', FORMATTER_SHA256)
+    checker = verify_sdk_tool(sdk_root, 'fsck.ext4', CHECKER_SHA256)
     with tempfile.TemporaryDirectory(prefix='trip-ext4-component.') as temporary:
         root = Path(temporary).resolve(strict=True)
         image = root / 'fixture.ext4'
@@ -116,13 +130,15 @@ def run(sdk_root: Path) -> dict:
         if set(root.iterdir()) != {image, canary}:
             raise ComponentError('Formatter created files beyond the fixture image')
         layout = inspect_image(image, before)
+        check_integrity(checker, image, root, environment)
         expect_refusal(formatter_argv(tool, image, blocks=IMAGE_BYTES // BLOCK_BYTES + 1), root, environment, 'short write')
         after = image.stat()
         if (after.st_dev, after.st_ino, after.st_nlink, after.st_size, after.st_blocks) != (
             before.st_dev, before.st_ino, 1, IMAGE_BYTES, layout['allocatedBytes'] // 512
         ) or canary.read_bytes() != CANARY or set(root.iterdir()) != {image, canary}:
             raise ComponentError('Oversized format changed file identity, size, allocation or outside contents')
-    return {'formatterSha256': FORMATTER_SHA256, 'image': layout, 'ownedFixtureRemoved': True,
+    return {'formatterSha256': FORMATTER_SHA256, 'checkerSha256': CHECKER_SHA256, 'image': layout,
+            'readOnlyIntegrityPassed': True, 'ownedFixtureRemoved': True,
             'outsideWriteDenied': True, 'oversizedFormatDenied': True, 'nativeAdmissionEnabled': False}
 
 

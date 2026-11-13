@@ -3,9 +3,8 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
-from unittest.mock import patch
 
-from ext4_component import BLOCK_BYTES, IMAGE_BYTES, LABEL, formatter_argv, inspect_image, verify_formatter
+from ext4_component import BLOCK_BYTES, IMAGE_BYTES, LABEL, formatter_argv, inspect_image, verify_sdk_tool
 from single_writer_component import ComponentError
 
 
@@ -59,13 +58,13 @@ class Ext4ComponentTest(unittest.TestCase):
         tool.write_bytes(b'fake formatter')
         tool.chmod(0o700)
         with self.assertRaisesRegex(ComponentError, 'hash differs'):
-            verify_formatter(self.root)
-        with patch('ext4_component.FORMATTER_SHA256', hashlib.sha256(tool.read_bytes()).hexdigest()):
-            self.assertEqual(verify_formatter(self.root), tool)
-            tool.rename(tool.with_name('old'))
-            tool.symlink_to(tool.with_name('old'))
-            with self.assertRaisesRegex(ComponentError, 'regular executable'):
-                verify_formatter(self.root)
+            verify_sdk_tool(self.root, 'mkfs.ext4', '0' * 64)
+        expected = hashlib.sha256(tool.read_bytes()).hexdigest()
+        self.assertEqual(verify_sdk_tool(self.root, 'mkfs.ext4', expected), tool)
+        tool.rename(tool.with_name('old'))
+        tool.symlink_to(tool.with_name('old'))
+        with self.assertRaisesRegex(ComponentError, 'regular executable'):
+            verify_sdk_tool(self.root, 'mkfs.ext4', expected)
 
     def test_fixed_command_names_only_the_disposable_image(self):
         tool = Path('/sdk/emulator/bin64/mkfs.ext4')
