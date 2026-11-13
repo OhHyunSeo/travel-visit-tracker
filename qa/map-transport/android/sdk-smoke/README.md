@@ -116,6 +116,11 @@ Keep the guest relay in the foreground to capture `RELAY_READY` and
 
 ## Check a fresh guest capture
 
+Before installing, an admitted runner can call `device_preflight.check_fresh_device()`
+through its pinned transport. The check requires a completed Android boot, API
+36 or later and arm64-v8a, and checks that the product and fixture packages are
+absent. It does not establish device ownership or launch readiness on its own.
+
 Start a fresh server and relay for the guest run. Collect their stdout as
 `server.log` and `relay.log`. Keep these logs local. Capture the fixture's
 `TripMapSdkFixture` tag from its current PID in `logcat -v threadtime` format
