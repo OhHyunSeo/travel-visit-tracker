@@ -2,6 +2,10 @@
 
 마지막 갱신: 2026-11-13, Asia/Seoul.
 
+## 11월 13일 P3-02 후속: QCOW2 외부 데이터와 스냅샷 거절
+
+독립 이미지 검사에서 backing 참조 외에도 외부 데이터 플래그와 스냅샷 테이블을 거절하도록 보강했습니다. 실제 SDK 변환본은 세 조건을 모두 통과했고 전용 AVD 조립과 제거까지 확인했습니다. 외부 데이터와 스냅샷을 넣은 합성 헤더 회귀를 포함해 Android 준비 검사 123개가 통과했습니다. [QCOW2 형식](https://www.qemu.org/docs/master/interop/qcow2.html)
+
 ## 11월 13일 P3-02 후속: 전용 AVD에 독립 userdata 조립
 
 `avd_config_component.py --prepare-userdata`로 한 고정 볼륨 안에서 전용 AVD 탐색과 독립 userdata 형식 검사를 순서대로 실행했습니다. 전용 AVD 한 개가 표시됐고, 같은 AVD 폴더에는 `config.ini`와 새 512MiB `userdata-qemu.img`만 남는 것을 확인했습니다. 변환 대조본을 제거한 뒤 볼륨 전체를 해제·삭제했습니다. 설치된 API 37 이미지에는 사용자 데이터 암호화가 켜져 있습니다. 실제 부팅과 암호화 호환성은 아직 확인하지 않았고 `nativeAdmissionEnabled=false`를 유지합니다.

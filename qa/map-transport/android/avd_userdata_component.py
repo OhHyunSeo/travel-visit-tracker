@@ -41,6 +41,9 @@ def inspect_qcow_info(info: dict) -> int:
         raise ComponentError('Unexpected userdata disk format or capacity')
     if any('backing' in key.lower() for key in info):
         raise ComponentError('The userdata disk must have no backing file')
+    details = info.get('format-specific', {}).get('data', {})
+    if details.get('data-file') or info.get('snapshots'):
+        raise ComponentError('The userdata disk must have no external data or snapshots')
     actual = info.get('actual-size')
     if type(actual) is not int or not 0 < actual < VIRTUAL_BYTES:
         raise ComponentError('Unexpected userdata disk allocation')
@@ -49,12 +52,15 @@ def inspect_qcow_info(info: dict) -> int:
 
 def verify_qcow_header(path: Path) -> None:
     with path.open('rb') as stream:
-        header = stream.read(32)
-    if len(header) != 32:
+        header = stream.read(104)
+    if len(header) != 104:
         raise ComponentError('Incomplete userdata QCOW2 header')
-    magic, version, backing_offset, backing_size, _, virtual = struct.unpack('>4sIQIIQ', header)
+    magic, version, backing_offset, backing_size, _, virtual = struct.unpack_from('>4sIQIIQ', header)
     if (magic, version, backing_offset, backing_size, virtual) != (b'QFI\xfb', 3, 0, 0, VIRTUAL_BYTES):
         raise ComponentError('Userdata QCOW2 header does not match the standalone disk')
+    snapshots, snapshot_offset, incompatible = struct.unpack_from('>IQQ', header, 60)
+    if snapshots or snapshot_offset or incompatible:
+        raise ComponentError('Userdata QCOW2 has snapshots or unsupported incompatible features')
 
 
 def prepare(sdk: Path, mount: Path) -> dict:
