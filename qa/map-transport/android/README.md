@@ -91,3 +91,11 @@ python3 -B qa/map-transport/android/single_writer_component.py --run-component -
 이것은 **신뢰하는 controller가 이 API로 쓰는 파일**의 논리 cap입니다. 다른 process의 직접 쓰기나 inode 교체와 동시에 발생하는 race를 원자적으로 차단하는 OS 보호 장치가 아닙니다. 실패 보고서의 사용량은 열린 소유 FD 관측값이며 미등록 외부 파일까지 제한했다는 값이 아닙니다.
 
 실제 filesystem 할당량 상한, backing의 제한된 형식화, 외부 임시 파일 차단, 모든 native 자식·mount의 수명과 cached userdata producer의 별도 진입점은 남아 있습니다. `audit()`는 항상 `allocationBoundProven=false`, `imageFormatted=false`, `nativeAdmissionEnabled=false`를 반환합니다. 이 구성요소의 성공이나 276KiB 예약값으로 기존 공통 도구의 native gate를 열 수 없습니다. **65MiB**는 controller API의 논리 예산이며 전체 native 구성요소의 할당량 상한으로는 여전히 미구현 설계 ceiling입니다.
+
+## 별도 8MiB ext4 형식화 구성요소
+
+```sh
+python3 -B qa/map-transport/android/ext4_component.py --sdk-root "$android_sdk"
+```
+
+macOS에서 해시가 고정된 SDK `bin64/mkfs.ext4`를 새 8MiB 일반 파일에 한 번 실행합니다. OS 프로필에서 이 파일의 데이터 쓰기만 허용하고 파일 크기 제한과 코어 덤프 제한을 적용합니다. 종료 뒤 파일 identity, 논리 크기와 할당량, ext4 superblock을 검사하고 임시 파일을 정리합니다. SDK 내장 userdata 생성기, 실제 AVD의 고정 용량과 첫 부팅은 별도 검증입니다. 이 명령은 에뮬레이터를 시작하지 않으며 실행 허용 상태를 바꾸지 않습니다.

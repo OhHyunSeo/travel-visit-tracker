@@ -1,0 +1,119 @@
+"""Check the cached Android SDK formatter on one disposable 8 MiB image."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import stat
+import struct
+import sys
+import tempfile
+
+from single_writer_component import ComponentError, _capture
+
+
+IMAGE_BYTES = 8 * 1024 * 1024
+BLOCK_BYTES = 4096
+FORMATTER_SHA256 = 'e2b6ebdad12b13c0809ba0ba70cce2a880ed6d51e5c1610c447a9e07afc4a50c'
+LABEL = b'trip-fixture'
+PROFILE = '''(version 1)
+(deny default)
+(allow file-read* file-map-executable)
+(deny file-read* (subpath (param "PRIVATE_AVD")))
+(allow process-exec (literal (param "FORMATTER")))
+(allow sysctl-read)
+(allow file-write-data (literal (param "QA_IMAGE")))
+'''
+LAUNCH = '''
+import os, resource, sys
+cap = int(sys.argv[1])
+resource.setrlimit(resource.RLIMIT_FSIZE, (cap, cap))
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+os.execv(sys.argv[2], sys.argv[2:])
+'''
+
+
+def verify_formatter(sdk_root: Path) -> Path:
+    tool = sdk_root.resolve(strict=True) / 'emulator/bin64/mkfs.ext4'
+    if tool != tool.resolve(strict=True) or not tool.is_file() or not os.access(tool, os.X_OK):
+        raise ComponentError('Expected a regular executable from the cached Android SDK')
+    with tool.open('rb') as source:
+        body = source.read(1024**2 + 1)
+    if len(body) > 1024**2 or hashlib.sha256(body).hexdigest() != FORMATTER_SHA256:
+        raise ComponentError('Cached ext4 formatter hash differs')
+    return tool
+
+
+def inspect_image(image: Path, original: os.stat_result) -> dict:
+    descriptor = os.open(image, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, 'rb') as source:
+        current = os.fstat(source.fileno())
+        if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1 or image.is_symlink() or (
+            current.st_dev, current.st_ino, current.st_size
+        ) != (original.st_dev, original.st_ino, IMAGE_BYTES):
+            raise ComponentError('Formatter changed the image identity or size')
+        if current.st_blocks * 512 > IMAGE_BYTES:
+            raise ComponentError('Formatted image allocation exceeds the component size')
+        source.seek(1024)
+        superblock = source.read(1024)
+
+    if len(superblock) != 1024 or struct.unpack_from('<H', superblock, 56)[0] != 0xEF53:
+        raise ComponentError('Missing ext4 superblock')
+    block_count = struct.unpack_from('<I', superblock, 4)[0]
+    log_block_size = struct.unpack_from('<I', superblock, 24)[0]
+    label = superblock[120:136].split(b'\0', 1)[0]
+    blocks_high = struct.unpack_from('<I', superblock, 0x150)[0]
+    if (block_count, blocks_high, log_block_size, label) != (IMAGE_BYTES // BLOCK_BYTES, 0, 2, LABEL):
+        raise ComponentError('Ext4 superblock does not match the fixture layout')
+    return {'blocks': block_count, 'blockBytes': BLOCK_BYTES, 'logicalBytes': current.st_size,
+            'allocatedBytes': current.st_blocks * 512}
+
+
+def formatter_argv(tool: Path, image: Path) -> list[str]:
+    return [sys.executable, '-I', '-S', '-B', '-c', LAUNCH, str(IMAGE_BYTES), '/usr/bin/sandbox-exec',
+            '-D', 'QA_IMAGE=' + str(image), '-D', 'FORMATTER=' + str(tool),
+            '-D', 'PRIVATE_AVD=' + str(Path.home() / '.android'), '-p', PROFILE, str(tool),
+            '-q', '-F', '-b', str(BLOCK_BYTES), '-E', 'nodiscard', '-L', LABEL.decode('ascii'),
+            str(image), str(IMAGE_BYTES // BLOCK_BYTES)]
+
+
+def run(sdk_root: Path) -> dict:
+    if sys.platform != 'darwin':
+        raise ComponentError('The cached formatter component requires macOS')
+    tool = verify_formatter(sdk_root)
+    with tempfile.TemporaryDirectory(prefix='trip-ext4-component.') as temporary:
+        root = Path(temporary).resolve(strict=True)
+        image = root / 'fixture.ext4'
+        chunk = bytes(65_536)
+        with os.fdopen(os.open(image, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as output:
+            for _ in range(IMAGE_BYTES // len(chunk)):
+                output.write(chunk)
+            output.flush()
+            os.fsync(output.fileno())
+        before = image.stat()
+        environment = {'PATH': '/usr/bin:/bin', 'LANG': 'C', 'TMPDIR': str(root), 'MKE2FS_CONFIG': '/dev/null'}
+        _capture(formatter_argv(tool, image), cwd=root, env=environment)
+        if set(root.iterdir()) != {image}:
+            raise ComponentError('Formatter created files beyond the fixture image')
+        layout = inspect_image(image, before)
+    return {'formatterSha256': FORMATTER_SHA256, 'image': layout, 'ownedFixtureRemoved': True,
+            'nativeAdmissionEnabled': False}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    parser.add_argument('--sdk-root', type=Path, required=True)
+    args = parser.parse_args()
+    try:
+        result = run(args.sdk_root)
+    except (ComponentError, OSError) as error:
+        parser.exit(1, f'Ext4 component failed: {error}\n')
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
