@@ -2,6 +2,10 @@
 
 마지막 갱신: 2026-11-13, Asia/Seoul.
 
+## 11월 13일 P3-02 후속: 전용 AVD만 탐색되는지 확인
+
+768MiB 전용 볼륨 안에 새 AVD 등록과 설정을 만들었습니다. SDK에 설치된 해시 고정 에뮬레이터의 `-list-avds`를 쓰기 범위가 그 볼륨에 한정된 상태에서 실행했고 생성한 AVD 이름 하나만 표시됐습니다. 설정 외 게스트 파일은 생성되지 않았고, 소유 볼륨을 해제·제거했습니다. 개인 Android 폴더는 읽기를 차단했습니다. 설정 탐색만 확인했고 부팅·ADB·APK 설치는 실행하지 않았습니다. [Android Emulator 명령](https://developer.android.com/studio/run/emulator-commandline)
+
 ## 11월 13일 P3-02 후속: 고정 볼륨 안의 독립 userdata 이미지 준비
 
 SDK에 설치된 해시 고정 도구로 768MiB 전용 볼륨 안에 512MiB ext4를 새로 만들고 QCOW2로 변환했습니다. 원본 논리·할당량은 536,870,912바이트였고, QCOW2 게스트 용량은 동일하며 호스트 논리·할당량은 모두 917,504바이트였습니다. 헤더와 `qemu-img info`에서 외부 backing이 없음을 확인했습니다. `fsck.ext4 -fn`, `qemu-img check`, raw/QCOW2 가상 내용 비교가 통과했고 새 볼륨과 두 이미지를 제거했습니다. Android 준비 회귀 122개도 통과했습니다. [QEMU 디스크 도구](https://www.qemu.org/docs/master/tools/qemu-img.html)
