@@ -2,6 +2,10 @@
 
 마지막 갱신: 2026-11-13, Asia/Seoul.
 
+## 11월 13일 P3-02 후속: 전용 AVD에 독립 userdata 조립
+
+`avd_config_component.py --prepare-userdata`로 한 고정 볼륨 안에서 전용 AVD 탐색과 독립 userdata 형식 검사를 순서대로 실행했습니다. 전용 AVD 한 개가 표시됐고, 같은 AVD 폴더에는 `config.ini`와 새 512MiB `userdata-qemu.img`만 남는 것을 확인했습니다. 변환 대조본을 제거한 뒤 볼륨 전체를 해제·삭제했습니다. 설치된 API 37 이미지에는 사용자 데이터 암호화가 켜져 있습니다. 실제 부팅과 암호화 호환성은 아직 확인하지 않았고 `nativeAdmissionEnabled=false`를 유지합니다.
+
 ## 11월 13일 P3-02 후속: 전용 AVD만 탐색되는지 확인
 
 768MiB 전용 볼륨 안에 새 AVD 등록과 설정을 만들었습니다. SDK에 설치된 해시 고정 에뮬레이터의 `-list-avds`를 쓰기 범위가 그 볼륨에 한정된 상태에서 실행했고 생성한 AVD 이름 하나만 표시됐습니다. 설정 외 게스트 파일은 생성되지 않았고, 소유 볼륨을 해제·제거했습니다. 개인 Android 폴더는 읽기를 차단했습니다. 설정 탐색만 확인했고 부팅·ADB·APK 설치는 실행하지 않았습니다. [Android Emulator 명령](https://developer.android.com/studio/run/emulator-commandline)

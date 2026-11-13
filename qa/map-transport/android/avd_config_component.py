@@ -9,6 +9,7 @@ import sys
 import uuid
 
 from avd_volume_component import run as with_volume
+from avd_userdata_component import prepare as prepare_userdata
 from single_writer_component import ComponentError, _capture
 
 
@@ -38,7 +39,7 @@ def prepare_config(root: Path, sdk: Path, name: str) -> Path:
     return avd
 
 
-def discover(sdk: Path, root: Path) -> dict:
+def discover(sdk: Path, root: Path, *, with_userdata: bool = False) -> dict:
     sdk = sdk.resolve(strict=True)
     emulator = sdk / 'emulator/emulator'
     if emulator.resolve(strict=True) != emulator or not emulator.is_file() or not os.access(emulator, os.X_OK):
@@ -66,14 +67,25 @@ def discover(sdk: Path, root: Path) -> dict:
         raise ComponentError('Emulator did not list exactly the dedicated QA AVD')
     if set(avd.iterdir()) != {avd / 'config.ini'}:
         raise ComponentError('AVD discovery unexpectedly created guest files')
-    return {'onlyDedicatedAvdListed': True, 'guestFilesCreated': False, 'guestBooted': False}
+    result = {'onlyDedicatedAvdListed': True, 'discoveryCreatedGuestFiles': False, 'guestBooted': False}
+    if with_userdata:
+        result['preparedUserdata'] = prepare_userdata(sdk, avd)
+        raw = avd / 'fresh-userdata.ext4'
+        raw.rename(avd / 'userdata-qemu.img')
+        (avd / 'fresh-userdata.qcow2').unlink()
+        if set(avd.iterdir()) != {avd / 'config.ini', avd / 'userdata-qemu.img'}:
+            raise ComponentError('Unexpected files in the assembled test AVD')
+        result['standaloneRawUserdataStaged'] = True
+    return result
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument('--sdk-root', required=True, type=Path)
+    parser.add_argument('--prepare-userdata', action='store_true', help='Stage a checked standalone userdata file without booting')
     args = parser.parse_args()
     try:
-        print(json.dumps(with_volume(volume_check=lambda root: discover(args.sdk_root, root)), sort_keys=True))
+        print(json.dumps(with_volume(volume_check=lambda root: discover(
+            args.sdk_root, root, with_userdata=args.prepare_userdata)), sort_keys=True))
     except (ComponentError, OSError, ValueError, KeyError) as error:
         sys.exit(f'Dedicated AVD discovery failed: {error}')
