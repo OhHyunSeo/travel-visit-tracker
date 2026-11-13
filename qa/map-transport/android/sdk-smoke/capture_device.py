@@ -13,6 +13,8 @@ PACKAGE = "app.trippainting.maptransportqa.sdk"
 ACTIVITY = f"{PACKAGE}/app.trippainting.maptransportqa.FixtureMapActivity"
 JOURNAL = "files/transport-budget/budget.journal"
 RESUMED = re.compile(rb"(?:topResumedActivity|mResumedActivity)\s*[:=]\s*ActivityRecord\{[^\n]+")
+APK_PATH = re.compile(rb"package:(/data/app/(?:[A-Za-z0-9_.~+=-]+/){1,4}base\.apk)\r?\n?")
+APK_HASH_LINE = re.compile(rb"([a-f0-9]{64})[ \t]+([^\r\n]+)\r?\n?")
 
 
 def running_pid(command):
@@ -27,6 +29,22 @@ def require_foreground(command):
     resumed = {item for line in RESUMED.findall(output) for item in line.decode().split() if "/" in item}
     if resumed != {ACTIVITY}:
         raise ValueError("Fixture must be the sole resumed activity before screen capture")
+
+
+def check_installed_apk(command, expected_hash):
+    path_output = command(1024, "shell", "pm", "path", PACKAGE)
+    match = APK_PATH.fullmatch(path_output)
+    if not match:
+        raise ValueError("Expected one installed fixture base APK path")
+    path = match[1]
+    segments = path.split(b"/")
+    if any(segment in (b".", b"..") for segment in segments) or not segments[-2].startswith(PACKAGE.encode() + b"-"):
+        raise ValueError("Installed APK is outside the fixture package path")
+    result = command(1024, "shell", "sha256sum", path.decode("ascii"))
+    checksum = APK_HASH_LINE.fullmatch(result)
+    if not checksum or checksum[2] != path or checksum[1].decode("ascii") != expected_hash:
+        raise ValueError("Installed fixture APK differs from the checked build")
+    return path
 
 
 def write_capture(path, content):
@@ -54,6 +72,7 @@ def collect(command, destination, apk, server_log, relay_log, *, expected_apk_sh
     write_capture(destination / "relay.log", relay_log)
     check_transport_logs(destination, port)
 
+    installed = check_installed_apk(command, apk_hash)
     pid = running_pid(command)
     log = command(LOG_LIMIT, "logcat", "-d", "--pid", str(pid), "-v", "threadtime", "-s", "TripMapSdkFixture:V", "*:S")
     write_capture(destination / "app.log", log)
@@ -69,7 +88,10 @@ def collect(command, destination, apk, server_log, relay_log, *, expected_apk_sh
     if running_pid(command) != pid:
         raise ValueError("Fixture PID changed during journal capture")
     write_capture(destination / "budget.journal", journal)
+    if check_installed_apk(command, apk_hash) != installed or running_pid(command) != pid:
+        raise ValueError("Installed fixture APK or PID changed during capture")
     result = verify(destination, apk, pid, require_render_event=True)
     if result["apkSha256"] != apk_hash:
         raise ValueError("Fixture APK changed during capture")
+    result["installedApkSha256"] = apk_hash
     return result

@@ -23,6 +23,7 @@ GOOD_SERVER = b"STYLE_SERVER_READY port=39443\nSERVED_STYLE bytes=124\n"
 GOOD_RELAY = b"RELAY_READY port=39443\nRELAY_COMPLETE forwarded=2452\n"
 ACTIVITIES = (f"  topResumedActivity=ActivityRecord{{124 u0 {ACTIVITY} t73}}\n"
               f"  mResumedActivity: ActivityRecord{{124 u0 {ACTIVITY} t73}}\n").encode()
+INSTALLED_APK = f"/data/app/~~u123/{PACKAGE}-test/base.apk"
 
 
 class CaptureTest(unittest.TestCase):
@@ -41,7 +42,12 @@ class CaptureTest(unittest.TestCase):
         header = struct.pack(">IIIIQ", 0x54504231, 16, 8, 4096, 65536)
         record = struct.pack(">IIQI", 1, 0, 4096, 0)
         journal = header + struct.pack(">I", zlib.crc32(header)) + record + struct.pack(">I", zlib.crc32(record))
+        self.identity_calls = [
+            (("shell", "pm", "path", PACKAGE), f"package:{INSTALLED_APK}\n".encode()),
+            (("shell", "sha256sum", INSTALLED_APK), f"{self.apk_hash}  {INSTALLED_APK}\n".encode()),
+        ]
         self.calls = [
+            *self.identity_calls,
             (("shell", "pidof", PACKAGE), PID),
             (("logcat", "-d", "--pid", "4310", "-v", "threadtime", "-s", "TripMapSdkFixture:V", "*:S"), GOOD_LOG),
             (("shell", "dumpsys", "activity", "activities"), ACTIVITIES),
@@ -50,7 +56,10 @@ class CaptureTest(unittest.TestCase):
             (("shell", "pidof", PACKAGE), PID),
             (("exec-out", "run-as", PACKAGE, "cat", JOURNAL), journal),
             (("shell", "pidof", PACKAGE), PID),
+            *self.identity_calls,
+            (("shell", "pidof", PACKAGE), PID),
         ]
+        self.call_count = len(self.calls)
 
     def command(self, limit, *args):
         expected, result = self.calls.pop(0)
@@ -65,6 +74,7 @@ class CaptureTest(unittest.TestCase):
         report = self.collect()
         self.assertFalse(self.calls)
         self.assertTrue(report["renderEventObserved"])
+        self.assertEqual(report["installedApkSha256"], self.apk_hash)
         self.assertEqual(report["reservedBodyBytes"], 4096)
         self.assertEqual(stat.S_IMODE(self.output.stat().st_mode), 0o700)
         for file in self.output.iterdir():
@@ -73,35 +83,35 @@ class CaptureTest(unittest.TestCase):
     def test_incomplete_relay_or_server_evidence_blocks_guest_commands(self):
         with self.assertRaisesRegex(ValueError, "one matching fixture style response"):
             self.collect(GOOD_SERVER + b"SERVED_STYLE bytes=124\n")
-        self.assertEqual(len(self.calls), 8)
+        self.assertEqual(len(self.calls), self.call_count)
 
     def test_no_screenshot_before_complete_frame(self):
-        args, _ = self.calls[1]
-        self.calls[1] = args, b"\n".join(GOOD_LOG.splitlines()[:2])
+        args, _ = self.calls[3]
+        self.calls[3] = args, b"\n".join(GOOD_LOG.splitlines()[:2])
         with self.assertRaisesRegex(ValueError, "completed frame"):
             self.collect()
-        self.assertEqual(len(self.calls), 6)
+        self.assertEqual(len(self.calls), self.call_count - 4)
         self.assertFalse((self.output / "screen.png").exists())
 
     def test_blocks_screenshot_when_another_app_is_resumed(self):
-        args, _ = self.calls[2]
-        self.calls[2] = args, ACTIVITIES + b"topResumedActivity=ActivityRecord{124 u0 other.app/.Activity t45}\n"
+        args, _ = self.calls[4]
+        self.calls[4] = args, ACTIVITIES + b"topResumedActivity=ActivityRecord{124 u0 other.app/.Activity t45}\n"
         with self.assertRaisesRegex(ValueError, "sole resumed activity"):
             self.collect()
-        self.assertEqual(len(self.calls), 5)
+        self.assertEqual(len(self.calls), self.call_count - 5)
         self.assertFalse((self.output / "screen.png").exists())
 
     def test_discards_screenshot_when_pid_changes(self):
-        args, _ = self.calls[5]
-        self.calls[5] = args, b"4322\n"
+        args, _ = self.calls[7]
+        self.calls[7] = args, b"4322\n"
         with self.assertRaisesRegex(ValueError, "PID changed during screen capture"):
             self.collect()
-        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(len(self.calls), self.call_count - 8)
         self.assertFalse((self.output / "screen.png").exists())
 
     def test_discards_journal_when_pid_changes(self):
-        args, _ = self.calls[-1]
-        self.calls[-1] = args, b"4322\n"
+        args, _ = self.calls[9]
+        self.calls[9] = args, b"4322\n"
         with self.assertRaisesRegex(ValueError, "PID changed during journal capture"):
             self.collect()
         self.assertFalse((self.output / "budget.journal").exists())
@@ -110,14 +120,29 @@ class CaptureTest(unittest.TestCase):
         self.output.mkdir()
         with self.assertRaises(FileExistsError):
             self.collect()
-        self.assertEqual(len(self.calls), 8)
+        self.assertEqual(len(self.calls), self.call_count)
 
     def test_refuses_different_apk_before_guest_commands(self):
         self.apk_hash = '0' * 64
         with self.assertRaisesRegex(ValueError, "differs from the checked build"):
             self.collect()
-        self.assertEqual(len(self.calls), 8)
+        self.assertEqual(len(self.calls), self.call_count)
         self.assertFalse(self.output.exists())
+
+    def test_refuses_unrelated_installed_package_path(self):
+        args, _ = self.calls[0]
+        self.calls[0] = args, b"package:/data/app/~~u123/unrelated.app-test/base.apk\n"
+        with self.assertRaisesRegex(ValueError, "outside the fixture package"):
+            self.collect()
+        self.assertEqual(len(self.calls), self.call_count - 1)
+        self.assertFalse((self.output / "screen.png").exists())
+
+    def test_refuses_installed_hash_change_during_capture(self):
+        args, _ = self.calls[-2]
+        self.calls[-2] = args, f"{'0' * 64}  {INSTALLED_APK}\n".encode()
+        with self.assertRaisesRegex(ValueError, "Installed fixture APK differs"):
+            self.collect()
+        self.assertEqual(len(self.calls), 1)
 
     def test_does_not_accept_apk_replaced_mid_capture(self):
         def replace_at_end(limit, *args):

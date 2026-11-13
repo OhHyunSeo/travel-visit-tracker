@@ -145,6 +145,8 @@ artifact before or during capture. `capture_transport.for_admitted_transport()` 
 callback using an existing transport ID and the runner's identity check. The
 callback checks identity before and after each command, enforces stdout and
 stderr limits and a deadline, and fails on a nonzero exit. The collector
+compares the fixture package's installed `base.apk` hash before and after capture.
+It rejects split or unrelated APK paths.
 checks that the fixture is the sole resumed activity before and after the
 screenshot, verifies the PID again before saving screen or journal data, and
 writes only to a new private capture directory. It leaves partial evidence on

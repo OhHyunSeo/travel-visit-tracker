@@ -2,6 +2,10 @@
 
 마지막 갱신: 2026-11-13, Asia/Seoul.
 
+## 11월 13일 P3-02 후속: 게스트에 설치된 APK의 해시 대조 준비
+
+시험용 패키지의 `pm path`에서 단일 `base.apk`만 확인하고, 게스트에서 그 파일의 SHA-256을 수집 전후로 대조하도록 했습니다. 호스트의 고정 해시와 같아야 하고, 경로와 PID가 수집 중 바뀌면 결과를 거절합니다. 관련 없는 패키지 경로와 변경된 해시를 포함한 합성 명령 회귀 31개가 통과했습니다. 실제 게스트 명령 및 렌더 수집은 보류입니다.
+
 ## 11월 13일 P3-02 후속: 설치된 에뮬레이터의 첫 부팅 용량 분기
 
 설치된 Emulator 37.2.12의 arm64 QEMU(SHA-256 `8dcdec74dc2d2cf4d9cfbf8146506b48e13d389ae59ef5be1966ff72d44af033`)를 실행하지 않고 역어셈블했습니다. `_main`의 `0x1001af13c`는 6,442,450,944바이트를 설정하고 `0x1001af150`에서 설정 파일 갱신 함수를 호출합니다. 새 userdata 파일이 없을 때 이어지는 비교는 `1.2` 배율과 사용 가능 바이트를 비교하며, 부족하면 `Not enough space to create userdata partition` 분기로 갑니다. AOSP 소스에서 이 분기가 API 24 이상 또는 Play Store 이미지의 새 설정에 적용되는 것을 대조했습니다. [AOSP 첫 부팅 용량 분기](https://android.googlesource.com/platform/external/qemu/+/emu-master-dev/android-qemu2-glue/main.cpp#2428)
