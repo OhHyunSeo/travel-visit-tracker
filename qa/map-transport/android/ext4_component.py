@@ -19,6 +19,7 @@ IMAGE_BYTES = 8 * 1024 * 1024
 BLOCK_BYTES = 4096
 FORMATTER_SHA256 = 'e2b6ebdad12b13c0809ba0ba70cce2a880ed6d51e5c1610c447a9e07afc4a50c'
 LABEL = b'trip-fixture'
+CANARY = b'trip-painting-outside-formatter-canary\n'
 PROFILE = '''(version 1)
 (deny default)
 (allow file-read* file-map-executable)
@@ -72,12 +73,23 @@ def inspect_image(image: Path, original: os.stat_result) -> dict:
             'allocatedBytes': current.st_blocks * 512}
 
 
-def formatter_argv(tool: Path, image: Path) -> list[str]:
+def formatter_argv(tool: Path, image: Path, *, target: Path | None = None, blocks: int = IMAGE_BYTES // BLOCK_BYTES) -> list[str]:
+    # Only the internal negative probes vary target or block count.
     return [sys.executable, '-I', '-S', '-B', '-c', LAUNCH, str(IMAGE_BYTES), '/usr/bin/sandbox-exec',
             '-D', 'QA_IMAGE=' + str(image), '-D', 'FORMATTER=' + str(tool),
             '-D', 'PRIVATE_AVD=' + str(Path.home() / '.android'), '-p', PROFILE, str(tool),
             '-q', '-F', '-b', str(BLOCK_BYTES), '-E', 'nodiscard', '-L', LABEL.decode('ascii'),
-            str(image), str(IMAGE_BYTES // BLOCK_BYTES)]
+            str(target if target is not None else image), str(blocks)]
+
+
+def expect_refusal(argv: list[str], root: Path, environment: dict, message: str) -> None:
+    try:
+        _capture(argv, cwd=root, env=environment)
+    except ComponentError as error:
+        if str(error).startswith('Component command failed:') and message.lower() in str(error).lower():
+            return
+        raise
+    raise ComponentError('Formatter unexpectedly accepted a negative probe')
 
 
 def run(sdk_root: Path) -> dict:
@@ -87,6 +99,8 @@ def run(sdk_root: Path) -> dict:
     with tempfile.TemporaryDirectory(prefix='trip-ext4-component.') as temporary:
         root = Path(temporary).resolve(strict=True)
         image = root / 'fixture.ext4'
+        canary = root / 'outside-canary'
+        canary.write_bytes(CANARY)
         chunk = bytes(65_536)
         with os.fdopen(os.open(image, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as output:
             for _ in range(IMAGE_BYTES // len(chunk)):
@@ -95,12 +109,21 @@ def run(sdk_root: Path) -> dict:
             os.fsync(output.fileno())
         before = image.stat()
         environment = {'PATH': '/usr/bin:/bin', 'LANG': 'C', 'TMPDIR': str(root), 'MKE2FS_CONFIG': '/dev/null'}
+        expect_refusal(formatter_argv(tool, image, target=canary), root, environment, 'Operation not permitted')
+        if canary.read_bytes() != CANARY:
+            raise ComponentError('Formatter changed the outside canary')
         _capture(formatter_argv(tool, image), cwd=root, env=environment)
-        if set(root.iterdir()) != {image}:
+        if set(root.iterdir()) != {image, canary}:
             raise ComponentError('Formatter created files beyond the fixture image')
         layout = inspect_image(image, before)
+        expect_refusal(formatter_argv(tool, image, blocks=IMAGE_BYTES // BLOCK_BYTES + 1), root, environment, 'short write')
+        after = image.stat()
+        if (after.st_dev, after.st_ino, after.st_nlink, after.st_size, after.st_blocks) != (
+            before.st_dev, before.st_ino, 1, IMAGE_BYTES, layout['allocatedBytes'] // 512
+        ) or canary.read_bytes() != CANARY or set(root.iterdir()) != {image, canary}:
+            raise ComponentError('Oversized format changed file identity, size, allocation or outside contents')
     return {'formatterSha256': FORMATTER_SHA256, 'image': layout, 'ownedFixtureRemoved': True,
-            'nativeAdmissionEnabled': False}
+            'outsideWriteDenied': True, 'oversizedFormatDenied': True, 'nativeAdmissionEnabled': False}
 
 
 def main() -> int:
