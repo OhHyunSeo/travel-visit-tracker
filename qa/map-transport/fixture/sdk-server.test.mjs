@@ -343,12 +343,16 @@ test("offline pack fixture pairs a zoom-zero style with one 512px raster tile", 
   const fixture = await createSDKFixture({ tls: tlsMaterials() });
   t.after(() => fixture.close());
   const { origin } = fixture;
-  const style = JSON.parse(await (await openHTTPS(origin, "/resource/style/pack")).body);
+  const styleResponse = await openHTTPS(origin, "/resource/style/pack");
+  assert.equal(styleResponse.response.headers["cache-control"], "max-age=300");
+  const style = JSON.parse(await styleResponse.body);
   assert.deepEqual(style.sources.t, {
     type: "raster", tiles: [`${origin}/resource/tile/pack_{z}_{x}_{y}`],
     tileSize: 512, minzoom: 0, maxzoom: 0,
   });
-  const image = await (await openHTTPS(origin, "/resource/tile/pack_0_0_0")).body;
+  const tileResponse = await openHTTPS(origin, "/resource/tile/pack_0_0_0");
+  assert.equal(tileResponse.response.headers["cache-control"], "max-age=300");
+  const image = await tileResponse.body;
   assert.ok(image.length <= 256);
   assert.equal(image.readUInt32BE(16), 512);
   assert.equal(image.readUInt32BE(20), 512);

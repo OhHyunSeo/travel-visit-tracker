@@ -298,7 +298,8 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
     response.once("finish", () => { entry.finished = true; settle(); });
     response.once("close", () => { entry.closedBeforeFinish = !entry.finished; settle(); });
     const type = style ? "application/json" : (asset?.type ?? "image/png");
-    response.writeHead(redirect ? 302 : 200, { "Content-Type": type, "Content-Length": body.length, "Cache-Control": "no-store",
+    const cacheControl = packStyle || offlineTile ? "max-age=300" : "no-store";
+    response.writeHead(redirect ? 302 : 200, { "Content-Type": type, "Content-Length": body.length, "Cache-Control": cacheControl,
       ...(redirect ? { Location: `${policyTarget}/resource/tile/m_2_0_1` } : {}) });
     const sendBody = () => {
       if (settled || response.destroyed) return;

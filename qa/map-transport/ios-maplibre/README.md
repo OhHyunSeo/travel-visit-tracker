@@ -142,6 +142,8 @@ python3 -B qa/map-transport/ios-maplibre/tls_cancel_capture.py \
 
 앱을 종료한 뒤 시험 컨테이너의 `MLNOfflineStorage.databaseURL`이 가리키는 SQLite DB를 읽기 전용으로 열어 `region_resources`, `region_tiles`가 결과의 팩 ID와 연결되는지 대조할 수 있습니다. 새 앱 저장소에서만 재현하세요. 제품 앱이나 기존 지도 DB는 이 절차에 사용하지 않습니다.
 
+같은 팩을 다시 확인하려면 시험 서버를 완전히 종료한 뒤 앱을 `QA_STAGE=tls-pack-reopen`으로 새로 실행합니다. 새 `QA_RUN_ID`와 최초 다운로드의 `QA_PACK_RUN_ID`, 같은 loopback 주소와 인증서를 전달합니다. 팩 ID와 context, 완료된 스타일·타일 개수, 렌더 완료가 일치하고 새 전송 장부가 비어 있어야 통과합니다. 두 응답에 300초의 캐시 유효 기간이 있으며, 이 시험은 그 시간 안에 실행합니다. context가 다르면 지도 뷰를 생성하기 전에 거절합니다.
+
 ```sh
 python3 -B qa/map-transport/ios-maplibre/tls_mixed_capture.py \
   --device "$TP_QA_DEVICE" --origin "$TP_QA_ORIGIN" --certificate "$TP_QA_LEAF_DER" \

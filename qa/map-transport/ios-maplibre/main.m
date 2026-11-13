@@ -11,7 +11,7 @@ static BOOL TPStarted, TPRunning, TPPriorIdle;
 static NSString *const TPEmptyStyleJSON = @"{\"version\":8,\"sources\":{},\"layers\":[]}";
 
 static BOOL TPTLSStage(NSString *stage) {
-    return [@[@"tls-render", @"tls-queue", @"tls-cancel-retry", @"tls-mixed", @"tls-policy", @"tls-pack"] containsObject:stage];
+    return [@[@"tls-render", @"tls-queue", @"tls-cancel-retry", @"tls-mixed", @"tls-policy", @"tls-pack", @"tls-pack-reopen"] containsObject:stage];
 }
 
 static BOOL TPCancellationStage(NSString *stage) {
@@ -49,6 +49,7 @@ static NSDictionary *TPControl(NSString *path) {
 @property MLNMapView *map;
 @property MLNOfflinePack *offlinePack;
 @property NSUInteger offlineErrors;
+@property NSString *priorPackRunID;
 @property NSMutableArray *cases;
 @property NSUInteger transforms, rewrittenStyles, externalTileRequests, phase;
 @property BOOL styleLoaded, fullyRendered, finishing;
@@ -98,6 +99,7 @@ static NSDictionary *TPControl(NSString *path) {
     else if ([self.stage isEqual:@"tls-mixed"]) scope = @"isolated pinned HTTPS HTTP1 SDK style, tile, glyph and sprite requests";
     else if ([self.stage isEqual:@"tls-policy"]) scope = @"isolated pinned HTTPS SDK origin, path and redirect refusal";
     else if ([self.stage isEqual:@"tls-pack"]) scope = @"isolated MapLibre offline pack and private fixture HTTPS requests";
+    else if ([self.stage isEqual:@"tls-pack-reopen"]) scope = @"isolated MapLibre pack reopen and render with the fixture stopped";
     else if (TPTLSStage(self.stage)) scope = @"isolated pinned private-fixture HTTPS HTTP1 SDK; no cancel/restart, HTTP2, RN JS bridge, provider or OS-byte acceptance";
     TPWrite(@{@"complete": @YES, @"pass": @(pass), @"reason": reason,
               @"cases": self.cases ?: @[], @"stage": self.stage ?: @"invalid", @"process": @(NSProcessInfo.processInfo.processIdentifier),
@@ -136,6 +138,11 @@ static NSDictionary *TPControl(NSString *path) {
     NSString *runID = env[@"QA_RUN_ID"];
     NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9_-]{1,64}$" options:0 error:nil];
     BOOL valid = runID && [pattern numberOfMatchesInString:runID options:0 range:NSMakeRange(0, runID.length)] == 1;
+    BOOL reopening = [self.stage isEqual:@"tls-pack-reopen"];
+    self.priorPackRunID = env[@"QA_PACK_RUN_ID"];
+    BOOL packInputsOK = reopening ? self.priorPackRunID.length && ![self.priorPackRunID isEqual:runID] &&
+        [[NSURL URLWithString:TPOrigin ?: @""].host isEqual:@"127.0.0.1"] &&
+        [pattern numberOfMatchesInString:self.priorPackRunID options:0 range:NSMakeRange(0, self.priorPackRunID.length)] == 1 : !self.priorPackRunID;
     self.runID = valid ? runID : nil;
     if (usesActionGate && valid) self.actionGate = [[TPFixtureActionGate alloc] initWithRunID:runID processIdentifier:NSProcessInfo.processInfo.processIdentifier cancelNonce:env[@"QA_FIXTURE_CANCEL_NONCE"] reloadNonce:env[@"QA_FIXTURE_RELOAD_NONCE"]];
     NSURL *documents = [[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
@@ -144,7 +151,7 @@ static NSDictionary *TPControl(NSString *path) {
     BOOL originOK = actionTrial ? !env[@"QA_SERVER_ORIGIN"] && !env[@"QA_TLS_LEAF_DER_BASE64"] : (tlsTrial ? [TPTransport safePrivateFixtureTLSOrigin:TPOrigin] && self.fixtureCertificate : [TPTransport safeOrigin:TPOrigin] && !env[@"QA_TLS_LEAF_DER_BASE64"]);
     BOOL signalsOK = usesActionGate ? self.actionGate != nil : !env[@"QA_FIXTURE_CANCEL_NONCE"] && !env[@"QA_FIXTURE_RELOAD_NONCE"];
     BOOL supportedStage = tlsTrial || actionTrial || [@[@"queue", @"cancel-retry"] containsObject:self.stage];
-    if (!valid || !fresh || !supportedStage || !originOK || !signalsOK || !policyOK) { TPRunDirectory = nil; [self finish:NO reason:@"unsafe or reused inputs"]; return; }
+    if (!valid || !fresh || !supportedStage || !originOK || !signalsOK || !policyOK || !packInputsOK) { TPRunDirectory = nil; [self finish:NO reason:@"unsafe or reused inputs"]; return; }
     if (![[NSFileManager defaultManager] createDirectoryAtURL:TPRunDirectory withIntermediateDirectories:YES attributes:nil error:nil]) { TPRunDirectory = nil; [self finish:NO reason:@"run directory not ready"]; return; }
     self.cases = [NSMutableArray new];
     if (usesActionGate) self.actionAttempts = [NSMutableArray new];
@@ -246,6 +253,7 @@ static NSDictionary *TPControl(NSString *path) {
     else configured = [TPTransport configureOrigin:TPOrigin ledgerURL:ledgerURL maxRequests:cancelTrial ? 64 : 32 maxTiles:cancelTrial ? 32 : 16 maxReservedBytes:cancelTrial ? 16384 : 8192];
     if (!configured) { [self finish:NO reason:@"ledger not ready"]; return; }
     if ([self.stage isEqual:@"tls-pack"]) { [self startOfflinePack]; return; }
+    if ([self.stage isEqual:@"tls-pack-reopen"]) { [self reopenOfflinePack]; return; }
     self.phase = tlsCancel ? 9 : (cancelTrial ? 10 : ((tlsQueue || tlsMixed) ? 2 : 1));
     // Explicit style avoids constructing a default network style before the gate.
     BOOL largeViewport = cancelTrial || tlsQueue || tlsMixed;
@@ -261,14 +269,19 @@ static NSDictionary *TPControl(NSString *path) {
     self.timer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) { [self inspectProgress]; }];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (tlsCancel ? 45 : 30) * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ if (!self.finishing) [self finish:NO reason:@"SDK trial deadline"]; });
 }
-- (void)startOfflinePack {
+- (MLNOfflineStorage *)trialOfflineStorage {
     MLNOfflineStorage *storage = MLNOfflineStorage.sharedOfflineStorage;
     NSString *home = [NSHomeDirectory() stringByStandardizingPath];
     NSString *database = storage.databaseURL.URLByResolvingSymlinksInPath.path;
     if (!database.length || ![database hasPrefix:[[home stringByResolvingSymlinksInPath] stringByAppendingString:@"/"]]) {
         [self finish:NO reason:@"offline database is outside the trial app"];
-        return;
+        return nil;
     }
+    return storage;
+}
+- (void)startOfflinePack {
+    MLNOfflineStorage *storage = [self trialOfflineStorage];
+    if (!storage) return;
     NSURL *style = [NSURL URLWithString:[TPOrigin stringByAppendingString:@"/resource/style/pack"]];
     MLNCoordinateBounds bounds = MLNCoordinateBoundsMake(CLLocationCoordinate2DMake(1, 1), CLLocationCoordinate2DMake(2, 2));
     MLNTilePyramidOfflineRegion *region = [[MLNTilePyramidOfflineRegion alloc] initWithStyleURL:style bounds:bounds fromZoomLevel:0 toZoomLevel:0];
@@ -287,6 +300,62 @@ static NSDictionary *TPControl(NSString *path) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 25 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         if (!self.finishing) [self finish:NO reason:@"offline pack trial deadline"];
     });
+}
+- (void)reopenOfflinePack {
+    MLNOfflineStorage *storage = [self trialOfflineStorage];
+    if (!storage) return;
+    self.timer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) {
+        [self inspectReopenedPack:storage];
+    }];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        if (!self.finishing) [self finish:NO reason:@"offline pack reopen deadline"];
+    });
+}
+- (void)inspectReopenedPack:(MLNOfflineStorage *)storage {
+    NSDictionary *native = TPTransport.snapshot;
+    if (![self idleNative:native] || ![native[@"started"] isEqual:@0]) {
+        [self finish:NO reason:@"unexpected network request during pack reopen"];
+        return;
+    }
+    if (!self.offlinePack) {
+        NSArray<MLNOfflinePack *> *packs = storage.packs;
+        if (!packs) return;
+        MLNOfflinePack *pack = packs.firstObject;
+        NSURL *style = [NSURL URLWithString:[TPOrigin stringByAppendingString:@"/resource/style/pack"]];
+        if (packs.count != 1 || ![pack.context isEqual:[self.priorPackRunID dataUsingEncoding:NSUTF8StringEncoding]] ||
+            pack.regionId.longLongValue <= 0 || ![pack.region.styleURL isEqual:style]) {
+            [self finish:NO reason:@"reopened pack identity differs"];
+            return;
+        }
+        self.offlinePack = pack;
+        [pack requestProgress];
+        return;
+    }
+    if (self.offlinePack.state == MLNOfflinePackStateUnknown) return;
+    MLNOfflinePackProgress progress = self.offlinePack.progress;
+    if (self.offlinePack.state != MLNOfflinePackStateComplete || progress.countOfResourcesCompleted != 2 ||
+        progress.countOfResourcesExpected != 2 || progress.countOfTilesCompleted != 1) {
+        [self finish:NO reason:@"reopened pack progress differs"];
+        return;
+    }
+    if (!self.map) {
+        self.map = [[MLNMapView alloc] initWithFrame:CGRectMake(0, 120, self.view.bounds.size.width, 300)
+                                          styleURL:self.offlinePack.region.styleURL];
+        self.map.delegate = self;
+        self.map.prefetchesTiles = NO;
+        self.map.shouldRequestAuthorizationToUseLocationServices = NO;
+        self.map.showsUserLocation = NO;
+        [self.map setCenterCoordinate:CLLocationCoordinate2DMake(1.5, 1.5) zoomLevel:0 animated:NO];
+        [self.view insertSubview:self.map belowSubview:self.label];
+        [self.view setNeedsLayout];
+        return;
+    }
+    if (!self.styleLoaded || !self.fullyRendered) return;
+    [self.cases addObject:@{@"packId": self.offlinePack.regionId, @"packRunID": self.priorPackRunID,
+        @"contextMatches": @YES, @"complete": @YES, @"resources": @(progress.countOfResourcesCompleted),
+        @"tiles": @(progress.countOfTilesCompleted), @"storedBytes": @(progress.countOfBytesCompleted),
+        @"styleLoaded": @YES, @"fullyRendered": @YES}];
+    [self finish:MLNNetworkConfiguration.sharedManager.delegate == self.transform reason:@"reopened pack rendered without transport requests"];
 }
 - (void)offlinePackError:(NSNotification *)notification {
     self.offlineErrors++;
@@ -359,6 +428,10 @@ static NSDictionary *TPControl(NSString *path) {
     self.styleLoaded = [style sourceWithIdentifier:@"t"] != nil && [style layerWithIdentifier:@"t"] != nil;
 }
 - (void)mapViewDidFinishRenderingFrame:(MLNMapView *)mapView fullyRendered:(BOOL)fullyRendered {
+    if ([self.stage isEqual:@"tls-pack-reopen"]) {
+        if (self.styleLoaded && fullyRendered) self.fullyRendered = YES;
+        return;
+    }
     if (self.phase == 13) {
         NSDictionary *native = TPTransport.snapshot;
         if (self.styleLoaded && fullyRendered && [mapView.styleURL.path isEqual:@"/resource/style/held"] && [native[@"active"] isEqual:@0] && [native[@"pending"] isEqual:@0]) self.fullyRendered = YES;
