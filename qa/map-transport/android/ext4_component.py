@@ -83,16 +83,29 @@ def formatter_argv(tool: Path, image: Path, *, target: Path | None = None, block
             str(target if target is not None else image), str(blocks)]
 
 
-def check_integrity(tool: Path, image: Path, root: Path, environment: dict) -> None:
+def check_integrity(tool: Path, image: Path, root: Path, environment: dict, *, corrupted: bool = False) -> None:
     argv = [sys.executable, '-I', '-S', '-B', '-c', LAUNCH, '0', '/usr/bin/sandbox-exec',
             '-D', 'EXT4_TOOL=' + str(tool), '-D', 'PRIVATE_AVD=' + str(Path.home() / '.android'),
             '-p', READ_PROFILE, str(tool), '-fn', str(image)]
     with image.open('rb') as source:
         digest = hashlib.file_digest(source, 'sha256').digest()
-    _capture(argv, cwd=root, env=environment)
+    if corrupted:
+        expect_refusal(argv, root, environment, 'Bad magic number')
+    else:
+        _capture(argv, cwd=root, env=environment)
     with image.open('rb') as source:
         if hashlib.file_digest(source, 'sha256').digest() != digest:
             raise ComponentError('Read-only ext4 check changed the image bytes')
+
+
+def corrupt_superblock_magic(image: Path) -> None:
+    # This fixed 2,048-block image has only one block group and no backup
+    # superblock. Change just the primary superblock's magic field.
+    with image.open('r+b') as output:
+        output.seek(1024 + 56)
+        output.write(bytes(2))
+        output.flush()
+        os.fsync(output.fileno())
 
 
 def expect_refusal(argv: list[str], root: Path, environment: dict, message: str) -> None:
@@ -102,7 +115,7 @@ def expect_refusal(argv: list[str], root: Path, environment: dict, message: str)
         if str(error).startswith('Component command failed:') and message.lower() in str(error).lower():
             return
         raise
-    raise ComponentError('Formatter unexpectedly accepted a negative probe')
+    raise ComponentError('SDK ext4 tool unexpectedly accepted a negative probe')
 
 
 def run(sdk_root: Path) -> dict:
@@ -131,6 +144,10 @@ def run(sdk_root: Path) -> dict:
             raise ComponentError('Formatter created files beyond the fixture image')
         layout = inspect_image(image, before)
         check_integrity(checker, image, root, environment)
+        corrupt_superblock_magic(image)
+        check_integrity(checker, image, root, environment, corrupted=True)
+        _capture(formatter_argv(tool, image), cwd=root, env=environment)
+        inspect_image(image, before)
         expect_refusal(formatter_argv(tool, image, blocks=IMAGE_BYTES // BLOCK_BYTES + 1), root, environment, 'short write')
         after = image.stat()
         if (after.st_dev, after.st_ino, after.st_nlink, after.st_size, after.st_blocks) != (
@@ -138,7 +155,7 @@ def run(sdk_root: Path) -> dict:
         ) or canary.read_bytes() != CANARY or set(root.iterdir()) != {image, canary}:
             raise ComponentError('Oversized format changed file identity, size, allocation or outside contents')
     return {'formatterSha256': FORMATTER_SHA256, 'checkerSha256': CHECKER_SHA256, 'image': layout,
-            'readOnlyIntegrityPassed': True, 'ownedFixtureRemoved': True,
+            'readOnlyIntegrityPassed': True, 'corruptImageDetected': True, 'ownedFixtureRemoved': True,
             'outsideWriteDenied': True, 'oversizedFormatDenied': True, 'nativeAdmissionEnabled': False}
 
 
