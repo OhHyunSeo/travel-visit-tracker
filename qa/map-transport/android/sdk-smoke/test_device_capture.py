@@ -77,6 +77,12 @@ class CaptureTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "one matching fixture"):
             verify(self.root, self.apk, PID)
 
+    def test_rejects_capture_with_unexpected_server_request(self):
+        with (self.root / "server.log").open("a") as log:
+            log.write("REJECTED_STYLE reason=headers\n")
+        with self.assertRaisesRegex(ValueError, "one matching fixture"):
+            verify(self.root, self.apk, PID)
+
     def test_rejects_over_limit_relay(self):
         (self.root / "relay.log").write_text(f"RELAY_READY port={PORT}\nRELAY_COMPLETE forwarded=131073\n")
         with self.assertRaisesRegex(ValueError, "relay byte count"):

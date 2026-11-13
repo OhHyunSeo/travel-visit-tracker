@@ -1,3 +1,4 @@
+import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
 import java.io.InputStream;
@@ -6,11 +7,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
+import java.util.List;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 
 /** Host-only HTTPS server for the isolated Android smoke APK. */
 public final class FixtureStyleServer {
+  private static final String FIXTURE_AGENT = "TripPainting-Android-Map-QA/1";
   private static final byte[] STYLE = ("{\"version\":8,\"sources\":{},\"layers\":[{\"id\":\"fixture-background\","
       + "\"type\":\"background\",\"paint\":{\"background-color\":\"#177878\"}}]}")
       .getBytes(StandardCharsets.UTF_8);
@@ -38,18 +41,29 @@ public final class FixtureStyleServer {
     SSLContext tls = SSLContext.getInstance("TLS");
     tls.init(managers.getKeyManagers(), null, null);
 
-    HttpsServer server = HttpsServer.create(new InetSocketAddress("127.0.0.1", port), 0);
+    HttpsServer server = HttpsServer.create(new InetSocketAddress("127.0.0.1", port), 1);
     server.setHttpsConfigurator(new HttpsConfigurator(tls));
     server.createContext("/", exchange -> {
       try {
         exchange.getResponseHeaders().set("Connection", "close");
         if (!"/resource/style/sdk".equals(exchange.getRequestURI().toASCIIString())) {
+          System.out.println("REJECTED_STYLE reason=path");
           exchange.sendResponseHeaders(404, -1);
           return;
         }
         if (!"GET".equals(exchange.getRequestMethod())) {
+          System.out.println("REJECTED_STYLE reason=method");
           exchange.getResponseHeaders().set("Allow", "GET");
           exchange.sendResponseHeaders(405, -1);
+          return;
+        }
+        Headers request = exchange.getRequestHeaders();
+        if (!List.of(FIXTURE_AGENT).equals(request.get("User-Agent"))
+            || !List.of("identity").equals(request.get("Accept-Encoding"))
+            || List.of("Authorization", "Cookie", "Range", "If-None-Match", "If-Modified-Since").stream()
+                .anyMatch(request::containsKey)) {
+          System.out.println("REJECTED_STYLE reason=headers");
+          exchange.sendResponseHeaders(400, -1);
           return;
         }
         exchange.getResponseHeaders().set("Content-Type", "application/json");

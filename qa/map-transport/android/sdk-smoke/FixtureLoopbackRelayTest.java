@@ -59,7 +59,8 @@ public final class FixtureLoopbackRelayTest {
         SSLParameters params = client.getSSLParameters();
         params.setEndpointIdentificationAlgorithm("HTTPS");
         client.setSSLParameters(params);
-        client.getOutputStream().write(("GET /resource/style/sdk HTTP/1.1\r\nHost: 127.0.0.1:" + port + "\r\n\r\n")
+        client.getOutputStream().write(("GET /resource/style/sdk HTTP/1.1\r\nHost: 127.0.0.1:" + port
+            + "\r\nUser-Agent: TripPainting-Android-Map-QA/1\r\nAccept-Encoding: identity\r\n\r\n")
             .getBytes(StandardCharsets.US_ASCII));
         String response = new String(client.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         int body = response.indexOf("\r\n\r\n");

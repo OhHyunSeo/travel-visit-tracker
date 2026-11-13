@@ -70,7 +70,9 @@ java qa/map-transport/android/sdk-smoke/FixtureStyleServer.java "$fixture_p12" "
 ```
 
 The server binds only to Mac loopback and serves a fixed JSON style at
-`/resource/style/sdk`. Stop it with Ctrl-C. A device run needs an isolated
+`/resource/style/sdk`. It expects the fixture User-Agent and identity encoding,
+rejects credentials and conditional or range headers for this one style, and
+logs a fixed reason for any rejected HTTP request. Stop it with Ctrl-C. A device run needs an isolated
 connection that reaches this server at the app's loopback address. A successful
 run records `TRANSPORT_READY`, `SERVED_STYLE`, and `STYLE_LOADED` with one
 attempt, zero tile attempts, and a 4,096-byte reservation in a fresh app sandbox.
