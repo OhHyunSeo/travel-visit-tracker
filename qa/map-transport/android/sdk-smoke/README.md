@@ -122,8 +122,10 @@ and reserved body bytes are reported separately. Preserve the original capture
 files with their device provenance. Synthetic input only tests the verifier.
 
 An admitted guest runner can call `capture_device.collect()` after the relay
-exits. Its command callback must pin and recheck the transport, enforce the
-supplied output limit and a deadline, and fail on a nonzero exit. The collector
+exits. `capture_transport.for_admitted_transport()` can supply its command
+callback using an existing transport ID and the runner's identity check. The
+callback checks identity before and after each command, enforces stdout and
+stderr limits and a deadline, and fails on a nonzero exit. The collector
 checks that the fixture is the sole resumed activity before and after the
 screenshot, verifies the PID again before saving screen or journal data, and
 writes only to a new private capture directory. It leaves partial evidence on
