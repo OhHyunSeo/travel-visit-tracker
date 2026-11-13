@@ -77,6 +77,22 @@ connection that reaches this server at the app's loopback address. A successful
 run records `TRANSPORT_READY`, `SERVED_STYLE`, and `STYLE_LOADED` with one
 attempt, zero tile attempts, and a 4,096-byte reservation in a fresh app sandbox.
 
+## Rehearse the complete request on the Mac
+
+With JDK 17, OpenSSL 3 and Python 3 with Pillow, run the released MapLibre Java
+request wrapper through the same relay and server with the APK's port and
+certificate. Leave that port free for this command to bind on Mac loopback.
+
+```sh
+bash qa/map-transport/android/sdk-smoke/verify-host-smoke.sh \
+  "$verified_apk" "$recorded_sha256" "$fixture_p12" "$android_build_tools" \
+  "$okhttp_jar" "$okio_jar" "$kotlin_jar" "$maplibre_aar" "$android_jar"
+```
+
+The check compares one HTTPS style response and its persisted reservation.
+The released Java wrapper uses a zero JNI pointer during this host rehearsal.
+Guest startup and map rendering require the separate device capture.
+
 ## Prepare an emulator loopback connection
 
 The signed APK connects to guest `127.0.0.1`. On a separately admitted Android
