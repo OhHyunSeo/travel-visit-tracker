@@ -134,6 +134,8 @@ python3 -B qa/map-transport/ios-maplibre/tls_cancel_capture.py \
 
 합성 서버를 `--mixed` 옵션과 TLS 키·인증서로 시작합니다. 서버는 스타일과 스프라이트 JSON·PNG를 먼저 전달할 수 있고, 타일과 글꼴은 본문을 보류합니다. Mac 캡처는 아이폰의 대기 기록과 서버의 열린 응답 네 개가 일치할 때만 보류를 풉니다. 마지막에는 같은 PID의 결과와 장부, 서버가 완료한 리소스 10개를 대조합니다.
 
+공백이 들어간 글꼴 이름을 검사하려면 합성 서버와 캡처 양쪽에 `--encoded-glyph`를 추가합니다. 이 경우 같은 합성 글자 A를 `Noto Sans Regular` 이름으로 요청하며, 서버와 대조기는 `Noto%20Sans%20Regular/0-255.pbf`의 정확한 경로를 요구합니다.
+
 ```sh
 python3 -B qa/map-transport/ios-maplibre/tls_mixed_capture.py \
   --device "$TP_QA_DEVICE" --origin "$TP_QA_ORIGIN" --certificate "$TP_QA_LEAF_DER" \

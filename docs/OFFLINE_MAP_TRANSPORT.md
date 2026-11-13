@@ -1,5 +1,11 @@
 # 오프라인 지도 요청 제어 검토
 
+## 2026-11-13 실제 MapLibre 글꼴과 스프라이트 주소 확인
+
+별도 iPhone 17 시뮬레이터에서 MapLibre Native 6.31.0을 실행했습니다. 합성 서버가 받은 요청은 스타일 1개, 타일 6개, `Noto%20Sans%20Regular/0-255.pbf`와 `@2x` 스프라이트 JSON·PNG였습니다. 같은 실행에서 지도 렌더가 끝났고, 응답 10개와 본문 1,583바이트, 예약 10,240바이트를 대조했습니다. 동시 응답은 최대 4개였습니다.
+
+공통 주소 분류는 검토한 Liberty 스타일에 명시된 글꼴 스택과 256개 단위 글꼴 범위, 정확한 스프라이트 주소를 구분합니다. 시뮬레이터가 보낸 주소 형식을 보관한 Liberty 설정과 대조했습니다. 실기기에서 새로 관측한 한글 글꼴이나 외부 공급원 요청은 없습니다. [MapLibre 글꼴 규격](https://maplibre.org/maplibre-style-spec/glyphs/) · [SDK 스프라이트 주소 코드](https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/src/mln/storage/resource.cpp#L51)
+
 ## 2026-11-12 글꼴과 스프라이트 주소 조사
 
 보관한 Liberty 스타일의 명시적인 글꼴 스택은 Noto Sans Italic, Regular, Bold였습니다. 현재 iOS와 Android SDK 소스에서 글꼴 스택을 URL 인코딩하고 범위의 시작과 끝을 붙이는 것을 확인했습니다. 스프라이트는 화면 배율이 1보다 클 때 `@2x`를 붙인 `.json`과 `.png`를 사용합니다. 다음 작업은 이 주소들을 통제된 서버에서 실제 SDK가 요청한 값과 대조하는 것입니다. [iOS SDK 소스](https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/src/mln/storage/resource.cpp#L51) · [Android SDK 소스](https://github.com/maplibre/maplibre-native/blob/android-v13.6.1/src/mln/storage/resource.cpp#L51)

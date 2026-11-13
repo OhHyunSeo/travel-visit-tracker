@@ -30,7 +30,8 @@ static NSUInteger TPReservation(BOOL mixed) {
 }
 
 static BOOL TPMixedFixturePath(NSString *path) {
-    if ([path isEqual:@"/resource/style/mixed"] || [path isEqual:@"/resource/glyph/QA/0-255.pbf"]) return YES;
+    if ([path isEqual:@"/resource/style/mixed"] || [path isEqual:@"/resource/glyph/QA/0-255.pbf"] ||
+        [path isEqual:@"/resource/glyph/Noto%20Sans%20Regular/0-255.pbf"]) return YES;
     static NSRegularExpression *resources;
     static dispatch_once_t once;
     dispatch_once(&once, ^{

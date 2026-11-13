@@ -13,7 +13,7 @@ from tls_mixed_result import validate_waiting, verify
 from tls_result import EvidenceError, _need, _same
 
 
-def capture(device, folder, origin, certificate):
+def capture(device, folder, origin, certificate, *, encoded_glyph=False):
     fixture = FixtureControl(origin, certificate)
     folder.mkdir(mode=0o700)
     deadline = time.monotonic() + 12
@@ -39,7 +39,7 @@ def capture(device, folder, origin, certificate):
     _need(waiting.get("kind") == "mixed-waiting" and waiting.get("runID") == run
           and device_tools._pid(waiting.get("process")) == pid, "mixed waiting identity differs")
     before = _wait_server(fixture, folder, "server-before.json", _waiting, deadline)
-    validate_waiting(waiting.get("native"), before, origin, certificate)
+    validate_waiting(waiting.get("native"), before, origin, certificate, encoded_glyph=encoded_glyph)
     release = fixture.request("/release-held", deadline)
     device_tools._save(folder, "release.json", release)
     _need(_same(release, {"heldReleased": True, "releasedOpenBodies": 4}),
@@ -53,7 +53,7 @@ def capture(device, folder, origin, certificate):
     _need(len(matching) == 1 and device_tools._pid(matching[0].get("processIdentifier")) == pid,
           "the original mixed trial process was not observed at completion")
     device_tools._save(folder, "process-after.json", {"process": pid})
-    return verify(folder, origin, certificate)
+    return verify(folder, origin, certificate, encoded_glyph=encoded_glyph)
 
 
 def main():
@@ -62,11 +62,12 @@ def main():
     parser.add_argument("--origin", required=True)
     parser.add_argument("--certificate", required=True, type=Path)
     parser.add_argument("evidence", type=Path, help="new private directory under docs/test-results")
+    parser.add_argument("--encoded-glyph", action="store_true", help="require the encoded Noto Sans fixture path")
     args = parser.parse_args()
     try:
         with args.certificate.open("rb") as source:
             leaf = source.read(16_385)
-        result = capture(args.device, args.evidence, args.origin, leaf)
+        result = capture(args.device, args.evidence, args.origin, leaf, encoded_glyph=args.encoded_glyph)
     except (EvidenceError, OSError, ValueError) as error:
         detail = str(error) if isinstance(error, EvidenceError) else type(error).__name__
         parser.exit(1, f"Mixed SDK trial could not be verified: {detail}\n")

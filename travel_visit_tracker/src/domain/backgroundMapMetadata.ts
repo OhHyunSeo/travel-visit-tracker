@@ -12,7 +12,13 @@ type BackgroundMapMetadata = Readonly<{
   plan: BackgroundMapPlan;
   tileJsonSha256: string;
   offlineStyleJson: string;
-  resources: Readonly<{ vector: string; raster: string; glyphs: string; sprite: string }>;
+  resources: Readonly<{
+    vector: string;
+    raster: string;
+    glyphs: string;
+    fontStacks: readonly string[];
+    sprite: string;
+  }>;
 }>;
 type TileCoordinates = Readonly<{
   source: 'vector' | 'raster';
@@ -35,6 +41,9 @@ const spritePattern = /^https:\/\/tiles\.openfreemap\.org\/sprites\/[a-zA-Z0-9_-
 const sha256Pattern = /^[a-f0-9]{64}$/;
 const coordinatesPattern = /^(0|[1-9]\d?)\/(0|[1-9]\d{0,6})\/(0|[1-9]\d{0,6})$/;
 const coordinateTemplate = '{z}/{x}/{y}';
+const glyphTemplate = '{fontstack}/{range}.pbf';
+const libertyFontStacks = ['Noto Sans Regular', 'Noto Sans Italic', 'Noto Sans Bold'];
+const glyphRangePattern = /^(0|[1-9]\d{0,4})-(0|[1-9]\d{0,4})\.pbf$/;
 const maxDocumentBytes = 64 * 1024;
 
 function snapshot(bytes: Uint8Array): Uint8Array {
@@ -63,6 +72,7 @@ function onlyEntry(list: unknown, value: string): boolean {
 }
 
 function readStyleSources(style: Record<string, unknown>) {
+  const layers = style.layers;
   const sources = object(style.sources);
   const vectorSource = object(sources?.openmaptiles);
   const rasterSource = object(sources?.ne2_shaded);
@@ -71,8 +81,8 @@ function readStyleSources(style: Record<string, unknown>) {
     style.glyphs !== glyphs ||
     typeof style.sprite !== 'string' ||
     style.sprite.match(spritePattern)?.[0] !== style.sprite ||
-    !Array.isArray(style.layers) ||
-    !style.layers.length ||
+    !Array.isArray(layers) ||
+    !layers.length ||
     Object.keys(style).length !== 5 ||
     !sources ||
     Object.keys(sources).length !== 2 ||
@@ -87,7 +97,10 @@ function readStyleSources(style: Record<string, unknown>) {
   ) {
     throw new BackgroundMapMetadataError('style');
   }
-  return { sprite: style.sprite, rasterSource };
+  const fontStacks = libertyFontStacks.filter((font) =>
+    layers.some((layer) => onlyEntry(object(object(layer)?.layout)?.['text-font'], font)),
+  );
+  return { sprite: style.sprite, rasterSource, fontStacks: Object.freeze(fontStacks) };
 }
 
 function matchTile(
@@ -116,6 +129,28 @@ export function matchBackgroundMapTileRequest(
   url: string,
 ): TileCoordinates | undefined {
   return matchTile(metadata, url, 'vector') ?? matchTile(metadata, url, 'raster');
+}
+
+/** Recognizes only explicit Liberty font stacks and the reviewed sprite base. */
+export function matchBackgroundMapSymbolRequest(metadata: BackgroundMapMetadata, url: string) {
+  const spriteBase = metadata.resources.sprite;
+  if (url.startsWith(spriteBase)) {
+    const sprite = /^(|@2x)\.(json|png)$/.exec(url.slice(spriteBase.length));
+    if (sprite && `${spriteBase}${sprite[0]}` === url)
+      return { kind: 'sprite' as const, scale: sprite[1] ? 2 : 1, format: sprite[2] };
+  }
+
+  const prefix = metadata.resources.glyphs.split(glyphTemplate)[0];
+  for (const font of metadata.resources.fontStacks) {
+    const fontPrefix = `${prefix}${encodeURIComponent(font)}/`;
+    if (!url.startsWith(fontPrefix)) continue;
+    const range = glyphRangePattern.exec(url.slice(fontPrefix.length));
+    if (!range || `${fontPrefix}${range[0]}` !== url) return;
+    const first = Number(range[1]);
+    const last = Number(range[2]);
+    if (first % 256 === 0 && last === first + 255 && last <= 65_535)
+      return { kind: 'glyph' as const, font, first, last };
+  }
 }
 
 function readCoverage(value: unknown, region: BackgroundMapPlan['bounds']) {
@@ -166,7 +201,7 @@ export async function planBackgroundMapFromMetadata(
     throw new BackgroundMapMetadataError('digest');
 
   const style = readJson(styleBytes, 'style');
-  const { sprite, rasterSource } = readStyleSources(style);
+  const { sprite, rasterSource, fontStacks } = readStyleSources(style);
   const tileJson = readJson(tileJsonBytes, 'tile-json');
   const vector = `${vectorMetadata}/${tileVersion}/{z}/{x}/{y}.pbf`;
   if (
@@ -210,6 +245,6 @@ export async function planBackgroundMapFromMetadata(
     plan,
     tileJsonSha256,
     offlineStyleJson,
-    resources: Object.freeze({ vector, raster, glyphs, sprite }),
+    resources: Object.freeze({ vector, raster, glyphs, fontStacks, sprite }),
   });
 }

@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from tls_mixed_result import EvidenceError, validate_waiting, verify
+from tls_mixed_result import ENCODED_GLYPH, EvidenceError, validate_waiting, verify
 
 
 ORIGIN = "https://192.168.50.2:3091"
@@ -92,10 +92,22 @@ class MixedSDKResultTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.folder = Path(directory.name)
 
-    def verify(self, values, certificate=CERTIFICATE):
+    def verify(self, values, certificate=CERTIFICATE, *, encoded_glyph=False):
         for filename, value in values.items():
             (self.folder / filename).write_text(json.dumps(value), encoding="utf-8")
-        return verify(self.folder, ORIGIN, certificate)
+        return verify(self.folder, ORIGIN, certificate, encoded_glyph=encoded_glyph)
+
+    def test_encoded_glyph_mode_requires_its_exact_server_path(self):
+        values = observations()
+        with self.assertRaisesRegex(EvidenceError, "unexpected mixed fixture resource path"):
+            self.verify(values, encoded_glyph=True)
+        for name in ("server-before.json", "server-final.json"):
+            for row in values[name]["requests"]:
+                if row["path"] == GLYPH:
+                    row["path"] = ENCODED_GLYPH
+        self.assertTrue(self.verify(values, encoded_glyph=True)["validated"])
+        with self.assertRaisesRegex(EvidenceError, "unexpected mixed fixture resource path"):
+            self.verify(values)
 
     def test_valid_sprite_scales_and_different_pre_release_scheduling(self):
         for scale in ("", "@2x"):

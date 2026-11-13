@@ -339,6 +339,29 @@ function readProtoFields(bytes) {
   return fields;
 }
 
+test("encoded glyph fixture serves only the exact percent-encoded stack", async t => {
+  const tls = tlsMaterials();
+  await assert.rejects(createSDKFixture({ tls, encodedGlyph: true }), /Encoded glyphs/);
+  const fixture = await createSDKFixture({ tls, mixed: true, encodedGlyph: true });
+  t.after(() => fixture.close());
+  const { origin } = fixture;
+  const style = JSON.parse(await (await openHTTPS(origin, "/resource/style/mixed")).body);
+  assert.deepEqual(style.layers.find(layer => layer.type === "symbol").layout["text-font"], ["Noto Sans Regular"]);
+  for (const path of ["QA", "Noto+Sans+Regular", "Noto%2520Sans%2520Regular"]) {
+    const rejected = await openHTTPS(origin, `/resource/glyph/${path}/0-255.pbf`);
+    assert.equal(rejected.response.statusCode, 404);
+    await rejected.body;
+  }
+  const glyph = await openHTTPS(origin, "/resource/glyph/Noto%20Sans%20Regular/0-255.pbf");
+  assert.equal(glyph.response.statusCode, 200);
+  const release = await openHTTPS(origin, "/release-held");
+  assert.deepEqual(JSON.parse(await release.body), { heldReleased: true, releasedOpenBodies: 1 });
+  const stack = readProtoFields(readProtoFields(await glyph.body).get(1));
+  assert.equal(stack.get(1).toString(), "Noto Sans Regular");
+  assert.equal(stack.get(2).toString(), "0-255");
+  assert.equal(fixture.stats().resourceCount, 2);
+});
+
 test("mixed HTTPS style names a valid local raster, glyph and both sprite densities", async t => {
   const largestOrigin = "https://192.168.255.255:65535";
   assert.ok(syntheticMixedStyle(largestOrigin).length <= 1024);

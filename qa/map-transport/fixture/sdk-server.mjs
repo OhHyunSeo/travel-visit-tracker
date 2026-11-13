@@ -86,7 +86,9 @@ export function syntheticRasterStyle(origin, blocked = false, multi = false, hel
   }));
 }
 
-export function syntheticMixedStyle(origin) {
+const mixedFontStack = 'Noto Sans Regular';
+
+export function syntheticMixedStyle(origin, fontStack = 'QA') {
   return Buffer.from(JSON.stringify({
     version: 8,
     glyphs: `${origin}/resource/glyph/{fontstack}/{range}.pbf`,
@@ -97,7 +99,7 @@ export function syntheticMixedStyle(origin) {
     },
     layers: [
       { id: "t", type: "raster", source: "t" },
-      { id: "s", type: "symbol", source: "p", layout: { "icon-image": "mark", "text-field": "A", "text-font": ["QA"] } },
+      { id: "s", type: "symbol", source: "p", layout: { "icon-image": "mark", "text-field": "A", "text-font": [fontStack] } },
     ],
   }));
 }
@@ -155,7 +157,7 @@ function protoNumber(field, value) {
 // Original synthetic A. The glyph metrics exclude the implicit 3px bitmap border.
 // https://github.com/mapbox/fontnik/blob/master/proto/glyphs.proto
 // https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/src/mln/text/glyph_pbf.cpp
-function syntheticGlyph() {
+function syntheticGlyph(fontStack) {
   const mask = ["01110", "10001", "10001", "11111", "10001", "10001", "10001"];
   const width = mask[0].length, height = mask.length, border = 3;
   const stride = width + 2 * border, rows = height + 2 * border;
@@ -177,12 +179,13 @@ function syntheticGlyph() {
     protoNumber(1, 65), protoBytes(2, bitmap), protoNumber(3, width), protoNumber(4, height),
     protoNumber(5, 0), protoNumber(6, 2 * height), protoNumber(7, width + 1), // ZigZag left=0, top=height.
   ]);
-  const stack = Buffer.concat([protoBytes(1, "QA"), protoBytes(2, "0-255"), protoBytes(3, glyph)]);
+  const stack = Buffer.concat([protoBytes(1, fontStack), protoBytes(2, "0-255"), protoBytes(3, glyph)]);
   return protoBytes(1, stack);
 }
 
-function mixedAssetBodies() {
-  const assets = new Map([["/resource/glyph/QA/0-255.pbf", { body: syntheticGlyph(), type: "application/x-protobuf", hold: true }]]);
+function mixedAssetBodies(fontStack) {
+  const glyphPath = `/resource/glyph/${encodeURIComponent(fontStack)}/0-255.pbf`;
+  const assets = new Map([[glyphPath, { body: syntheticGlyph(fontStack), type: "application/x-protobuf", hold: true }]]);
   for (const ratio of [1, 2]) {
     const base = `/resource/sprite/mixed${ratio === 1 ? "" : "@2x"}`;
     const size = 8 * ratio;
@@ -194,19 +197,22 @@ function mixedAssetBodies() {
 }
 
 /** Actual SDK fixture, no proxy, external requests, user files or real map data. */
-export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan = false, tls, mixed = false, policyTarget } = {}) {
+export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan = false, tls, mixed = false, encodedGlyph = false, policyTarget } = {}) {
   if (!isAllowedFixtureHost(host, allowLan) || host === "::1" || host === "localhost")
     throw new Error("Use a literal loopback or explicitly allowed private IPv4 address");
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invalid port");
   const tlsOptions = fixtureTLSOptions(tls);
   if (typeof mixed !== "boolean" || (mixed && !tlsOptions)) throw new Error("Mixed SDK fixture requires explicit TLS");
+  if (typeof encodedGlyph !== "boolean" || (encodedGlyph && (!mixed || policyTarget !== undefined)))
+    throw new Error("Encoded glyphs require the mixed SDK fixture without a policy target");
   if (policyTarget !== undefined) {
     const target = new URL(policyTarget);
     if (!mixed || !tlsOptions || target.protocol !== "https:" || target.hostname !== host || !target.port || target.origin !== policyTarget || Number(target.port) === port)
       throw new Error("Policy fixture requires a distinct HTTPS port on the same private address");
   }
   const tile = syntheticRasterTile();
-  const mixedAssets = mixed ? mixedAssetBodies() : new Map();
+  const fontStack = encodedGlyph ? mixedFontStack : "QA";
+  const mixedAssets = mixed ? mixedAssetBodies(fontStack) : new Map();
   const requests = [], pending = new Set(), timers = new Set(), heldBodies = new Map();
   let origin, active = 0, maxActive = 0, closed = false, heldReleased = false;
   let policyDeniedPathArrivals = 0;
@@ -248,7 +254,7 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
     if (!style && !multiTile && !heldTile && !mixedTile && !asset && request.url !== "/resource/tile/0_0_0") return json(404, { error: "Unknown synthetic SDK resource" });
     const redirect = policyTarget && request.url === "/resource/tile/m_2_0_0";
     const body = redirect ? Buffer.alloc(0)
-      : mixedStyle ? (policyTarget ? syntheticPolicyStyle(origin, policyTarget) : syntheticMixedStyle(origin))
+      : mixedStyle ? (policyTarget ? syntheticPolicyStyle(origin, policyTarget) : syntheticMixedStyle(origin, fontStack))
       : request.url === "/resource/style/empty" ? Buffer.from('{"version":8,"sources":{},"layers":[]}')
       : style ? syntheticRasterStyle(origin, request.url.endsWith("/blocked"), request.url.endsWith("/multi"), request.url.endsWith("/held")) : (asset?.body ?? tile);
     if (body.length > (mixedStyle ? 1024 : 256)) return json(500, { error: "Synthetic reservation exceeded" });
@@ -339,9 +345,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const key = args[index];
     if (key === "--allow-lan" && options.allowLan === undefined) options.allowLan = true;
     else if (key === "--mixed" && options.mixed === undefined) options.mixed = true;
+    else if (key === "--encoded-glyph" && options.encodedGlyph === undefined) options.encodedGlyph = true;
     else if (key === "--policy-target" && options.policyTarget === undefined && args[index + 1] !== undefined) options.policyTarget = args[++index];
     else if (["--host", "--port", "--tls-key", "--tls-cert"].includes(key) && options[key.slice(2)] === undefined && args[index + 1] !== undefined) options[key.slice(2)] = args[++index];
-    else throw new Error("Usage: sdk-server.mjs [--host IPv4] [--port 0] [--allow-lan] [--tls-key PATH --tls-cert PATH] [--mixed] [--policy-target HTTPS_ORIGIN]");
+    else throw new Error("Usage: sdk-server.mjs [--host IPv4] [--port 0] [--allow-lan] [--tls-key PATH --tls-cert PATH] [--mixed] [--encoded-glyph] [--policy-target HTTPS_ORIGIN]");
   }
   if (options.port !== undefined) options.port = Number(options.port);
   if ((options["tls-key"] !== undefined) !== (options["tls-cert"] !== undefined)) throw new Error("Both TLS fixture input paths are required");

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { regions } from '../src/data/regions';
 import {
+  matchBackgroundMapSymbolRequest,
   matchBackgroundMapTileRequest,
   planBackgroundMapFromMetadata,
 } from '../src/domain/backgroundMapMetadata';
@@ -24,6 +25,13 @@ const style = {
   layers: [
     { id: 'background', type: 'background' },
     { id: 'water', type: 'fill', source: 'openmaptiles', 'source-layer': 'water' },
+    {
+      id: 'places',
+      type: 'symbol',
+      source: 'openmaptiles',
+      'source-layer': 'place',
+      layout: { 'text-font': ['Noto Sans Regular'] },
+    },
   ],
 };
 const tileJson = {
@@ -53,7 +61,13 @@ describe('background map metadata verification', () => {
     expect(result.plan.revision).toEqual({ styleSha256: reference.styleSha256, tileVersion });
     expect(result.plan.estimatedTileCount).toBe(64);
     expect(result.tileJsonSha256).toBe(reference.tileJsonSha256);
-    expect(result.resources).toEqual({ vector, raster, glyphs, sprite });
+    expect(result.resources).toEqual({
+      vector,
+      raster,
+      glyphs,
+      sprite,
+      fontStacks: ['Noto Sans Regular'],
+    });
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.resources)).toBe(true);
   });
@@ -182,6 +196,62 @@ describe('background map metadata verification', () => {
     await expect(
       planBackgroundMapFromMetadata(regionId, bytes, reference, digest),
     ).rejects.toMatchObject({ reason: 'style' });
+  });
+});
+
+describe('literal glyph and sprite URLs for verified Liberty metadata', () => {
+  it.each([
+    [0, 255],
+    [44_032, 44_287],
+    [65_280, 65_535],
+  ])('matches the exact 256-character glyph range %i-%i', async (first, last) => {
+    const { bytes, reference } = fixture();
+    const result = await planBackgroundMapFromMetadata(regionId, bytes, reference, digest);
+    expect(
+      matchBackgroundMapSymbolRequest(
+        result,
+        `${origin}/fonts/Noto%20Sans%20Regular/${first}-${last}.pbf`,
+      ),
+    ).toEqual({ kind: 'glyph', font: 'Noto Sans Regular', first, last });
+  });
+
+  it.each([
+    ['', 1],
+    ['@2x', 2],
+  ] as const)('matches the %i sprite density', async (suffix, scale) => {
+    const { bytes, reference } = fixture();
+    const result = await planBackgroundMapFromMetadata(regionId, bytes, reference, digest);
+    for (const format of ['json', 'png']) {
+      expect(matchBackgroundMapSymbolRequest(result, `${sprite}${suffix}.${format}`)).toEqual({
+        kind: 'sprite',
+        scale,
+        format,
+      });
+    }
+  });
+
+  it('rejects unlisted stacks, aliases, malformed ranges and modified sprite paths', async () => {
+    const { bytes, reference } = fixture();
+    const result = await planBackgroundMapFromMetadata(regionId, bytes, reference, digest);
+    const font = `${origin}/fonts/Noto%20Sans%20Regular`;
+    for (const url of [
+      `${origin}/fonts/Noto%20Sans%20Italic/0-255.pbf`,
+      `${origin}/fonts/Noto+Sans+Regular/0-255.pbf`,
+      `${origin}/fonts/Noto%2520Sans%2520Regular/0-255.pbf`,
+      `${origin}/fonts/Noto%20Sans%20Regular%2COther/0-255.pbf`,
+      `${font}/1-256.pbf`,
+      `${font}/0-256.pbf`,
+      `${font}/00-255.pbf`,
+      `${font}/65536-65791.pbf`,
+      `${font}/0-255.pbf?x=1`,
+      `${sprite}@3x.png`,
+      `${sprite}%402x.png`,
+      `${sprite}.svg`,
+      `${sprite}.json#extra`,
+      `${sprite}.png\n`,
+      `${sprite.replace('tiles.openfreemap.org', 'tiles.openfreemap.org.invalid')}.png`,
+    ])
+      expect(matchBackgroundMapSymbolRequest(result, url)).toBeUndefined();
   });
 });
 
