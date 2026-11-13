@@ -50,6 +50,7 @@ static NSDictionary *TPControl(NSString *path) {
 @property MLNOfflinePack *offlinePack;
 @property NSUInteger offlineErrors;
 @property NSString *priorPackRunID;
+@property BOOL expectPackRevalidation;
 @property NSMutableArray *cases;
 @property NSUInteger transforms, rewrittenStyles, externalTileRequests, phase;
 @property BOOL styleLoaded, fullyRendered, finishing;
@@ -140,9 +141,12 @@ static NSDictionary *TPControl(NSString *path) {
     BOOL valid = runID && [pattern numberOfMatchesInString:runID options:0 range:NSMakeRange(0, runID.length)] == 1;
     BOOL reopening = [self.stage isEqual:@"tls-pack-reopen"];
     self.priorPackRunID = env[@"QA_PACK_RUN_ID"];
+    NSString *revalidation = env[@"QA_PACK_EXPECT_REVALIDATION"];
+    self.expectPackRevalidation = reopening && [revalidation isEqual:@"1"];
     BOOL packInputsOK = reopening ? self.priorPackRunID.length && ![self.priorPackRunID isEqual:runID] &&
         [[NSURL URLWithString:TPOrigin ?: @""].host isEqual:@"127.0.0.1"] &&
-        [pattern numberOfMatchesInString:self.priorPackRunID options:0 range:NSMakeRange(0, self.priorPackRunID.length)] == 1 : !self.priorPackRunID;
+        [pattern numberOfMatchesInString:self.priorPackRunID options:0 range:NSMakeRange(0, self.priorPackRunID.length)] == 1 &&
+        (!revalidation || self.expectPackRevalidation) : !self.priorPackRunID && !revalidation;
     self.runID = valid ? runID : nil;
     if (usesActionGate && valid) self.actionGate = [[TPFixtureActionGate alloc] initWithRunID:runID processIdentifier:NSProcessInfo.processInfo.processIdentifier cancelNonce:env[@"QA_FIXTURE_CANCEL_NONCE"] reloadNonce:env[@"QA_FIXTURE_RELOAD_NONCE"]];
     NSURL *documents = [[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
@@ -249,7 +253,7 @@ static NSDictionary *TPControl(NSString *path) {
     NSURL *ledgerURL = [TPRunDirectory URLByAppendingPathComponent:tlsTrial ? @"tls-ledger.json" : (cancelTrial ? @"cancel-ledger.json" : @"render-ledger.json")];
     BOOL configured;
     if (tlsMixed || tlsPolicy) configured = [TPTransport configureMixedPrivateFixtureTLSOrigin:TPOrigin ledgerURL:ledgerURL certificate:self.fixtureCertificate];
-    else if (tlsTrial) configured = [TPTransport configurePrivateFixtureTLSOrigin:TPOrigin ledgerURL:ledgerURL maxRequests:32 maxTiles:16 maxReservedBytes:8192 certificate:self.fixtureCertificate];
+    else if (tlsTrial) configured = [TPTransport configurePrivateFixtureTLSOrigin:TPOrigin ledgerURL:ledgerURL maxRequests:self.expectPackRevalidation ? 2 : 32 maxTiles:self.expectPackRevalidation ? 1 : 16 maxReservedBytes:self.expectPackRevalidation ? 512 : 8192 certificate:self.fixtureCertificate];
     else configured = [TPTransport configureOrigin:TPOrigin ledgerURL:ledgerURL maxRequests:cancelTrial ? 64 : 32 maxTiles:cancelTrial ? 32 : 16 maxReservedBytes:cancelTrial ? 16384 : 8192];
     if (!configured) { [self finish:NO reason:@"ledger not ready"]; return; }
     if ([self.stage isEqual:@"tls-pack"]) { [self startOfflinePack]; return; }
@@ -313,7 +317,13 @@ static NSDictionary *TPControl(NSString *path) {
 }
 - (void)inspectReopenedPack:(MLNOfflineStorage *)storage {
     NSDictionary *native = TPTransport.snapshot;
-    if (![self idleNative:native] || ![native[@"started"] isEqual:@0]) {
+    if (self.expectPackRevalidation) {
+        if (![native[@"ledgerOK"] isEqual:@YES] || [native[@"started"] unsignedIntegerValue] > 2 ||
+            ![native[@"httpRequestSendsSettled"] isEqual:@0] || ![native[@"blockedBeforeDispatch"] isEqual:@0]) {
+            [self finish:NO reason:@"expired pack transport differed from the bounded trial"];
+            return;
+        }
+    } else if (![self idleNative:native] || ![native[@"started"] isEqual:@0]) {
         [self finish:NO reason:@"unexpected network request during pack reopen"];
         return;
     }
@@ -351,11 +361,14 @@ static NSDictionary *TPControl(NSString *path) {
         return;
     }
     if (!self.styleLoaded || !self.fullyRendered) return;
+    if (self.expectPackRevalidation && (![self idleNative:native] || ![native[@"started"] isEqual:@2])) return;
     [self.cases addObject:@{@"packId": self.offlinePack.regionId, @"packRunID": self.priorPackRunID,
         @"contextMatches": @YES, @"complete": @YES, @"resources": @(progress.countOfResourcesCompleted),
         @"tiles": @(progress.countOfTilesCompleted), @"storedBytes": @(progress.countOfBytesCompleted),
         @"styleLoaded": @YES, @"fullyRendered": @YES}];
-    [self finish:MLNNetworkConfiguration.sharedManager.delegate == self.transform reason:@"reopened pack rendered without transport requests"];
+    NSString *reason = self.expectPackRevalidation ? @"expired pack rendered after bounded connection attempts" :
+        @"reopened pack rendered without transport requests";
+    [self finish:MLNNetworkConfiguration.sharedManager.delegate == self.transform reason:reason];
 }
 - (void)offlinePackError:(NSNotification *)notification {
     self.offlineErrors++;

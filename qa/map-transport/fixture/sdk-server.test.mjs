@@ -362,6 +362,19 @@ test("offline pack fixture pairs a zoom-zero style with one 512px raster tile", 
   assert.equal(fixture.stats().resourceCount, 2);
 });
 
+test("short expiry is scoped to pack resources on the HTTPS fixture", async t => {
+  const tls = tlsMaterials();
+  await assert.rejects(createSDKFixture({ expirePack: true }), /matching HTTPS fixture/);
+  await assert.rejects(createSDKFixture({ tls, mixed: true, expirePack: true }), /matching HTTPS fixture/);
+  const fixture = await createSDKFixture({ tls, expirePack: true });
+  t.after(() => fixture.close());
+  for (const [path, expected] of [["/resource/style/pack", "max-age=1"], ["/resource/tile/pack_0_0_0", "max-age=1"], ["/resource/style/sdk", "no-store"]]) {
+    const result = await openHTTPS(fixture.origin, path);
+    assert.equal(result.response.headers["cache-control"], expected);
+    await result.body;
+  }
+});
+
 test("encoded glyph fixture serves only the exact percent-encoded stack", async t => {
   const tls = tlsMaterials();
   await assert.rejects(createSDKFixture({ tls, encodedGlyph: true }), /Encoded glyphs/);

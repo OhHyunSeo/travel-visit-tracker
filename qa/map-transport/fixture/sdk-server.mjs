@@ -208,7 +208,7 @@ function mixedAssetBodies(fontStack) {
 }
 
 /** Actual SDK fixture, no proxy, external requests, user files or real map data. */
-export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan = false, tls, mixed = false, encodedGlyph = false, policyTarget } = {}) {
+export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan = false, tls, mixed = false, encodedGlyph = false, expirePack = false, policyTarget } = {}) {
   if (!isAllowedFixtureHost(host, allowLan) || host === "::1" || host === "localhost")
     throw new Error("Use a literal loopback or explicitly allowed private IPv4 address");
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invalid port");
@@ -216,6 +216,8 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
   if (typeof mixed !== "boolean" || (mixed && !tlsOptions)) throw new Error("Mixed SDK fixture requires explicit TLS");
   if (typeof encodedGlyph !== "boolean" || (encodedGlyph && (!mixed || policyTarget !== undefined)))
     throw new Error("Encoded glyphs require the mixed SDK fixture without a policy target");
+  if (typeof expirePack !== "boolean" || (expirePack && (!tlsOptions || mixed)))
+    throw new Error("Expired pack resources require the matching HTTPS fixture");
   if (policyTarget !== undefined) {
     const target = new URL(policyTarget);
     if (!mixed || !tlsOptions || target.protocol !== "https:" || target.hostname !== host || !target.port || target.origin !== policyTarget || Number(target.port) === port)
@@ -298,7 +300,7 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
     response.once("finish", () => { entry.finished = true; settle(); });
     response.once("close", () => { entry.closedBeforeFinish = !entry.finished; settle(); });
     const type = style ? "application/json" : (asset?.type ?? "image/png");
-    const cacheControl = packStyle || offlineTile ? "max-age=300" : "no-store";
+    const cacheControl = packStyle || offlineTile ? (expirePack ? "max-age=1" : "max-age=300") : "no-store";
     response.writeHead(redirect ? 302 : 200, { "Content-Type": type, "Content-Length": body.length, "Cache-Control": cacheControl,
       ...(redirect ? { Location: `${policyTarget}/resource/tile/m_2_0_1` } : {}) });
     const sendBody = () => {
@@ -363,9 +365,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     if (key === "--allow-lan" && options.allowLan === undefined) options.allowLan = true;
     else if (key === "--mixed" && options.mixed === undefined) options.mixed = true;
     else if (key === "--encoded-glyph" && options.encodedGlyph === undefined) options.encodedGlyph = true;
+    else if (key === "--expire-pack" && options.expirePack === undefined) options.expirePack = true;
     else if (key === "--policy-target" && options.policyTarget === undefined && args[index + 1] !== undefined) options.policyTarget = args[++index];
     else if (["--host", "--port", "--tls-key", "--tls-cert"].includes(key) && options[key.slice(2)] === undefined && args[index + 1] !== undefined) options[key.slice(2)] = args[++index];
-    else throw new Error("Usage: sdk-server.mjs [--host IPv4] [--port 0] [--allow-lan] [--tls-key PATH --tls-cert PATH] [--mixed] [--encoded-glyph] [--policy-target HTTPS_ORIGIN]");
+    else throw new Error("Usage: sdk-server.mjs [--host IPv4] [--port 0] [--allow-lan] [--tls-key PATH --tls-cert PATH] [--mixed] [--encoded-glyph] [--expire-pack] [--policy-target HTTPS_ORIGIN]");
   }
   if (options.port !== undefined) options.port = Number(options.port);
   if ((options["tls-key"] !== undefined) !== (options["tls-cert"] !== undefined)) throw new Error("Both TLS fixture input paths are required");
