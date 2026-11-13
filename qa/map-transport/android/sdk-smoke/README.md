@@ -120,3 +120,11 @@ report records `renderEventObserved=false`. The verifier checks the expected sty
 color across the center of the screenshot. The server body size, relay bytes,
 and reserved body bytes are reported separately. Preserve the original capture
 files with their device provenance. Synthetic input only tests the verifier.
+
+An admitted guest runner can call `capture_device.collect()` after the relay
+exits. Its command callback must pin and recheck the transport, enforce the
+supplied output limit and a deadline, and fail on a nonzero exit. The collector
+checks that the fixture is the sole resumed activity before and after the
+screenshot, verifies the PID again before saving screen or journal data, and
+writes only to a new private capture directory. It leaves partial evidence on
+failure. There is no device selection or launch command in this module.

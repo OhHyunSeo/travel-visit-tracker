@@ -23,6 +23,7 @@ APP_LOG = re.compile(
 )
 JOURNAL_HEADER = struct.Struct(">IIIIQI")
 JOURNAL_RECORD = struct.Struct(">IIQII")
+FRAME_EVENT = "FRAME_RENDERED fully=true"
 
 
 def read_bounded(path, limit):
@@ -47,7 +48,7 @@ def read_apk(path):
     return int(value), hashlib.sha256(data).hexdigest()
 
 
-def check_logs(capture, port, pid, require_render_event):
+def check_transport_logs(capture, port):
     server = read_bounded(capture / "server.log", LOG_LIMIT).decode().splitlines()
     if server != [f"STYLE_SERVER_READY port={port}", f"SERVED_STYLE bytes={STYLE_BYTES}"]:
         raise ValueError("Server must record one matching fixture style response")
@@ -58,9 +59,12 @@ def check_logs(capture, port, pid, require_render_event):
     forwarded = re.fullmatch(r"RELAY_COMPLETE forwarded=([0-9]{1,6})", relay[1])
     if not forwarded or not STYLE_BYTES < int(forwarded[1]) <= 2 * 65_536:
         raise ValueError("Invalid completed relay byte count")
+    return int(forwarded[1])
 
+
+def check_app_log(log, pid, require_render_event):
     messages = []
-    for line in read_bounded(capture / "app.log", LOG_LIMIT).decode().splitlines():
+    for line in log.decode().splitlines():
         if "TripMapSdkFixture:" not in line:
             continue
         match = APP_LOG.fullmatch(line)
@@ -68,10 +72,10 @@ def check_logs(capture, port, pid, require_render_event):
             raise ValueError("App capture includes a failed or unexpected fixture log")
         messages.append(match[3])
     style_messages = ["TRANSPORT_READY", f"STYLE_LOADED attempts=1 tiles=0 reserved={RESERVATION}"]
-    rendered = messages == [*style_messages, "FRAME_RENDERED fully=true"]
+    rendered = messages == [*style_messages, FRAME_EVENT]
     if not rendered and (require_render_event or messages != style_messages):
         raise ValueError("App startup, style load or completed frame evidence differs")
-    return int(forwarded[1]), rendered
+    return rendered
 
 
 def check_journal(path):
@@ -112,7 +116,8 @@ def verify(capture, apk_path, pid, *, require_render_event=False):
     if pid <= 0:
         raise ValueError("Capture requires the positive fixture process ID")
     port, apk_hash = read_apk(apk_path)
-    forwarded, rendered = check_logs(capture, port, pid, require_render_event)
+    forwarded = check_transport_logs(capture, port)
+    rendered = check_app_log(read_bounded(capture / "app.log", LOG_LIMIT), pid, require_render_event)
     check_journal(capture / "budget.journal")
     frame = check_render(capture / "screen.png")
     return {
