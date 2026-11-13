@@ -6,6 +6,8 @@
 
 시험 앱이 보고한 팩 ID와 SQLite의 팩 ID가 같았습니다. 그 ID가 스타일·타일 각 한 건에 연결됐고 SQLite 무결성·외래 키 검사도 통과했습니다. 이번 결과는 단일 활성 팩과 새 시험 저장소에 해당합니다. 전송 콜백 자체가 팩 ID를 전달하는지, 두 팩이나 화면 요청을 구분할 수 있는지, 앱 재실행 후 읽히는지는 남아 있습니다. [MapLibre 팩 API](https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/platform/darwin/src/MLNOfflineStorage.h#L252)
 
+다음 시험에서는 새 팩을 다운로드한 뒤 시험 서버를 종료하고 같은 앱을 새 프로세스로 엽니다. SDK가 다시 읽은 팩의 ID, context와 진행량을 첫 실행과 대조하고, 저장한 스타일과 타일을 사용할 때 네트워크 요청이 생기는지도 확인합니다. 현재는 `packs`와 `requestProgress`로 상태를 다시 읽는 API까지 검토했습니다. [MapLibre 팩 진행 상태 API](https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/platform/darwin/src/MLNOfflinePack.h#L170)
+
 ## 2026-11-13 실제 MapLibre 글꼴과 스프라이트 주소 확인
 
 별도 iPhone 17 시뮬레이터에서 MapLibre Native 6.31.0을 실행했습니다. 합성 서버가 받은 요청은 스타일 1개, 타일 6개, `Noto%20Sans%20Regular/0-255.pbf`와 `@2x` 스프라이트 JSON·PNG였습니다. 같은 실행에서 지도 렌더가 끝났고, 응답 10개와 본문 1,583바이트, 예약 10,240바이트를 대조했습니다. 동시 응답은 최대 4개였습니다.
