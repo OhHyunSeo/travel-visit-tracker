@@ -4,6 +4,7 @@
 #import "TPTransport.h"
 #import "MLRNTransformRequest.h"
 #import "TPFixtureActionGate.h"
+#import "MapLibreQA-Swift.h"
 
 static NSURL *TPRunDirectory;
 static NSString *TPOrigin;
@@ -17,29 +18,6 @@ static BOOL TPTLSStage(NSString *stage) {
 static BOOL TPCancellationStage(NSString *stage) {
     return [@[@"cancel-retry", @"tls-cancel-retry"] containsObject:stage];
 }
-
-@interface TPOfflinePackNetworkBlock : NSURLProtocol
-+ (NSArray<NSString *> *)attemptPaths;
-@end
-
-@implementation TPOfflinePackNetworkBlock
-static NSMutableArray<NSString *> *TPOfflinePackAttempts;
-+ (BOOL)canInitWithRequest:(NSURLRequest *)request {
-    return [@[@"http", @"https"] containsObject:request.URL.scheme.lowercaseString ?: @""];
-}
-+ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request { return request; }
-+ (NSArray<NSString *> *)attemptPaths {
-    @synchronized(TPOfflinePackNetworkBlock.class) { return [TPOfflinePackAttempts copy] ?: @[]; }
-}
-- (void)startLoading {
-    @synchronized(TPOfflinePackNetworkBlock.class) {
-        if (!TPOfflinePackAttempts) TPOfflinePackAttempts = [NSMutableArray new];
-        if (TPOfflinePackAttempts.count < 3) [TPOfflinePackAttempts addObject:self.request.URL.path ?: @""];
-    }
-    [self.client URLProtocol:self didFailWithError:[NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorNotConnectedToInternet userInfo:nil]];
-}
-- (void)stopLoading {}
-@end
 
 static void TPWriteDocument(NSString *name, NSDictionary *value) {
     if (!TPRunDirectory) return;
@@ -75,6 +53,7 @@ static NSDictionary *TPControl(NSString *path) {
 @property NSString *priorPackRunID;
 @property BOOL expectPackRevalidation;
 @property BOOL blockPackNetwork;
+@property NSMutableArray<NSString *> *offlineRequestAttempts;
 @property NSMutableArray *cases;
 @property NSUInteger transforms, rewrittenStyles, externalTileRequests, phase;
 @property BOOL styleLoaded, fullyRendered, finishing;
@@ -252,6 +231,7 @@ static NSDictionary *TPControl(NSString *path) {
 - (void)createMap {
     MLNNetworkConfiguration *network = MLNNetworkConfiguration.sharedManager;
     if (network.delegate) { [self finish:NO reason:@"unexpected preexisting SDK delegate"]; return; }
+    if (self.blockPackNetwork) self.offlineRequestAttempts = [NSMutableArray new];
     // Link the installed package's unmodified native class; no React/JS bridge or stub.
     self.transform = MLRNTransformRequest.sharedInstance;
     if (network.delegate != self.transform) { [self finish:NO reason:@"native transform did not install its delegate"]; return; }
@@ -266,11 +246,26 @@ static NSDictionary *TPControl(NSString *path) {
     [self.transform addHeader:@"qa-auth" match:match name:@"Authorization" value:@"synthetic-sdk-secret-must-not-forward"];
     [self.transform addHeader:@"qa-cookie" match:match name:@"Cookie" value:@"synthetic-sdk-cookie-must-not-forward=1"];
     NSURLSessionConfiguration *configuration = NSURLSessionConfiguration.ephemeralSessionConfiguration;
-    configuration.protocolClasses = self.blockPackNetwork ? @[TPOfflinePackNetworkBlock.class] : @[TPTransport.class];
+    configuration.protocolClasses = @[TPTransport.class];
     configuration.URLCache = nil;
     configuration.HTTPCookieStorage = nil; configuration.URLCredentialStorage = nil;
     configuration.HTTPShouldSetCookies = NO;
     network.sessionConfiguration = configuration;
+    if ([self.stage isEqual:@"tls-pack"] || self.blockPackNetwork) {
+        NSURL *localDirectory = NSBundle.mainBundle.bundleURL;
+        if (![TripPaintingMapBootstrap configureInDirectory:localDirectory]) {
+            [self finish:NO reason:@"product startup did not select a local style"]; return;
+        }
+        NSURLSessionConfiguration *installed = network.sessionConfiguration;
+        if (![TripPaintingMapBootstrap configureInDirectory:localDirectory] ||
+            installed != network.sessionConfiguration || installed == configuration ||
+            installed.protocolClasses.count != 2 || installed.protocolClasses.lastObject != TPTransport.class ||
+            ![configuration.protocolClasses isEqual:@[TPTransport.class]] || installed.URLCache ||
+            installed.HTTPCookieStorage || installed.URLCredentialStorage || installed.HTTPShouldSetCookies) {
+            [self finish:NO reason:@"product guard did not preserve the SDK session configuration"]; return;
+        }
+        if (self.blockPackNetwork) [TripPaintingMapBootstrap setOfflineMapRequestsBlocked:YES];
+    }
     if (network.delegate != self.transform) { [self finish:NO reason:@"session configuration replaced delegate"]; return; }
     BOOL cancelTrial = TPCancellationStage(self.stage);
     BOOL tlsTrial = TPTLSStage(self.stage);
@@ -392,10 +387,15 @@ static NSDictionary *TPControl(NSString *path) {
     if (self.expectPackRevalidation && (![self idleNative:native] || ![native[@"started"] isEqual:@2])) return;
     NSArray<NSString *> *blocked = nil;
     if (self.blockPackNetwork) {
-        blocked = TPOfflinePackNetworkBlock.attemptPaths;
+        @synchronized(self) { blocked = [self.offlineRequestAttempts copy]; }
         if (blocked.count < 2) return;
         if (blocked.count != 2 || ![[NSSet setWithArray:blocked] isEqual:[NSSet setWithArray:@[@"/resource/style/pack", @"/resource/tile/pack_0_0_0"]]]) {
             [self finish:NO reason:@"unexpected denied offline requests"];
+            return;
+        }
+        if (![native[@"started"] isEqual:@0] || ![native[@"blockedBeforeDispatch"] isEqual:@0] ||
+            ![native[@"ledger"][@"requests"] isEqual:@0] || ![native[@"ledger"][@"reservedBytes"] isEqual:@0]) {
+            [self finish:NO reason:@"a blocked request reached the downstream transport"];
             return;
         }
     }
@@ -433,6 +433,10 @@ static NSDictionary *TPControl(NSString *path) {
 - (void)observedTransformURL:(NSString *)url {
     @synchronized(self) {
         self.transforms++;
+        if (self.blockPackNetwork && self.offlineRequestAttempts.count < 3) {
+            NSString *originPrefix = [TPOrigin stringByAppendingString:@"/"];
+            [self.offlineRequestAttempts addObject:[url hasPrefix:originPrefix] ? ([NSURL URLWithString:url].path ?: @"") : @"unexpected origin"];
+        }
         if ([self.stage isEqual:@"tls-policy"]) {
             if ([url isEqual:[self.policyTarget stringByAppendingString:@"/resource/tile/m_2_0_0"]]) self.policyOriginAttempts++;
             else if ([url isEqual:[TPOrigin stringByAppendingString:@"/resource/tile/denied_0_0_0"]]) self.policyPathAttempts++;
