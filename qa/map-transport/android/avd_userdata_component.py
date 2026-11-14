@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import struct
 import sys
+import tempfile
 
 from avd_volume_component import run as with_volume
 from ext4_component import CHECKER_SHA256, FORMATTER_SHA256, verify_sdk_tool
@@ -25,6 +26,11 @@ READ_PROFILE = '''(version 1)
 WRITE_PROFILE = READ_PROFILE + '(allow file-write* (subpath (param "ROOT")))\n'
 
 
+def restricted_tool_argv(tool: Path, root: Path, profile: str) -> list[str]:
+    return ['/usr/bin/sandbox-exec', '-D', 'TOOL=' + str(tool), '-D', 'ROOT=' + str(root),
+            '-D', 'PRIVATE_ANDROID=' + str(Path.home() / '.android'), '-p', profile]
+
+
 def verify_qemu(sdk: Path) -> Path:
     tool = sdk.resolve(strict=True) / 'emulator/qemu-img'
     if tool != tool.resolve(strict=True) or not tool.is_file() or not os.access(tool, os.X_OK):
@@ -34,6 +40,43 @@ def verify_qemu(sdk: Path) -> Path:
     if len(body) > 16 * 1024**2 or hashlib.sha256(body).hexdigest() != QEMU_SHA256:
         raise ComponentError('Cached qemu-img hash differs')
     return tool
+
+
+def verify_preparation_exec_boundary(sdk: Path) -> dict:
+    """Exercise the actual preparation profiles with non-booting commands."""
+    if sys.platform != 'darwin':
+        raise ComponentError('The SDK preparation execution check requires macOS')
+    sdk = sdk.resolve(strict=True)
+    qemu_img = verify_qemu(sdk)
+    denied = {
+        'emulator': (sdk / 'emulator/emulator', '-version'),
+        'qemu': (sdk / 'emulator/qemu/darwin-aarch64/qemu-system-aarch64', '--version'),
+        'adb': (sdk / 'platform-tools/adb', 'version'),
+    }
+    for path, _ in denied.values():
+        if path.resolve(strict=True) != path or not path.is_file() or not os.access(path, os.X_OK):
+            raise ComponentError('Expected regular cached SDK executables for the negative probes')
+    results = {}
+    with tempfile.TemporaryDirectory(prefix='trip-producer-exec.') as temporary:
+        root = Path(temporary).resolve(strict=True)
+        env = {'PATH': '/usr/bin:/bin', 'LANG': 'C', 'TMPDIR': str(root)}
+        for phase, profile in (('read', READ_PROFILE), ('write', WRITE_PROFILE)):
+            argv = restricted_tool_argv(qemu_img, root, profile)
+            output, _ = _capture([*argv, str(qemu_img), '--version'], cwd=root, env=env)
+            if b'qemu-img version' not in output.lower():
+                raise ComponentError('The positive qemu-img control did not emit its version')
+            for label, (path, arg) in denied.items():
+                try:
+                    _capture([*argv, str(path), arg], cwd=root, env=env)
+                except ComponentError as error:
+                    if 'Operation not permitted' not in str(error):
+                        raise
+                else:
+                    raise ComponentError(f'The preparation profile allowed {label} execution')
+            results[phase] = {'qemuImgAllowed': True, 'executionDenied': list(denied)}
+        if any(root.iterdir()):
+            raise ComponentError('Execution probes unexpectedly created files')
+    return {'profiles': results, 'guestBooted': False, 'nativeAdmissionEnabled': False}
 
 
 def inspect_qcow_info(info: dict) -> int:
@@ -73,9 +116,8 @@ def prepare(sdk: Path, mount: Path) -> dict:
 
     def command(tool, *args, write=False):
         return _capture([
-            '/usr/bin/sandbox-exec', '-D', 'TOOL=' + str(tool), '-D', 'ROOT=' + str(mount),
-            '-D', 'PRIVATE_ANDROID=' + str(Path.home() / '.android'),
-            '-p', WRITE_PROFILE if write else READ_PROFILE, str(tool), *map(str, args),
+            *restricted_tool_argv(tool, mount, WRITE_PROFILE if write else READ_PROFILE),
+            str(tool), *map(str, args),
         ], cwd=mount, env=environment)[0]
 
     with raw.open('xb') as stream:
@@ -98,8 +140,12 @@ def prepare(sdk: Path, mount: Path) -> dict:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument('--sdk-root', required=True, type=Path)
+    parser.add_argument('--verify-exec-boundary', action='store_true',
+                        help='Probe the preparation profiles without creating a volume or userdata image')
     args = parser.parse_args()
     try:
-        print(json.dumps(with_volume(volume_check=lambda mount: prepare(args.sdk_root, mount)), sort_keys=True))
+        result = (verify_preparation_exec_boundary(args.sdk_root) if args.verify_exec_boundary else
+                  with_volume(volume_check=lambda mount: prepare(args.sdk_root, mount)))
+        print(json.dumps(result, sort_keys=True))
     except (ComponentError, OSError, ValueError, KeyError) as error:
         sys.exit(f'Independent userdata component failed: {error}')

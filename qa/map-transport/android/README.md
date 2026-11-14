@@ -118,6 +118,8 @@ python3 -B qa/map-transport/android/avd_userdata_component.py --sdk-root "$andro
 
 고정 볼륨 안에서 512MiB ext4와 독립 QCOW2를 만들고 두 형식의 무결성과 가상 내용 일치를 대조합니다. 변환기와 형식화 도구의 해시는 고정되며, 외부 backing을 거절합니다. 실행 후 소유 볼륨을 제거합니다. 이 결과는 오프라인 이미지 준비 범위이며 Android 부팅을 허용하지 않습니다.
 
+`--verify-exec-boundary`를 지정하면 볼륨 없이 준비 프로필의 실행 범위를 확인합니다. `qemu-img --version`은 성공해야 하고, 같은 읽기·쓰기 프로필에서 에뮬레이터, arm64 QEMU, ADB의 버전 호출은 OS가 거절해야 합니다.
+
 `python3 -B qa/map-transport/android/avd_config_component.py --sdk-root "$android_sdk"`는 별도 볼륨에 AVD 설정을 만들고 고정 `-list-avds`로 그 AVD만 표시되는지 확인합니다. 원래 AVD 폴더의 읽기를 차단하며 게스트를 시작하지 않습니다.
 
 `--prepare-userdata`를 추가하면 독립적으로 검증한 새 raw 파일을 같은 전용 AVD의 `userdata-qemu.img`로 배치합니다. 확인이 끝난 뒤 파일과 볼륨을 함께 제거합니다.

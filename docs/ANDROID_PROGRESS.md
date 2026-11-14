@@ -1,6 +1,14 @@
 # Android 개발·검증 기록
 
-마지막 갱신: 2026-11-13, Asia/Seoul.
+마지막 갱신: 2026-11-14, Asia/Seoul.
+
+## 11월 14일 P3-02 후속: 디스크 준비와 에뮬레이터 실행 분리 검증
+
+`58a8009`에서 재개했습니다. Mac 가용 공간은 약 49GiB였으며 전용 USB Android 기기, 실행 중인 ADB, 보관된 전용 AVD·userdata 및 마운트된 소유 시험 볼륨은 확인되지 않았습니다. 보관 시험 APK는 발견했습니다.
+
+기존 userdata 준비의 실제 macOS 읽기·쓰기 프로필에서 해시 고정 SDK `qemu-img --version`은 두 번 성공했습니다. 동일 프로필에서 SDK 에뮬레이터, arm64 QEMU, ADB의 버전 호출은 각각 운영체제의 `Operation not permitted`로 거절됐습니다. SDK 경로와 실행 파일 존재를 먼저 확인했고, 여섯 실행 거절 외에 임시 파일이 생기지 않았습니다. 재현 옵션은 `avd_userdata_component.py --verify-exec-boundary`입니다. 공통의 읽기 전용 기기 준비 검사도 `BLOCKED`, `nativeLaunchAllowed=false`, 준비 표식 미발급을 반환했습니다.
+
+이 단위는 이미지 준비 도구의 실행 범위를 확인합니다. 고정 볼륨을 다시 만들지 않았고, 개인 AVD·SDK 및 공통 폴더를 보존했습니다. Android 게스트 첫 부팅·암호화, APK 설치, 실제 맵 프레임과 서버·장부 대조는 미실행입니다. 별도 기기 또는 검증 가능한 전용 실행 경로가 필요합니다.
 
 ## 11월 13일 Android 저장 지점: AVD 준비 파일과 보관 APK의 공간 대조
 
