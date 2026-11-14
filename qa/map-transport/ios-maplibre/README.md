@@ -1,5 +1,9 @@
 # 실제 지도 엔진을 연결한 iPhone 시험
 
+## iOS 세션의 오프라인 전환 시험
+
+`QA_STAGE=offline-session-toggle`은 로컬 HTTP 시험 서버(`127.0.0.1`)에서만 실행합니다. 제품 초기화 코드로 연 세션 하나에서 기본 통과, HTTP·HTTPS 차단, 차단 해제 순으로 요청합니다. 차단 중에는 별개의 세션에서도 요청을 보냅니다. iPhone 17 시뮬레이터에서 앱 결과와 서버 요청 세 건이 일치했습니다. 이 단계는 지도 뷰를 열지 않습니다.
+
 ## 최신 장부 소스의 실제 iPhone HTTPS 대기 통과
 
 `tls-queue`의 새 signed Debug 앱에서1개 사례를 통과했습니다. 대기active4/pending2·장부5/4/1280, 완료7송신/6타일/TLS확인7·본문837·장부7/6/1792·idle를 별도 서버와 대조했습니다. 실제 RN native 변환과 SDK 렌더 콜백도 확인했습니다. 서로 다른 두 peak4는 native permit과 서버 응답 본문의 관측이며 모든 TLS socket 수를 뜻하지 않습니다.

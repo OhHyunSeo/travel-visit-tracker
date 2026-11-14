@@ -45,6 +45,20 @@ static NSDictionary *TPControl(NSString *path) {
     return timedOut ? @{@"controlError": @"deadline"} : result;
 }
 
+static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    __block NSDictionary *result;
+    NSURLSessionDataTask *task = [session dataTaskWithURL:url completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        NSInteger status = [response isKindOfClass:NSHTTPURLResponse.class] ? [(NSHTTPURLResponse *)response statusCode] : 0;
+        result = @{@"status": @(status), @"errorDomain": error.domain ?: @"", @"errorCode": @(error.code), @"bodyBytes": @(data.length)};
+        dispatch_semaphore_signal(done);
+    }];
+    [task resume];
+    if (!dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC))) return result;
+    [task cancel];
+    return @{@"deadline": @YES};
+}
+
 @interface TPSDKController : UIViewController <MLNMapViewDelegate>
 @property UILabel *label;
 @property MLNMapView *map;
@@ -99,6 +113,7 @@ static NSDictionary *TPControl(NSString *path) {
     @synchronized(self) { transforms = self.transforms; rewrites = self.rewrittenStyles; }
     NSString *scope = @"isolated MapLibre6.31.0 with actual RN11.5 native transform class; no JS/TurboModule bridge, TLS/HTTP2/provider/OS-byte acceptance";
     if ([self.stage isEqual:@"action-gate"]) scope = @"fixture URL delivery only; no SDK, transport, cancellation or reload acceptance";
+    else if ([self.stage isEqual:@"offline-session-toggle"]) scope = @"isolated product guard with a live MapLibre-configured URLSession and an independent URLSession";
     else if ([self.stage isEqual:@"tls-cancel-retry"]) scope = @"isolated pinned HTTPS HTTP1 SDK style cancellation and manual reload";
     else if ([self.stage isEqual:@"tls-mixed"]) scope = @"isolated pinned HTTPS HTTP1 SDK style, tile, glyph and sprite requests";
     else if ([self.stage isEqual:@"tls-policy"]) scope = @"isolated pinned HTTPS SDK origin, path and redirect refusal";
@@ -137,6 +152,7 @@ static NSDictionary *TPControl(NSString *path) {
         policyOK = [[NSURL URLWithString:self.policyTarget].host isEqual:[NSURL URLWithString:TPOrigin].host];
     } else if (policyTrial) policyOK = NO;
     BOOL actionTrial = [self.stage isEqual:@"action-gate"];
+    BOOL toggleTrial = [self.stage isEqual:@"offline-session-toggle"];
     BOOL usesActionGate = actionTrial || [self.stage isEqual:@"tls-cancel-retry"];
     self.fixtureCertificate = [TPTransport fixtureCertificateFromBase64:env[@"QA_TLS_LEAF_DER_BASE64"]];
     NSString *runID = env[@"QA_RUN_ID"];
@@ -159,8 +175,9 @@ static NSDictionary *TPControl(NSString *path) {
     TPRunDirectory = [documents URLByAppendingPathComponent:valid ? runID : @"invalid-input"];
     BOOL fresh = ![[NSFileManager defaultManager] fileExistsAtPath:TPRunDirectory.path];
     BOOL originOK = actionTrial ? !env[@"QA_SERVER_ORIGIN"] && !env[@"QA_TLS_LEAF_DER_BASE64"] : (tlsTrial ? [TPTransport safePrivateFixtureTLSOrigin:TPOrigin] && self.fixtureCertificate : [TPTransport safeOrigin:TPOrigin] && !env[@"QA_TLS_LEAF_DER_BASE64"]);
+    if (toggleTrial) originOK = originOK && [[NSURL URLWithString:TPOrigin].host isEqual:@"127.0.0.1"];
     BOOL signalsOK = usesActionGate ? self.actionGate != nil : !env[@"QA_FIXTURE_CANCEL_NONCE"] && !env[@"QA_FIXTURE_RELOAD_NONCE"];
-    BOOL supportedStage = tlsTrial || actionTrial || [@[@"queue", @"cancel-retry"] containsObject:self.stage];
+    BOOL supportedStage = tlsTrial || actionTrial || toggleTrial || [@[@"queue", @"cancel-retry"] containsObject:self.stage];
     if (!valid || !fresh || !supportedStage || !originOK || !signalsOK || !policyOK || !packInputsOK) { TPRunDirectory = nil; [self finish:NO reason:@"unsafe or reused inputs"]; return; }
     if (![[NSFileManager defaultManager] createDirectoryAtURL:TPRunDirectory withIntermediateDirectories:YES attributes:nil error:nil]) { TPRunDirectory = nil; [self finish:NO reason:@"run directory not ready"]; return; }
     self.cases = [NSMutableArray new];
@@ -173,6 +190,7 @@ static NSDictionary *TPControl(NSString *path) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 45 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ if (!self.finishing) [self finish:NO reason:@"fixture signal deadline"]; });
         return;
     }
+    if (toggleTrial) { [self verifyOfflineSessionToggle]; return; }
     // The host prepares and verifies the TLS fixture before launch. No unpinned
     // readiness/control NSURLSession is used by the TLS stages.
     if (tlsTrial) { [self createMap]; return; }
@@ -187,6 +205,44 @@ static NSDictionary *TPControl(NSString *path) {
         dispatch_async(dispatch_get_main_queue(), ^{
             if (!ready) { [self finish:NO reason:@"local fixture not ready"]; return; }
             [self createMap];
+        });
+    });
+}
+- (void)verifyOfflineSessionToggle {
+    MLNNetworkConfiguration *network = MLNNetworkConfiguration.sharedManager;
+    if (network.delegate) { [self finish:NO reason:@"unexpected preexisting SDK delegate"]; return; }
+    self.transform = MLRNTransformRequest.sharedInstance;
+    if (network.delegate != self.transform || ![TripPaintingMapBootstrap configureInDirectory:NSBundle.mainBundle.bundleURL]) {
+        [self finish:NO reason:@"map startup or transform unavailable"]; return;
+    }
+    NSURLSession *mapSession = [NSURLSession sessionWithConfiguration:network.sessionConfiguration];
+    NSURLSession *independentSession = [NSURLSession sessionWithConfiguration:NSURLSessionConfiguration.ephemeralSessionConfiguration];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSURL *(^fixtureURL)(NSString *) = ^NSURL *(NSString *path) {
+            return [NSURL URLWithString:[TPOrigin stringByAppendingString:path]];
+        };
+        NSDictionary *online = TPProbe(mapSession, fixtureURL(@"/resource/style/sdk"));
+        [TripPaintingMapBootstrap setOfflineMapRequestsBlocked:YES];
+        NSDictionary *blockedHTTP = TPProbe(mapSession, fixtureURL(@"/resource/style/held"));
+        NSURLComponents *https = [NSURLComponents componentsWithURL:fixtureURL(@"/resource/style/held") resolvingAgainstBaseURL:NO];
+        https.scheme = @"https";
+        NSDictionary *blockedHTTPS = TPProbe(mapSession, https.URL);
+        NSDictionary *independent = TPProbe(independentSession, fixtureURL(@"/resource/style/empty"));
+        [TripPaintingMapBootstrap setOfflineMapRequestsBlocked:NO];
+        NSDictionary *resumed = TPProbe(mapSession, fixtureURL(@"/resource/style/held"));
+        [mapSession invalidateAndCancel]; [independentSession invalidateAndCancel];
+        BOOL pass = YES;
+        for (NSDictionary *response in @[online, independent, resumed]) {
+            pass &= [response[@"status"] isEqual:@200] && [response[@"errorCode"] isEqual:@0] && [response[@"bodyBytes"] integerValue] > 0;
+        }
+        for (NSDictionary *response in @[blockedHTTP, blockedHTTPS]) {
+            pass &= [response[@"status"] isEqual:@0] && [response[@"errorDomain"] isEqual:NSURLErrorDomain] &&
+                [response[@"errorCode"] isEqual:@(NSURLErrorNotConnectedToInternet)] && [response[@"bodyBytes"] isEqual:@0];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.cases addObject:@{@"online": online, @"blockedHTTP": blockedHTTP, @"blockedHTTPS": blockedHTTPS,
+                @"independentWhileBlocked": independent, @"resumedSameSession": resumed}];
+            [self finish:pass && network.delegate == self.transform reason:@"product guard session toggle completed"];
         });
     });
 }
