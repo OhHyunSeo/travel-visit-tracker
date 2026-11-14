@@ -163,16 +163,17 @@ def query_boot_property(key_path):
         return stream_output(connection, remote, 32, time.monotonic() + 10).strip() == b'1'
 
 
-def install_fixture(key_path, apk):
+def install_fixture(key_path, apk, *, expected_hash=FIXTURE_APK_SHA256):
     # Reuse the smoke suite's checks for exact package identity and installed bytes.
     sys.path.append(str(Path(__file__).with_name('sdk-smoke')))
     from capture_device import check_installed_apk
     from device_preflight import check_fresh_device
 
-    if apk.is_symlink() or not apk.is_file() or apk.stat().st_size != FIXTURE_APK_SIZE:
+    if apk.is_symlink() or not apk.is_file() or not 0 < apk.stat().st_size <= 32 * 1024**2:
         raise ValueError('Expected the pinned fixture APK size')
-    data = apk.read_bytes()
-    if len(data) != FIXTURE_APK_SIZE or sha256(data).hexdigest() != FIXTURE_APK_SHA256:
+    with apk.open('rb') as stream:
+        data = stream.read(32 * 1024**2 + 1)
+    if len(data) > 32 * 1024**2 or (expected_hash == FIXTURE_APK_SHA256 and len(data) != FIXTURE_APK_SIZE) or sha256(data).hexdigest() != expected_hash:
         raise ValueError('Fixture APK hash changed')
     key = load_key(key_path)
 
@@ -205,17 +206,19 @@ def install_fixture(key_path, apk):
                 raise ValueError('Guest package manager did not accept the fixture APK')
     except (EOFError, OSError, ValueError) as error:
         raise ValueError(f'Guest APK install stream failed: {error}') from error
-    check_installed_apk(command, FIXTURE_APK_SHA256)
-    return {**device, 'installedApkSha256': FIXTURE_APK_SHA256}
+    check_installed_apk(command, expected_hash)
+    return {**device, 'installedApkSha256': expected_hash}
 
 
-def render_fixture(key_path, apk, relay, server_log, destination, *, raster_tile=False):
+def render_fixture(key_path, apk, relay, server_log, destination, *, raster_tile=False,
+                   offline_pack=False, expected_hash=FIXTURE_APK_SHA256):
     sys.path.append(str(Path(__file__).with_name('sdk-smoke')))
-    from capture_device import ACTIVITY, collect, running_pid, write_capture
-    from verify_device_capture import LOG_LIMIT, read_apk
+    from capture_device import ACTIVITY, JOURNAL, PACKAGE, check_installed_apk, collect, running_pid, write_capture
+    from verify_device_capture import (JOURNAL_HEADER, JOURNAL_RECORD, LOG_LIMIT, check_journal,
+                                       check_pack_log, check_transport_logs, read_apk)
 
     port, apk_hash = read_apk(apk)
-    if apk_hash != FIXTURE_APK_SHA256 or relay.is_symlink() or relay.stat().st_size > 16_384:
+    if apk_hash != expected_hash or relay.is_symlink() or relay.stat().st_size > 16_384:
         raise ValueError('Unexpected fixture APK or relay')
     with relay.open('rb') as stream:
         relay_data = stream.read(16_385)
@@ -245,7 +248,8 @@ def render_fixture(key_path, apk, relay, server_log, destination, *, raster_tile
         time.sleep(2)
         if relay_task.done():
             raise ValueError('Guest relay stopped before launching the map')
-        launch = command(4096, 'shell', 'am', 'start', '-W', '-n', ACTIVITY)
+        launch_args = ['--ez', 'fixture-offline-pack', 'true'] if offline_pack else []
+        launch = command(4096, 'shell', 'am', 'start', '-W', '-n', ACTIVITY, *launch_args)
         if b'Status: ok' not in launch:
             raise ValueError('Guest fixture activity did not start')
         relay_output = relay_task.result()
@@ -262,8 +266,23 @@ def render_fixture(key_path, apk, relay, server_log, destination, *, raster_tile
     deadline = time.monotonic() + 18
     while time.monotonic() < deadline:
         app = command(LOG_LIMIT, 'logcat', '-d', '--pid', str(pid), '-v', 'threadtime', '-s', 'TripMapSdkFixture:V', '*:S')
-        if b'FRAME_RENDERED fully=true' in app:
+        if offline_pack and b'PACK_STORED ' in app:
+            destination.mkdir(mode=0o700)
+            write_capture(destination / 'app.log', app)
+            write_capture(destination / 'relay.log', relay_output)
+            write_capture(destination / 'server.log', server_log.read_bytes())
+            journal_size = JOURNAL_HEADER.size + 2 * JOURNAL_RECORD.size
+            write_capture(destination / 'budget.journal', command(journal_size, 'exec-out', 'run-as', PACKAGE, 'cat', JOURNAL))
+            style_bytes, tile_bytes, _ = check_transport_logs(destination, port, raster_tile=True)
+            check_journal(destination / 'budget.journal', raster_tile=True)
+            stats = check_pack_log(app, pid)
+            check_installed_apk(command, expected_hash)
+            if running_pid(command) != pid:
+                raise ValueError('Offline pack process changed during capture')
+            return {**stats, 'styleBodyBytes': style_bytes, 'tileBodyBytes': tile_bytes, 'installedApkSha256': expected_hash}
+        if not offline_pack and b'FRAME_RENDERED fully=true' in app:
             return collect(command, destination, apk, server_log.read_bytes(), relay_output,
-                           expected_apk_sha256=FIXTURE_APK_SHA256, raster_tile=raster_tile)
+                           expected_apk_sha256=expected_hash, raster_tile=raster_tile)
         time.sleep(1)
-    raise ValueError('Guest fixture did not report a rendered map frame')
+    raise ValueError('Guest fixture did not report a stored pack' if offline_pack else
+                     'Guest fixture did not report a rendered map frame')

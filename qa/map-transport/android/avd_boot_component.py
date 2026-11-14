@@ -15,7 +15,7 @@ import time
 import uuid
 
 from avd_config_component import EMULATOR_SHA256, prepare_config
-from avd_guest_component import ADB_PORT, install_fixture, query_boot_property, render_fixture
+from avd_guest_component import ADB_PORT, FIXTURE_APK_SHA256, install_fixture, query_boot_property, render_fixture
 from avd_volume_component import run as with_volume
 from single_writer_component import ComponentError, _capture
 
@@ -68,7 +68,8 @@ def boot_marker_exists(marker):
         return False
 
 
-def boot(root, sdk, *, probe_adb=False, fixture_apk=None, render_inputs=None, raster_tile=False):
+def boot(root, sdk, *, probe_adb=False, fixture_apk=None, render_inputs=None, raster_tile=False,
+         offline_pack=False, expected_hash=FIXTURE_APK_SHA256):
     launcher = pinned(sdk / 'emulator/emulator', EMULATOR_SHA256)
     headless = pinned(sdk / 'emulator/qemu/darwin-aarch64/qemu-system-aarch64-headless', HEADLESS_SHA256)
     name = 'TripPaintingMapTransportQA_' + uuid.uuid4().hex[:12]
@@ -162,13 +163,15 @@ def boot(root, sdk, *, probe_adb=False, fixture_apk=None, render_inputs=None, ra
                 time.sleep(2)
         if fixture_apk and result.get('adbBootPropertyConfirmed'):
             try:
-                result['fixtureInstall'] = install_fixture(adb_key, fixture_apk)
+                result['fixtureInstall'] = install_fixture(adb_key, fixture_apk, expected_hash=expected_hash)
                 result['apkInstalled'] = True
             except (EOFError, OSError, ValueError, subprocess.TimeoutExpired) as error:
                 result['fixtureInstallError'] = str(error)
         if render_inputs and result['apkInstalled']:
             try:
-                result['fixtureRender'] = render_fixture(adb_key, fixture_apk, *render_inputs, raster_tile=raster_tile)
+                evidence = render_fixture(adb_key, fixture_apk, *render_inputs, raster_tile=raster_tile,
+                                          offline_pack=offline_pack, expected_hash=expected_hash)
+                result['fixturePack' if offline_pack else 'fixtureRender'] = evidence
             except (EOFError, OSError, ValueError, subprocess.TimeoutExpired) as error:
                 result['fixtureRenderError'] = str(error)
         with log_path.open('rb') as stream:
@@ -202,6 +205,8 @@ if __name__ == '__main__':
     parser.add_argument('--fixture-apk', type=Path, help='Install the pinned test APK after the boot query')
     parser.add_argument('--render-fixture', type=Path, nargs=3, metavar=('RELAY', 'SERVER_LOG', 'CAPTURE'))
     parser.add_argument('--raster-tile', action='store_true', help='Verify one zoom-zero synthetic raster tile')
+    parser.add_argument('--offline-pack', action='store_true', help='Store the synthetic raster region without opening a map')
+    parser.add_argument('--fixture-apk-sha256', help='Verified hash of a separately signed pack fixture APK')
     args = parser.parse_args()
     if args.fixture_apk and not args.probe_adb:
         parser.error('--fixture-apk requires --probe-adb')
@@ -209,10 +214,15 @@ if __name__ == '__main__':
         parser.error('--render-fixture requires --fixture-apk')
     if args.raster_tile and not args.render_fixture:
         parser.error('--raster-tile requires --render-fixture')
+    if args.offline_pack != bool(args.fixture_apk_sha256) or (args.offline_pack and not args.raster_tile):
+        parser.error('--offline-pack requires --raster-tile and --fixture-apk-sha256')
+    if args.fixture_apk_sha256 and not re.fullmatch(r'[0-9a-f]{64}', args.fixture_apk_sha256):
+        parser.error('Expected a lowercase SHA-256 digest')
     try:
         result = with_volume(size=BOOT_VOLUME, volume_check=lambda root: boot(
             root, args.sdk_root.resolve(strict=True), probe_adb=args.probe_adb, fixture_apk=args.fixture_apk,
-            render_inputs=args.render_fixture, raster_tile=args.raster_tile))
+            render_inputs=args.render_fixture, raster_tile=args.raster_tile, offline_pack=args.offline_pack,
+            expected_hash=args.fixture_apk_sha256 or FIXTURE_APK_SHA256))
         print(json.dumps(result, sort_keys=True))
         check = result['volumeCheck']
         passed = boot_completed(check)
@@ -221,7 +231,7 @@ if __name__ == '__main__':
         if args.fixture_apk:
             passed = passed and check['apkInstalled']
         if args.render_fixture:
-            passed = passed and 'fixtureRender' in check
+            passed = passed and ('fixturePack' if args.offline_pack else 'fixtureRender') in check
         sys.exit(0 if passed else 2)
     except (ComponentError, OSError, ValueError, KeyError) as error:
         sys.exit(f'Isolated Android boot attempt failed: {error}')

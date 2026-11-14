@@ -2,6 +2,14 @@
 
 마지막 갱신: 2026-11-14, Asia/Seoul.
 
+## 11월 14일 P3-02 후속: Android 합성 오프라인 팩 저장
+
+보관 APK의 DEX에는 MapLibre 13.6.1 오프라인 API가 있었지만 시험 앱 진입점에서 호출하지 않았습니다. 별도 팩 시험 분기를 추가하고 같은 SDK·인증서로 서명 APK를 빌드했습니다. `assembleDebug` 35개 작업, 서명·ABI·네이티브 라이브러리 해시·인증서 확인이 통과했습니다. 보관 APK SHA-256은 `bc2951ce2c0ed574c411149c4b8f7cbe6e88d657a92c6e3248b29115539a3947`입니다. [MapLibre 오프라인 지역 API](https://maplibre.org/maplibre-native/android/api/-map-libre%20-native%20-android/org.maplibre.android.offline/-offline-manager/create-offline-region.html)
+
+전용 10GiB API 37 에뮬레이터에서 APK를 설치하고 설치본 해시를 대조했습니다. 지도 뷰를 만들지 않고 빈 저장소에서 줌 0 팩 하나를 다운로드했습니다. 같은 프로세스의 SDK 데이터베이스 재조회에서 팩 ID 1과 메타데이터, 완료 리소스 2개·타일 1개·필요 리소스 2개가 일치했습니다. 합성 서버는 스타일 370바이트와 PNG 타일 1,880바이트를 각 한 번 반환했고 장부는 스타일과 타일 각 한 건으로 8,192바이트를 예약했습니다. SDK 저장량은 전체 343바이트, 타일 121바이트로 보고됐습니다. 원문은 Git 제외 `docs/test-results/android-map-transport-20261114-checkpoint/pack.TS6dpC/`에 있습니다.
+
+Android 준비 131개와 수집 38개를 통과했습니다. 공유 한도 잔여 17%에서 실행 중인 항목만 마쳤습니다. 시험 볼륨과 서버를 종료했고 중복 APK와 이번에 만든 전용 Gradle 캐시 약 525MiB를 정리했습니다. 프로세스 재시작, 네트워크 없이 저장 팩 렌더링, SQLite 행 직접 대조, OS 수신량, 실제 공급원, 실기기와 Release는 미실행입니다.
+
 ## 11월 14일 P3-02 후속: 합성 래스터 타일 한 장 요청과 렌더링
 
 보관한 서명 APK의 기존 요청 정책이 `/resource/tile/0_0_0`을 허용해 APK를 새로 빌드하지 않았습니다. 합성 HTTPS 서버와 중계기, 캡처 대조기에 래스터 시험을 추가했습니다. Mac 루프백 검사에서 512×512 PNG의 색을 확인했고 다른 타일 경로는 404였습니다. 새 중계 JAR은 같은 도구로 다시 빌드해 바이트 일치를 확인했습니다.

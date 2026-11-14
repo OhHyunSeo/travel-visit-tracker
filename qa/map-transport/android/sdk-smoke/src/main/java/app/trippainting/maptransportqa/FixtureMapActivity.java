@@ -28,6 +28,10 @@ public final class FixtureMapActivity extends Activity {
       setContentView(failed);
       return;
     }
+    if (getIntent().getBooleanExtra("fixture-offline-pack", false)) {
+      FixtureOfflinePack.start(this, app.styleUrl());
+      return;
+    }
     mapView = new MapView(this);
     mapView.onCreate(state);
     mapView.addOnDidFinishRenderingFrameListener(renderedFrame);

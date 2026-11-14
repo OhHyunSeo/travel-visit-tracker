@@ -77,7 +77,7 @@ def check_transport_logs(capture, port, *, raster_tile=False):
     return style_bytes, tile_bytes, int(forwarded[1])
 
 
-def check_app_log(log, pid, require_render_event, *, raster_tile=False):
+def fixture_messages(log, pid):
     messages = []
     for line in log.decode().splitlines():
         if "TripMapSdkFixture:" not in line:
@@ -86,6 +86,29 @@ def check_app_log(log, pid, require_render_event, *, raster_tile=False):
         if not match or int(match[1]) != pid or match[2] != "I":
             raise ValueError("App capture includes a failed or unexpected fixture log")
         messages.append(match[3])
+    return messages
+
+
+def check_pack_log(log, pid):
+    messages = fixture_messages(log, pid)
+    if len(messages) != 4 or messages[0] != "TRANSPORT_READY":
+        raise ValueError("Offline pack startup or progress messages differ")
+    created = re.fullmatch(r"PACK_CREATED id=([1-9][0-9]*)", messages[1])
+    completed = re.fullmatch(
+        r"PACK_COMPLETED id=([1-9][0-9]*) resources=2 tiles=1 required=2 resourceBytes=([1-9][0-9]*) tileBytes=([1-9][0-9]*)",
+        messages[2],
+    )
+    if not created or not completed or created[1] != completed[1] or messages[3] != messages[2].replace("PACK_COMPLETED", "PACK_STORED", 1):
+        raise ValueError("Offline pack did not store the same completed style and tile")
+    pack_id, resource_bytes, tile_bytes = map(int, completed.groups())
+    if tile_bytes >= resource_bytes:
+        raise ValueError("Stored resource size must include the style and the tile")
+    return {"packId": pack_id, "completedResources": 2, "completedTiles": 1, "requiredResources": 2,
+            "storedResourceBytes": resource_bytes, "storedTileBytes": tile_bytes}
+
+
+def check_app_log(log, pid, require_render_event, *, raster_tile=False):
+    messages = fixture_messages(log, pid)
     style_messages = ["TRANSPORT_READY", f"STYLE_LOADED attempts=1 tiles=0 reserved={RESERVATION}"]
     if raster_tile:
         if len(messages) != 3 or messages[0] != "TRANSPORT_READY" or messages[2] != FRAME_EVENT or messages[1] not in (

@@ -167,6 +167,17 @@ Replay the saved capture with `verify_device_capture.py CAPTURE APK --pid PID
 two persisted reservations in order, the fixture's completed frame and the
 tile color in the foreground screenshot. The style-only invocation remains
 available for earlier captures.
+
+## Store one synthetic offline pack
+
+Build a fresh signed APK with `build-apk.sh` and check its digest and certificate
+with `verify-runtime-inputs.sh`. Use the raster server and relay with the same
+isolated boot command and add `--offline-pack --fixture-apk-sha256 DIGEST`.
+The fixture opens no map view. It starts with an empty offline region listing,
+downloads one zoom-zero region, then queries the same region ID, metadata and
+completed status again. The capture compares its two resources with two server
+responses and two on-device reservations. A process restart and cache-only
+render are separate checks.
 checks that the fixture is the sole resumed activity before and after the
 screenshot, verifies the PID again before saving screen or journal data, and
 writes only to a new private capture directory. It leaves partial evidence on
