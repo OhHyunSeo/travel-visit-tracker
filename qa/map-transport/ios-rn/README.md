@@ -1,0 +1,35 @@
+# React Native에서 지도 요청 확인하기
+
+작은 React Native 앱에서 실제 MapLibre 지도를 엽니다. 시작할 때 시험용 HTTPS 전송을 먼저 설정하고 MapLibre RN의 URL 변경 기능을 연결합니다. JavaScript는 첫 스타일 주소를 바꿉니다. 타일을 받은 뒤 지도 렌더 이벤트가 오면 빈 스타일을 한 번 더 요청합니다. 서버에서 바뀐 스타일, 타일 한 장, 빈 스타일 순서가 맞고 앱의 요청 장부와도 일치해야 통과입니다.
+
+기본 시험 `local-empty`는 제품 Expo 플러그인으로 등록한 Swift 코드와 번들의 빈 스타일 파일을 사용합니다. `--initial-style local-missing`은 같은 Swift 코드에 파일이 없는 시험 경로를 넘깁니다. 두 모드 모두 추가 외부 요청 없이 합성 HTTPS 세 건이 완료돼야 합니다. `--initial-style sdk-default`는 SDK 기본 스타일과 일치한 추가 요청 한 건이 전송 전에 차단되는지 확인하는 대조 시험입니다.
+
+MapLibre 6.31의 기본 스타일은 `maplibre://maps/style` 별칭입니다. SDK가 HTTP 요청으로 바꾸는 설정까지 대조해 기본 스타일 요청을 식별합니다. [지도 뷰 초기화](https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/platform/ios/src/MLNMapView.mm#L474), [기본 서버 설정](https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/src/mln/util/tile_server_options.cpp#L195)
+
+## Mac에서 실행
+
+기존 여행색칠 개발 환경의 Node 24.21.0, Ruby의 `xcodeproj`, 생성된 iOS Pods·코드와 이미 받은 MapLibre 패키지를 사용합니다. iPhone 17 / iOS 26.2 시뮬레이터 런타임이 필요합니다. 두 명령은 저장소 루트에서 실행합니다.
+
+```sh
+bash qa/map-transport/ios-rn/build-simulator.sh my-run
+python3 -B qa/map-transport/ios-rn/run-simulator.py \
+  qa/map-transport/ios-rn/.build/my-run/DerivedData/Build/Products/Debug-iphonesimulator/TripPainting.app \
+  docs/test-results/my-rn-map-run
+```
+
+다른 Ruby 설치를 사용한다면 첫 명령에 `TP_RN_RUBY`와 해당 설치의 `GEM_HOME`을 지정할 수 있습니다. 각 실행은 새 이름을 사용하세요. 빌드는 분리된 폴더와 `app.trippainting.rnmapqa` 식별자를 씁니다. 실행 도구는 전용 시뮬레이터를 만들어 127.0.0.1 합성 서버로 요청을 보낸 뒤 자신이 만든 시뮬레이터와 서버를 정리합니다. 보관하는 인증서는 공개 부분입니다.
+
+이 검사는 React Native 초기화, URL 변환, 렌더 이벤트와 시험용 HTTPS 경로를 확인합니다. 실기기, 여행색칠 제품 앱, HTTP/2와 오프라인 지도 저장은 별도 검사입니다.
+
+## iPhone 실기기에서 확인
+
+같은 소스를 개발용으로 서명합니다. 기존 여행색칠과 다른 앱 식별자를 씁니다. 시험 앱을 연결한 iPhone에 설치한 뒤, Mac과 iPhone을 같은 네트워크에 연결하고 iPhone의 잠금을 해제합니다.
+
+```sh
+APPLE_TEAM_ID="$QA_TEAM" bash qa/map-transport/ios-rn/build-ios.sh iphoneos my-device-run
+python3 -B qa/map-transport/ios-rn/capture-device.py \
+  --device "$QA_DEVICE" --origin "$QA_ORIGIN" --certificate "$QA_LEAF_DER" \
+  docs/test-results/my-rn-device-run
+```
+
+`QA_ORIGIN`은 새 [합성 서버](../fixture/sdk-server.mjs)를 실행해 얻은 Mac의 사설 HTTPS 주소입니다. 서버에 그 주소를 SAN으로 넣은 새 시험 인증서를 쓰고 공개 DER만 검사에 넘깁니다. capture 도구는 별도 시험 앱만 실행하고, 한 번의 실행에서 얻은 앱 장부와 서버 기록을 대조합니다. 개발자 신뢰와 로컬 네트워크 허용이 필요한 경우 iPhone 설정에서 시험 앱에만 적용하세요. 시험이 끝나면 이번에 설치한 시험 앱과 서버를 정리합니다.
