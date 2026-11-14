@@ -16,7 +16,7 @@ static BOOL TPTLSStage(NSString *stage) {
 }
 
 static BOOL TPCancellationStage(NSString *stage) {
-    return [@[@"cancel-retry", @"tls-cancel-retry"] containsObject:stage];
+    return [@[@"cancel-retry", @"tls-cancel-retry", @"offline-map-cancel-retry"] containsObject:stage];
 }
 
 static void TPWriteDocument(NSString *name, NSDictionary *value) {
@@ -114,6 +114,7 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
     NSString *scope = @"isolated MapLibre6.31.0 with actual RN11.5 native transform class; no JS/TurboModule bridge, TLS/HTTP2/provider/OS-byte acceptance";
     if ([self.stage isEqual:@"action-gate"]) scope = @"fixture URL delivery only; no SDK, transport, cancellation or reload acceptance";
     else if ([self.stage isEqual:@"offline-session-toggle"]) scope = @"isolated product guard with a live MapLibre-configured URLSession and an independent URLSession";
+    else if ([self.stage isEqual:@"offline-map-cancel-retry"]) scope = @"isolated product guard and SDK local style cancellation, blocked reload and explicit retry";
     else if ([self.stage isEqual:@"tls-cancel-retry"]) scope = @"isolated pinned HTTPS HTTP1 SDK style cancellation and manual reload";
     else if ([self.stage isEqual:@"tls-mixed"]) scope = @"isolated pinned HTTPS HTTP1 SDK style, tile, glyph and sprite requests";
     else if ([self.stage isEqual:@"tls-policy"]) scope = @"isolated pinned HTTPS SDK origin, path and redirect refusal";
@@ -175,9 +176,10 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
     TPRunDirectory = [documents URLByAppendingPathComponent:valid ? runID : @"invalid-input"];
     BOOL fresh = ![[NSFileManager defaultManager] fileExistsAtPath:TPRunDirectory.path];
     BOOL originOK = actionTrial ? !env[@"QA_SERVER_ORIGIN"] && !env[@"QA_TLS_LEAF_DER_BASE64"] : (tlsTrial ? [TPTransport safePrivateFixtureTLSOrigin:TPOrigin] && self.fixtureCertificate : [TPTransport safeOrigin:TPOrigin] && !env[@"QA_TLS_LEAF_DER_BASE64"]);
-    if (toggleTrial) originOK = originOK && [[NSURL URLWithString:TPOrigin].host isEqual:@"127.0.0.1"];
+    BOOL offlineCancellation = [self.stage isEqual:@"offline-map-cancel-retry"];
+    if (toggleTrial || offlineCancellation) originOK = originOK && [[NSURL URLWithString:TPOrigin].host isEqual:@"127.0.0.1"];
     BOOL signalsOK = usesActionGate ? self.actionGate != nil : !env[@"QA_FIXTURE_CANCEL_NONCE"] && !env[@"QA_FIXTURE_RELOAD_NONCE"];
-    BOOL supportedStage = tlsTrial || actionTrial || toggleTrial || [@[@"queue", @"cancel-retry"] containsObject:self.stage];
+    BOOL supportedStage = tlsTrial || actionTrial || toggleTrial || offlineCancellation || [@[@"queue", @"cancel-retry"] containsObject:self.stage];
     if (!valid || !fresh || !supportedStage || !originOK || !signalsOK || !policyOK || !packInputsOK) { TPRunDirectory = nil; [self finish:NO reason:@"unsafe or reused inputs"]; return; }
     if (![[NSFileManager defaultManager] createDirectoryAtURL:TPRunDirectory withIntermediateDirectories:YES attributes:nil error:nil]) { TPRunDirectory = nil; [self finish:NO reason:@"run directory not ready"]; return; }
     self.cases = [NSMutableArray new];
@@ -307,7 +309,7 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
     configuration.HTTPCookieStorage = nil; configuration.URLCredentialStorage = nil;
     configuration.HTTPShouldSetCookies = NO;
     network.sessionConfiguration = configuration;
-    if ([self.stage isEqual:@"tls-pack"] || self.blockPackNetwork) {
+    if ([self.stage isEqual:@"tls-pack"] || self.blockPackNetwork || [self.stage isEqual:@"offline-map-cancel-retry"]) {
         NSURL *localDirectory = NSBundle.mainBundle.bundleURL;
         if (![TripPaintingMapBootstrap configureInDirectory:localDirectory]) {
             [self finish:NO reason:@"product startup did not select a local style"]; return;
@@ -580,6 +582,7 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
 }
 - (void)inspectCancellation {
     if (self.controlBusy) return;
+    BOOL offlineGuard = [self.stage isEqual:@"offline-map-cancel-retry"];
     NSDictionary *native = TPTransport.snapshot;
     if (![native[@"ledgerOK"] isEqual:@YES] || [native[@"maxActive"] integerValue] > 4 || ![native[@"blockedBeforeDispatch"] isEqual:@0]) { [self finish:NO reason:@"cancel trial native gate failed"]; return; }
     if (self.phase == 10 && self.styleLoaded && [native[@"active"] isEqual:@4] && [native[@"pending"] integerValue] >= 1) {
@@ -591,6 +594,7 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
             // Load local JSON: a remote empty style would queue behind held tiles.
             // Only the SDK's style change cancels work; no task/transport cancel calls.
             self.phase = 11; self.styleLoaded = NO; self.fullyRendered = NO;
+            if (offlineGuard) [TripPaintingMapBootstrap setOfflineMapRequestsBlocked:YES];
             self.map.styleJSON = TPEmptyStyleJSON;
         }];
     } else if (self.phase == 11 && self.styleLoaded && [self idleNative:native] && [native[@"cancelledActive"] integerValue] >= 1 && [native[@"cancelledPending"] integerValue] >= 1) {
@@ -608,6 +612,11 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
             if (closed != 4 || [current[@"ledger"][@"reservedBytes"] unsignedIntegerValue] < [self.waitingSnapshot[@"ledger"][@"reservedBytes"] unsignedIntegerValue]) { [self finish:NO reason:@"cancel refunded charge or lost held requests"]; return; }
             self.cancelledSnapshot = current; self.cancelledServer = server;
             [self.cases addObject:@{@"name": @"SDK style change cancels active and pending requests", @"pass": @YES, @"native": current, @"waitingSnapshot": self.waitingSnapshot, @"waitingServer": self.waitingServer, @"serverAfterCancel": server, @"localEmptyStyleLoaded": @YES, @"emptyStyleEvidence": self.emptyStyleEvidence}];
+            if (offlineGuard) {
+                self.phase = 14;
+                self.map.styleURL = [NSURL URLWithString:[TPOrigin stringByAppendingString:@"/resource/style/empty"]];
+                return;
+            }
             self.phase = 12;
             [self control:@"/release-held" completion:^(NSDictionary *released) {
                 if (![released[@"heldReleased"] isEqual:@YES] || ![released[@"releasedOpenBodies"] isEqual:@0]) { [self finish:NO reason:@"release revived an old response"]; return; }
@@ -636,6 +645,30 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
             [self finish:MLNNetworkConfiguration.sharedManager.delegate == self.transform reason:@"SDK style cancellation and manual same-path reload completed"];
         }];
     }
+}
+- (void)mapViewDidFailLoadingMap:(MLNMapView *)mapView withError:(NSError *)error {
+    if (![self.stage isEqual:@"offline-map-cancel-retry"] || self.phase != 14 || self.finishing) return;
+    if (![mapView.styleURL.path isEqual:@"/resource/style/empty"] || !error) {
+        [self finish:NO reason:@"unexpected offline style failure"]; return;
+    }
+    self.phase = 15;
+    [self control:@"/stats" completion:^(NSDictionary *server) {
+        NSDictionary *current = TPTransport.snapshot;
+        if (![server isEqual:self.cancelledServer] || ![current isEqual:self.cancelledSnapshot]) {
+            [self finish:NO reason:@"the blocked map style reached transport"]; return;
+        }
+        [self.cases addObject:@{@"name": @"new SDK style request refused with the guard on", @"pass": @YES,
+            @"domain": error.domain, @"code": @(error.code), @"native": current, @"server": server}];
+        [self control:@"/release-held" completion:^(NSDictionary *released) {
+            if (![released[@"heldReleased"] isEqual:@YES] || ![released[@"releasedOpenBodies"] isEqual:@0]) {
+                [self finish:NO reason:@"release revived an old response"]; return;
+            }
+            self.releaseControl = released;
+            self.phase = 13; self.styleLoaded = NO; self.fullyRendered = NO;
+            [TripPaintingMapBootstrap setOfflineMapRequestsBlocked:NO];
+            self.map.styleURL = [NSURL URLWithString:[TPOrigin stringByAppendingString:@"/resource/style/held"]];
+        }];
+    }];
 }
 - (void)inspectTLSCancellation:(NSDictionary *)native {
     NSDictionary *ledger = native[@"ledger"];
@@ -722,7 +755,7 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
 }
 - (void)inspectProgress {
     if (self.finishing) return;
-    if ([self.stage isEqual:@"cancel-retry"]) { [self inspectCancellation]; return; }
+    if ([self.stage isEqual:@"cancel-retry"] || [self.stage isEqual:@"offline-map-cancel-retry"]) { [self inspectCancellation]; return; }
     NSDictionary *native = TPTransport.snapshot;
     if ([self.stage isEqual:@"tls-mixed"]) { [self inspectTLSMixed:native]; return; }
     if ([self.stage isEqual:@"tls-policy"]) { [self inspectTLSPolicy:native]; return; }
