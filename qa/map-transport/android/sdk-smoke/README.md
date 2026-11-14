@@ -152,6 +152,21 @@ callback checks identity before and after each command, enforces stdout and
 stderr limits and a deadline, and fails on a nonzero exit. The collector
 compares the fixture package's installed `base.apk` hash before and after capture.
 It rejects split or unrelated APK paths.
+
+## Verify one synthetic raster tile
+
+The same signed smoke APK accepts `/resource/tile/0_0_0`. Start
+`FixtureStyleServer.java` with its PKCS#12 path, the APK's port, and `--raster-tile`.
+Build a new relay with `build-relay.sh` and use the cold boot component with
+`--probe-adb --fixture-apk` and `--render-fixture RELAY SERVER_LOG CAPTURE --raster-tile`.
+The relay handles two connections under one deadline. The server sends a
+localhost-only raster style and a 512×512 PNG for the single zoom-zero tile.
+
+Replay the saved capture with `verify_device_capture.py CAPTURE APK --pid PID
+--raster-tile`. The verifier requires the exact style and tile request sequence,
+two persisted reservations in order, the fixture's completed frame and the
+tile color in the foreground screenshot. The style-only invocation remains
+available for earlier captures.
 checks that the fixture is the sole resumed activity before and after the
 screenshot, verifies the PID again before saving screen or journal data, and
 writes only to a new private capture directory. It leaves partial evidence on

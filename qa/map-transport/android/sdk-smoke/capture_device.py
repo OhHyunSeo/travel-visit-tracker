@@ -52,7 +52,7 @@ def write_capture(path, content):
         target.write(content)
 
 
-def collect(command, destination, apk, server_log, relay_log, *, expected_apk_sha256):
+def collect(command, destination, apk, server_log, relay_log, *, expected_apk_sha256, raster_tile=False):
     """Use command(max_output_bytes, *adb_args) with a pinned, admitted transport.
 
     The caller supplies a read-only transport that fails on nonzero exit,
@@ -70,13 +70,13 @@ def collect(command, destination, apk, server_log, relay_log, *, expected_apk_sh
     destination.mkdir(mode=0o700)
     write_capture(destination / "server.log", server_log)
     write_capture(destination / "relay.log", relay_log)
-    check_transport_logs(destination, port)
+    check_transport_logs(destination, port, raster_tile=raster_tile)
 
     installed = check_installed_apk(command, apk_hash)
     pid = running_pid(command)
     log = command(LOG_LIMIT, "logcat", "-d", "--pid", str(pid), "-v", "threadtime", "-s", "TripMapSdkFixture:V", "*:S")
     write_capture(destination / "app.log", log)
-    check_app_log(log, pid, require_render_event=True)
+    check_app_log(log, pid, require_render_event=True, raster_tile=raster_tile)
     require_foreground(command)
     frame = command(PNG_LIMIT, "exec-out", "screencap", "-p")
     require_foreground(command)
@@ -84,13 +84,14 @@ def collect(command, destination, apk, server_log, relay_log, *, expected_apk_sh
         raise ValueError("Fixture PID changed during screen capture")
     write_capture(destination / "screen.png", frame)
 
-    journal = command(JOURNAL_HEADER.size + JOURNAL_RECORD.size, "exec-out", "run-as", PACKAGE, "cat", JOURNAL)
+    journal_size = JOURNAL_HEADER.size + JOURNAL_RECORD.size * (2 if raster_tile else 1)
+    journal = command(journal_size, "exec-out", "run-as", PACKAGE, "cat", JOURNAL)
     if running_pid(command) != pid:
         raise ValueError("Fixture PID changed during journal capture")
     write_capture(destination / "budget.journal", journal)
     if check_installed_apk(command, apk_hash) != installed or running_pid(command) != pid:
         raise ValueError("Installed fixture APK or PID changed during capture")
-    result = verify(destination, apk, pid, require_render_event=True)
+    result = verify(destination, apk, pid, require_render_event=True, raster_tile=raster_tile)
     if result["apkSha256"] != apk_hash:
         raise ValueError("Fixture APK changed during capture")
     result["installedApkSha256"] = apk_hash

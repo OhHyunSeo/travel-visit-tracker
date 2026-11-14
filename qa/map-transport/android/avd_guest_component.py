@@ -19,6 +19,7 @@ FIXTURE_APK_SHA256 = '24dc68cfb9d213e2da83afbe297577f7d73bc408cf0484589b7711ab93
 FIXTURE_APK_SIZE = 19_438_330
 FIXTURE_RELAY_PATH = '/data/local/tmp/trip-map-transport-relay.jar'
 FIXTURE_RELAY_SHA256 = 'b01869854c2fdc4905c7b28af95af2da7f0c6ca39088e011d7ec4ece63516968'
+RASTER_RELAY_SHA256 = '9bf441df427e903309f459f917f802b8d31c612ccf33c789282fd3f941a02b94'
 
 
 def receive_exact(connection, length):
@@ -208,9 +209,9 @@ def install_fixture(key_path, apk):
     return {**device, 'installedApkSha256': FIXTURE_APK_SHA256}
 
 
-def render_fixture(key_path, apk, relay, server_log, destination):
+def render_fixture(key_path, apk, relay, server_log, destination, *, raster_tile=False):
     sys.path.append(str(Path(__file__).with_name('sdk-smoke')))
-    from capture_device import ACTIVITY, collect, running_pid
+    from capture_device import ACTIVITY, collect, running_pid, write_capture
     from verify_device_capture import LOG_LIMIT, read_apk
 
     port, apk_hash = read_apk(apk)
@@ -218,7 +219,8 @@ def render_fixture(key_path, apk, relay, server_log, destination):
         raise ValueError('Unexpected fixture APK or relay')
     with relay.open('rb') as stream:
         relay_data = stream.read(16_385)
-    if sha256(relay_data).hexdigest() != FIXTURE_RELAY_SHA256:
+    relay_hash = RASTER_RELAY_SHA256 if raster_tile else FIXTURE_RELAY_SHA256
+    if sha256(relay_data).hexdigest() != relay_hash:
         raise ValueError('Fixture relay hash changed')
     expected = f'STYLE_SERVER_READY port={port}\n'.encode('ascii')
     if server_log.is_symlink() or not server_log.is_file() or server_log.stat().st_size != len(expected) or server_log.read_bytes() != expected:
@@ -230,14 +232,15 @@ def render_fixture(key_path, apk, relay, server_log, destination):
     stage = (f'umask 077; head -c {len(relay_data)} > {FIXTURE_RELAY_PATH} && '
              f'chmod 400 {FIXTURE_RELAY_PATH} && sha256sum {FIXTURE_RELAY_PATH}')
     reply = guest_command(key_path, 512, 'exec-out', 'sh', '-c', stage, input_data=relay_data)
-    expected_relay = f'{FIXTURE_RELAY_SHA256}  {FIXTURE_RELAY_PATH}'.encode('ascii')
+    expected_relay = f'{relay_hash}  {FIXTURE_RELAY_PATH}'.encode('ascii')
     if reply.strip() != expected_relay:
         raise ValueError('Guest relay hash does not match the staged file')
 
+    relay_arguments = [str(port), '--raster-tile'] if raster_tile else [str(port)]
     with ThreadPoolExecutor(max_workers=1) as executor:
         relay_task = executor.submit(
             guest_command, key_path, LOG_LIMIT, 'shell', 'env', f'CLASSPATH={FIXTURE_RELAY_PATH}',
-            'app_process', '/system/bin', 'FixtureLoopbackRelay', str(port), timeout=40,
+            'app_process', '/system/bin', 'FixtureLoopbackRelay', *relay_arguments, timeout=40,
         )
         time.sleep(2)
         if relay_task.done():
@@ -247,6 +250,13 @@ def render_fixture(key_path, apk, relay, server_log, destination):
             raise ValueError('Guest fixture activity did not start')
         relay_output = relay_task.result()
         if b'RELAY_COMPLETE ' not in relay_output:
+            if raster_tile:
+                destination.mkdir(mode=0o700)
+                write_capture(destination / 'relay.log', relay_output)
+                pid = running_pid(command)
+                app_log = command(LOG_LIMIT, 'logcat', '-d', '--pid', str(pid), '-v', 'threadtime',
+                                  '-s', 'TripMapSdkFixture:V', '*:S')
+                write_capture(destination / 'app.log', app_log)
             raise ValueError(f'Guest relay did not complete: {relay_output.decode(errors="replace")[:500]}')
     pid = running_pid(command)
     deadline = time.monotonic() + 18
@@ -254,6 +264,6 @@ def render_fixture(key_path, apk, relay, server_log, destination):
         app = command(LOG_LIMIT, 'logcat', '-d', '--pid', str(pid), '-v', 'threadtime', '-s', 'TripMapSdkFixture:V', '*:S')
         if b'FRAME_RENDERED fully=true' in app:
             return collect(command, destination, apk, server_log.read_bytes(), relay_output,
-                           expected_apk_sha256=FIXTURE_APK_SHA256)
+                           expected_apk_sha256=FIXTURE_APK_SHA256, raster_tile=raster_tile)
         time.sleep(1)
     raise ValueError('Guest fixture did not report a rendered map frame')

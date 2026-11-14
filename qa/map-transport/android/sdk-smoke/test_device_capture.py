@@ -8,7 +8,7 @@ from zipfile import ZipFile
 
 from PIL import Image
 
-from verify_device_capture import verify
+from verify_device_capture import JOURNAL_RECORD, verify
 
 
 PORT = 39443
@@ -111,6 +111,46 @@ class CaptureTest(unittest.TestCase):
             fixture.writestr("assets/fixture-port", "40123")
         with self.assertRaisesRegex(ValueError, "one matching fixture"):
             verify(self.root, self.apk, PID)
+
+    def prepare_raster_capture(self):
+        (self.root / "server.log").write_text(
+            f"STYLE_SERVER_READY port={PORT}\nSERVED_STYLE bytes=370\n"
+            "SERVED_TILE path=/resource/tile/0_0_0 bytes=1880\n")
+        (self.root / "relay.log").write_text(f"RELAY_READY port={PORT}\nRELAY_COMPLETE connections=2 forwarded=5982\n")
+        (self.root / "app.log").write_text(APP_READY + APP_STYLE + APP_FRAME)
+        with self.journal.open("ab") as journal:
+            journal.write(checked(struct.pack(">IIQI", 2, 1, 8192, 1)))
+        Image.new("RGB", (100, 100), (217, 93, 47)).save(self.screen)
+
+    def test_accepts_raster_tile_only_with_matching_evidence(self):
+        self.prepare_raster_capture()
+        result = verify(self.root, self.apk, PID, raster_tile=True)
+        self.assertEqual((result["tilePath"], result["tileAttempts"], result["tileBodyBytes"]),
+                         ("/resource/tile/0_0_0", 1, 1880))
+        self.assertEqual(result["reservedBodyBytes"], 8192)
+
+    def test_rejects_background_frame_after_tile_response(self):
+        self.prepare_raster_capture()
+        Image.new("RGB", (100, 100), (23, 120, 120)).save(self.screen)
+        with self.assertRaisesRegex(ValueError, "synthetic raster tile"):
+            verify(self.root, self.apk, PID, raster_tile=True)
+
+    def test_rejects_another_tile_path_or_duplicate_response(self):
+        self.prepare_raster_capture()
+        server = self.root / "server.log"
+        expected = server.read_text()
+        for invalid in (expected.replace("0_0_0", "1_0_0"), expected + expected.splitlines()[-1] + "\n"):
+            with self.subTest(output=invalid):
+                server.write_text(invalid)
+                with self.assertRaisesRegex(ValueError, "tile"):
+                    verify(self.root, self.apk, PID, raster_tile=True)
+
+    def test_rejects_second_style_reservation_in_place_of_tile(self):
+        self.prepare_raster_capture()
+        header_and_style = self.journal.read_bytes()[:-JOURNAL_RECORD.size]
+        self.journal.write_bytes(header_and_style + checked(struct.pack(">IIQI", 2, 0, 8192, 0)))
+        with self.assertRaisesRegex(ValueError, "tile reservation"):
+            verify(self.root, self.apk, PID, raster_tile=True)
 
 
 if __name__ == "__main__":

@@ -12,31 +12,44 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
-/** Relays one synthetic TLS connection without terminating TLS in the guest. */
+/** Relays up to two synthetic TLS connections without terminating TLS in the guest. */
 public final class FixtureLoopbackRelay {
   static final int DIRECTION_LIMIT = 65_536;
 
   public static void main(String[] args) throws IOException, InterruptedException {
-    if (args.length != 1 || !args[0].matches("[1-9][0-9]{3,4}")) {
-      throw new IllegalArgumentException("Usage: FixtureLoopbackRelay <fixture port>");
+    if ((args.length != 1 && !(args.length == 2 && "--raster-tile".equals(args[1])))
+        || !args[0].matches("[1-9][0-9]{3,4}")) {
+      throw new IllegalArgumentException("Usage: FixtureLoopbackRelay <fixture port> [--raster-tile]");
     }
     int port = Integer.parseInt(args[0]);
     if (port < 1024 || port > 65535) throw new IllegalArgumentException("Invalid fixture port");
     try (ServerSocket listener = new ServerSocket()) {
       listener.bind(new InetSocketAddress("127.0.0.1", port), 1);
       System.out.println("RELAY_READY port=" + port);
-      int bytes = relayOnce(listener, new InetSocketAddress("10.0.2.2", port), 30_000);
-      System.out.println("RELAY_COMPLETE forwarded=" + bytes);
+      InetSocketAddress upstream = new InetSocketAddress("10.0.2.2", port);
+      if (args.length == 1) {
+        System.out.println("RELAY_COMPLETE forwarded=" + relayOnce(listener, upstream, 30_000));
+      } else {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        int bytes = relayConnection(listener, upstream, deadline, false);
+        bytes += relayConnection(listener, upstream, deadline, true);
+        System.out.println("RELAY_COMPLETE connections=2 forwarded=" + bytes);
+      }
     }
   }
 
   static int relayOnce(ServerSocket listener, InetSocketAddress target, int timeoutMillis)
       throws IOException, InterruptedException {
     long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+    return relayConnection(listener, target, deadline, true);
+  }
+
+  private static int relayConnection(ServerSocket listener, InetSocketAddress target, long deadline, boolean last)
+      throws IOException, InterruptedException {
     listener.setSoTimeout(remainingMillis(deadline));
     ExecutorService workers = Executors.newFixedThreadPool(2);
     try (Socket client = listener.accept(); Socket upstream = new Socket()) {
-      listener.close();
+      if (last) listener.close();
       upstream.connect(target, Math.min(2_000, remainingMillis(deadline)));
       ExecutorCompletionService<Integer> transfers = new ExecutorCompletionService<>(workers);
       transfers.submit(() -> copy(client, upstream));

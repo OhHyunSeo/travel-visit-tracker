@@ -1,6 +1,8 @@
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -8,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
 import java.util.List;
+import javax.imageio.ImageIO;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 
@@ -19,18 +22,25 @@ public final class FixtureStyleServer {
       .getBytes(StandardCharsets.UTF_8);
 
   public static void main(String[] args) throws Exception {
-    if (args.length != 2 || !args[1].matches("[1-9][0-9]{3,4}")) {
-      throw new IllegalArgumentException("Usage: java FixtureStyleServer.java <fixture.p12> <port>");
+    if ((args.length != 2 && !(args.length == 3 && "--raster-tile".equals(args[2])))
+        || !args[1].matches("[1-9][0-9]{3,4}")) {
+      throw new IllegalArgumentException("Usage: java FixtureStyleServer.java <fixture.p12> <port> [--raster-tile]");
     }
     int port = Integer.parseInt(args[1]);
     if (port < 1024 || port > 65535) throw new IllegalArgumentException("Invalid fixture port");
-    HttpsServer server = bind(Path.of(args[0]), port);
+    HttpsServer server = bind(Path.of(args[0]), port, args.length == 3);
     Runtime.getRuntime().addShutdownHook(new Thread(() -> server.stop(0)));
     server.start();
     System.out.println("STYLE_SERVER_READY port=" + port);
   }
 
   static HttpsServer bind(Path keyStore, int port) throws Exception {
+    return bind(keyStore, port, false);
+  }
+
+  private static HttpsServer bind(Path keyStore, int port, boolean raster) throws Exception {
+    byte[] style = raster ? rasterStyle(port) : STYLE;
+    byte[] tile = raster ? rasterTile() : null;
     char[] password = "fixture-only-password".toCharArray();
     KeyStore keys = KeyStore.getInstance("PKCS12");
     try (InputStream input = Files.newInputStream(keyStore)) {
@@ -46,7 +56,9 @@ public final class FixtureStyleServer {
     server.createContext("/", exchange -> {
       try {
         exchange.getResponseHeaders().set("Connection", "close");
-        if (!"/resource/style/sdk".equals(exchange.getRequestURI().toASCIIString())) {
+        String path = exchange.getRequestURI().toASCIIString();
+        boolean tileRequest = raster && "/resource/tile/0_0_0".equals(path);
+        if (!"/resource/style/sdk".equals(path) && !tileRequest) {
           System.out.println("REJECTED_STYLE reason=path");
           exchange.sendResponseHeaders(404, -1);
           return;
@@ -66,15 +78,39 @@ public final class FixtureStyleServer {
           exchange.sendResponseHeaders(400, -1);
           return;
         }
-        exchange.getResponseHeaders().set("Content-Type", "application/json");
-        exchange.getResponseHeaders().set("Cache-Control", "no-store");
-        exchange.sendResponseHeaders(200, STYLE.length);
-        exchange.getResponseBody().write(STYLE);
-        System.out.println("SERVED_STYLE bytes=" + STYLE.length);
+        byte[] body = tileRequest ? tile : style;
+        exchange.getResponseHeaders().set("Content-Type", tileRequest ? "image/png" : "application/json");
+        exchange.getResponseHeaders().set("Cache-Control", raster ? "max-age=300" : "no-store");
+        exchange.sendResponseHeaders(200, body.length);
+        exchange.getResponseBody().write(body);
+        String resource = tileRequest ? "TILE path=/resource/tile/0_0_0" : "STYLE";
+        System.out.println("SERVED_" + resource + " bytes=" + body.length);
       } finally {
         exchange.close();
       }
     });
     return server;
+  }
+
+  private static byte[] rasterStyle(int port) {
+    return ("{\"version\":8,\"center\":[0,0],\"zoom\":0,\"sources\":{\"fixture\":{\"type\":\"raster\","
+        + "\"tiles\":[\"https://127.0.0.1:" + port + "/resource/tile/{z}_{x}_{y}\"],\"tileSize\":512,\"minzoom\":0,\"maxzoom\":0}},"
+        + "\"layers\":[{\"id\":\"fixture-background\",\"type\":\"background\",\"paint\":{\"background-color\":\"#177878\"}},"
+        + "{\"id\":\"fixture-raster\",\"type\":\"raster\",\"source\":\"fixture\",\"paint\":{\"raster-fade-duration\":0}}]}")
+        .getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static byte[] rasterTile() throws Exception {
+    BufferedImage image = new BufferedImage(512, 512, BufferedImage.TYPE_INT_RGB);
+    var graphics = image.createGraphics();
+    try {
+      graphics.setColor(new java.awt.Color(217, 93, 47));
+      graphics.fillRect(0, 0, 512, 512);
+    } finally {
+      graphics.dispose();
+    }
+    ByteArrayOutputStream output = new ByteArrayOutputStream();
+    if (!ImageIO.write(image, "png", output)) throw new IllegalStateException("PNG writer unavailable");
+    return output.toByteArray();
   }
 }

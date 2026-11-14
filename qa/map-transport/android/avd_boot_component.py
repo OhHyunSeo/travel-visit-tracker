@@ -68,13 +68,14 @@ def boot_marker_exists(marker):
         return False
 
 
-def boot(root, sdk, *, probe_adb=False, fixture_apk=None, render_inputs=None):
+def boot(root, sdk, *, probe_adb=False, fixture_apk=None, render_inputs=None, raster_tile=False):
     launcher = pinned(sdk / 'emulator/emulator', EMULATOR_SHA256)
     headless = pinned(sdk / 'emulator/qemu/darwin-aarch64/qemu-system-aarch64-headless', HEADLESS_SHA256)
     name = 'TripPaintingMapTransportQA_' + uuid.uuid4().hex[:12]
     avd = prepare_config(root, sdk, name)
     with (avd / 'config.ini').open('a') as config:
-        config.write('hw.cpu.ncore=2\nhw.ramSize=2048\nhw.lcd.width=720\nhw.lcd.height=1280\n'
+        ram_mib = 3072 if raster_tile else 2048
+        config.write(f'hw.cpu.ncore=2\nhw.ramSize={ram_mib}\nhw.lcd.width=720\nhw.lcd.height=1280\n'
                      'hw.lcd.density=320\nhw.gpu.enabled=yes\nPlayStore.enabled=true\n')
     for folder in ('android-user', 'android-config', 'tmp'):
         (root / folder).mkdir(mode=0o700)
@@ -167,7 +168,7 @@ def boot(root, sdk, *, probe_adb=False, fixture_apk=None, render_inputs=None):
                 result['fixtureInstallError'] = str(error)
         if render_inputs and result['apkInstalled']:
             try:
-                result['fixtureRender'] = render_fixture(adb_key, fixture_apk, *render_inputs)
+                result['fixtureRender'] = render_fixture(adb_key, fixture_apk, *render_inputs, raster_tile=raster_tile)
             except (EOFError, OSError, ValueError, subprocess.TimeoutExpired) as error:
                 result['fixtureRenderError'] = str(error)
         with log_path.open('rb') as stream:
@@ -200,15 +201,18 @@ if __name__ == '__main__':
     parser.add_argument('--probe-adb', action='store_true', help='Read only the boot property over direct ADB')
     parser.add_argument('--fixture-apk', type=Path, help='Install the pinned test APK after the boot query')
     parser.add_argument('--render-fixture', type=Path, nargs=3, metavar=('RELAY', 'SERVER_LOG', 'CAPTURE'))
+    parser.add_argument('--raster-tile', action='store_true', help='Verify one zoom-zero synthetic raster tile')
     args = parser.parse_args()
     if args.fixture_apk and not args.probe_adb:
         parser.error('--fixture-apk requires --probe-adb')
     if args.render_fixture and not args.fixture_apk:
         parser.error('--render-fixture requires --fixture-apk')
+    if args.raster_tile and not args.render_fixture:
+        parser.error('--raster-tile requires --render-fixture')
     try:
         result = with_volume(size=BOOT_VOLUME, volume_check=lambda root: boot(
             root, args.sdk_root.resolve(strict=True), probe_adb=args.probe_adb, fixture_apk=args.fixture_apk,
-            render_inputs=args.render_fixture))
+            render_inputs=args.render_fixture, raster_tile=args.raster_tile))
         print(json.dumps(result, sort_keys=True))
         check = result['volumeCheck']
         passed = boot_completed(check)
