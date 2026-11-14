@@ -65,6 +65,7 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
 @property MLNOfflinePack *offlinePack;
 @property NSUInteger offlineErrors;
 @property NSString *priorPackRunID;
+@property NSString *replaceFailedPackRunID;
 @property BOOL expectPackRevalidation;
 @property BOOL blockPackNetwork;
 @property BOOL resumePackNetwork;
@@ -164,6 +165,7 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
     BOOL valid = runID && [pattern numberOfMatchesInString:runID options:0 range:NSMakeRange(0, runID.length)] == 1;
     BOOL reopening = [self.stage isEqual:@"tls-pack-reopen"];
     self.priorPackRunID = env[@"QA_PACK_RUN_ID"];
+    self.replaceFailedPackRunID = env[@"QA_PACK_REPLACE_FAILED_RUN_ID"];
     NSString *revalidation = env[@"QA_PACK_EXPECT_REVALIDATION"];
     NSString *blockNetwork = env[@"QA_PACK_BLOCK_NETWORK"];
     NSString *resumeNetwork = env[@"QA_PACK_RESUME_NETWORK"];
@@ -176,6 +178,10 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
     BOOL packOriginOK = allowPrivatePackOrigin ? [allowPrivatePackOrigin isEqual:@"1"] &&
         [TPTransport safePrivateFixtureTLSOrigin:TPOrigin] && self.fixtureCertificate != nil :
         [[NSURL URLWithString:TPOrigin ?: @""].host isEqual:@"127.0.0.1"];
+    BOOL replacementOK = !self.replaceFailedPackRunID || ([self.stage isEqual:@"tls-pack"] &&
+        ![self.replaceFailedPackRunID isEqual:runID] &&
+        [pattern numberOfMatchesInString:self.replaceFailedPackRunID options:0
+         range:NSMakeRange(0, self.replaceFailedPackRunID.length)] == 1);
     BOOL packInputsOK = reopening ? self.priorPackRunID.length && ![self.priorPackRunID isEqual:runID] && packOriginOK &&
         [pattern numberOfMatchesInString:self.priorPackRunID options:0 range:NSMakeRange(0, self.priorPackRunID.length)] == 1 &&
         (!revalidation || self.expectPackRevalidation) && (!blockNetwork || self.blockPackNetwork) &&
@@ -192,7 +198,7 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
     if (toggleTrial || offlineCancellation) originOK = originOK && [[NSURL URLWithString:TPOrigin].host isEqual:@"127.0.0.1"];
     BOOL signalsOK = usesActionGate ? self.actionGate != nil : !env[@"QA_FIXTURE_CANCEL_NONCE"] && !env[@"QA_FIXTURE_RELOAD_NONCE"];
     BOOL supportedStage = tlsTrial || actionTrial || toggleTrial || offlineCancellation || [@[@"queue", @"cancel-retry"] containsObject:self.stage];
-    if (!valid || !fresh || !supportedStage || !originOK || !signalsOK || !policyOK || !packInputsOK) { TPRunDirectory = nil; [self finish:NO reason:@"unsafe or reused inputs"]; return; }
+    if (!valid || !fresh || !supportedStage || !originOK || !signalsOK || !policyOK || !packInputsOK || !replacementOK) { TPRunDirectory = nil; [self finish:NO reason:@"unsafe or reused inputs"]; return; }
     if (![[NSFileManager defaultManager] createDirectoryAtURL:TPRunDirectory withIntermediateDirectories:YES attributes:nil error:nil]) { TPRunDirectory = nil; [self finish:NO reason:@"run directory not ready"]; return; }
     self.cases = [NSMutableArray new];
     if (usesActionGate) self.actionAttempts = [NSMutableArray new];
@@ -382,6 +388,57 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
 - (void)startOfflinePack {
     MLNOfflineStorage *storage = [self trialOfflineStorage];
     if (!storage) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 25 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        if (!self.finishing) [self finish:NO reason:@"offline pack trial deadline"];
+    });
+    self.timer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) {
+        if (!storage.packs) return;
+        [timer invalidate];
+        if (!self.replaceFailedPackRunID && storage.packs.count == 0) {
+            [self createOfflinePack:storage];
+            return;
+        }
+        [self replaceFailedOfflinePack:storage];
+    }];
+}
+- (void)replaceFailedOfflinePack:(MLNOfflineStorage *)storage {
+    MLNOfflinePack *old = storage.packs.firstObject;
+    NSURL *style = old.region.styleURL;
+    NSURLComponents *origin = style ? [NSURLComponents componentsWithURL:style resolvingAgainstBaseURL:NO] : nil;
+    origin.path = @"";
+    if (!self.replaceFailedPackRunID || storage.packs.count != 1 ||
+        ![old.context isEqual:[self.replaceFailedPackRunID dataUsingEncoding:NSUTF8StringEncoding]] ||
+        ![style.path isEqual:@"/resource/style/pack"] ||
+        ![TPTransport safePrivateFixtureTLSOrigin:origin.string]) {
+        [self finish:NO reason:@"existing trial pack must be preserved"];
+        return;
+    }
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(failedPackProgress:)
+                                               name:MLNOfflinePackProgressChangedNotification object:old];
+    [old requestProgress];
+}
+- (void)failedPackProgress:(NSNotification *)notification {
+    MLNOfflinePack *old = notification.object;
+    [NSNotificationCenter.defaultCenter removeObserver:self name:notification.name object:old];
+    if (self.finishing) return;
+    MLNOfflineStorage *storage = [self trialOfflineStorage];
+    if (!storage) return;
+    if (storage.packs.count != 1 || storage.packs.firstObject != old ||
+        old.state != MLNOfflinePackStateInactive || old.progress.countOfResourcesCompleted != 0 ||
+        old.progress.countOfTilesCompleted != 0 || old.progress.countOfBytesCompleted != 0) {
+        [self finish:NO reason:@"existing trial pack has stored resources"];
+        return;
+    }
+    [storage removePack:old withCompletionHandler:^(NSError *error) {
+        if (self.finishing) return;
+        if (error || storage.packs.count != 0) {
+            [self finish:NO reason:@"unable to remove the empty failed trial pack"];
+            return;
+        }
+        [self createOfflinePack:storage];
+    }];
+}
+- (void)createOfflinePack:(MLNOfflineStorage *)storage {
     NSURL *style = [NSURL URLWithString:[TPOrigin stringByAppendingString:@"/resource/style/pack"]];
     MLNCoordinateBounds bounds = MLNCoordinateBoundsMake(CLLocationCoordinate2DMake(1, 1), CLLocationCoordinate2DMake(2, 2));
     MLNTilePyramidOfflineRegion *region = [[MLNTilePyramidOfflineRegion alloc] initWithStyleURL:style bounds:bounds fromZoomLevel:0 toZoomLevel:0];
@@ -397,9 +454,6 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
         [pack resume];
         self.timer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) { [self inspectOfflinePack]; }];
     }];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 25 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        if (!self.finishing) [self finish:NO reason:@"offline pack trial deadline"];
-    });
 }
 - (void)reopenOfflinePack {
     MLNOfflineStorage *storage = [self trialOfflineStorage];
