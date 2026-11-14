@@ -98,29 +98,41 @@ def boot(root, sdk):
     command = [*prefix, '-p', profile]
     process = None
     log_path = root / 'emulator.log'
+    logcat_path = root / 'guest-logcat.log'
     result = {'outsideAccessDenied': True, 'guestKernelObserved': False, 'guestBootCompletedLog': False,
               'adbStarted': False, 'apkInstalled': False}
     try:
+        # Serial kernel output uses stdio. Give the virtio logcat console its own file.
+        logcat_path.touch(exist_ok=False)
         launch = [*command, launcher, '-avd', name, '-datadir', str(avd), '-port', '5560', '-no-window',
                   '-no-snapshot', '-no-audio', '-no-boot-anim', '-gpu', 'swiftshader', '-show-kernel',
-                  '-feature', '-Vulkan', '-no-metrics', '-logcat', '*:S ActivityManager:I']
+                  '-feature', '-Vulkan', '-no-metrics', '-logcat', '*:S ActivityManager:I',
+                  '-logcat-output', str(logcat_path)]
         with log_path.open('xb') as log, open(os.devnull, 'rb', buffering=0) as input_file:
             process = subprocess.Popen(launch, cwd=root, env=env, stdin=input_file, stdout=log, stderr=log,
                                        start_new_session=True)
-        deadline = time.monotonic() + 85
-        with log_path.open('rb') as output:
-            tail = b''
+        deadline = time.monotonic() + 150
+        with log_path.open('rb') as output, logcat_path.open('rb') as logcat:
+            kernel_tail = b''
+            logcat_tail = b''
             while time.monotonic() < deadline:
-                chunk = output.read(65_536)
-                combined = tail + chunk
-                result['guestKernelObserved'] |= b'Linux version ' in combined
-                result['guestBootCompletedLog'] |= b'ActivityManager: Finished booting' in combined
-                tail = combined[-256:]
-                if result['guestBootCompletedLog'] or (not chunk and process.poll() is not None):
+                kernel_chunk = output.read(65_536)
+                logcat_chunk = logcat.read(65_536)
+                kernel = kernel_tail + kernel_chunk
+                guest = logcat_tail + logcat_chunk
+                result['guestKernelObserved'] |= b'Linux version ' in kernel
+                result['guestBootCompletedLog'] |= b'ActivityManager: Finished booting' in guest
+                kernel_tail = kernel[-256:]
+                logcat_tail = guest[-256:]
+                has_output = kernel_chunk or logcat_chunk
+                if (result['guestKernelObserved'] and result['guestBootCompletedLog']) or (
+                    not has_output and process.poll() is not None
+                ):
                     break
-                if not chunk:
+                if not has_output:
                     time.sleep(.25)
         result['exitBeforeCleanup'] = process.poll()
+        result['guestLogcatBytes'] = logcat_path.stat().st_size
         with log_path.open('rb') as stream:
             stream.seek(max(0, os.fstat(stream.fileno()).st_size - 4000))
             result['emulatorLogTail'] = stream.read().decode(errors='replace').replace(str(root), '<qa-volume>')
@@ -145,6 +157,7 @@ if __name__ == '__main__':
     try:
         result = with_volume(size=BOOT_VOLUME, volume_check=lambda root: boot(root, args.sdk_root.resolve(strict=True)))
         print(json.dumps(result, sort_keys=True))
-        sys.exit(0 if result['volumeCheck']['guestBootCompletedLog'] else 2)
+        check = result['volumeCheck']
+        sys.exit(0 if check['guestKernelObserved'] and check['guestBootCompletedLog'] else 2)
     except (ComponentError, OSError, ValueError, KeyError) as error:
         sys.exit(f'Isolated Android boot attempt failed: {error}')
