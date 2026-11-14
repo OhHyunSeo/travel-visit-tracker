@@ -79,7 +79,7 @@ export function findBackgroundMapPack(
   packs: readonly { id: unknown; bounds: unknown; metadata: unknown }[],
   expected: BackgroundMapPackMetadata,
   recordedPackId?: string,
-): { kind: 'found'; packId: string } | { kind: 'missing' | 'conflict' } {
+): { kind: 'found'; packId: string } | { kind: 'missing' } | { kind: 'conflict' } {
   const plan = readBackgroundMapPlan(expected.plan);
   let match: string | undefined;
   for (const pack of packs) {

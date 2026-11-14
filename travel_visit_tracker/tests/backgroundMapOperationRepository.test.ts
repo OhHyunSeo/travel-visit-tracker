@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { regions } from '../src/data/regions';
 import { createBackgroundMapPackMetadata } from '../src/domain/backgroundMapPack';
 import { planBackgroundMap } from '../src/domain/backgroundMapPlan';
+import { recoverBackgroundMapOperation } from '../src/services/backgroundMapOperation';
 import { BackgroundMapOperationRepository } from '../src/storage/backgroundMapOperationRepository';
 import type { SqlConnection, SqlValue } from '../src/storage/repository';
 
@@ -101,5 +102,50 @@ describe('saved background map operation', () => {
     await expect(repository.current()).rejects.toThrow();
     expect(await repository.prepare(metadata)).toBe(false);
     expect(db.prepare('SELECT metadata FROM background_map_operation').get()?.metadata).toBe('{}');
+  });
+
+  it('recovers and binds an existing SDK pack without creating a second pack', async () => {
+    let reads = 0;
+    const list = async () => {
+      reads++;
+      return [{ id: packId, bounds: plan.bounds, metadata }];
+    };
+    expect(await recoverBackgroundMapOperation(repository, list)).toEqual({ kind: 'idle' });
+    expect(reads).toBe(0);
+    await repository.prepare(metadata);
+    expect(await recoverBackgroundMapOperation(repository, list)).toEqual({
+      kind: 'found',
+      packId,
+    });
+    expect(reads).toBe(1);
+    expect((await repository.current())?.packId).toBe(packId);
+  });
+
+  it('distinguishes work awaiting creation, a missing bound pack, and conflicting identities', async () => {
+    await repository.prepare(metadata);
+    expect(await recoverBackgroundMapOperation(repository, async () => [])).toEqual({
+      kind: 'awaiting-pack',
+    });
+    await repository.bindPack(metadata, packId);
+    expect(await recoverBackgroundMapOperation(repository, async () => [])).toEqual({
+      kind: 'missing-pack',
+      packId,
+    });
+    expect(
+      await recoverBackgroundMapOperation(repository, async () => [
+        { id: otherId, bounds: plan.bounds, metadata },
+      ]),
+    ).toEqual({ kind: 'conflict' });
+    expect((await repository.current())?.packId).toBe(packId);
+  });
+
+  it('reports a competing SDK ID binding without replacing it', async () => {
+    await repository.prepare(metadata);
+    const result = await recoverBackgroundMapOperation(repository, async () => {
+      await repository.bindPack(metadata, otherId);
+      return [{ id: packId, bounds: plan.bounds, metadata }];
+    });
+    expect(result).toEqual({ kind: 'conflict' });
+    expect((await repository.current())?.packId).toBe(otherId);
   });
 });
