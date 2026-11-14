@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import socket
 import subprocess
@@ -102,7 +103,7 @@ def boot(root, sdk):
     try:
         launch = [*command, launcher, '-avd', name, '-datadir', str(avd), '-port', '5560', '-no-window',
                   '-no-snapshot', '-no-audio', '-no-boot-anim', '-gpu', 'swiftshader', '-show-kernel',
-                  '-logcat', '*:S ActivityManager:I']
+                  '-feature', '-Vulkan', '-no-metrics', '-logcat', '*:S ActivityManager:I']
         with log_path.open('xb') as log, open(os.devnull, 'rb', buffering=0) as input_file:
             process = subprocess.Popen(launch, cwd=root, env=env, stdin=input_file, stdout=log, stderr=log,
                                        start_new_session=True)
@@ -123,6 +124,9 @@ def boot(root, sdk):
         with log_path.open('rb') as stream:
             stream.seek(max(0, os.fstat(stream.fileno()).st_size - 4000))
             result['emulatorLogTail'] = stream.read().decode(errors='replace').replace(str(root), '<qa-volume>')
+        result['emulatorLogTail'] = re.sub(
+            r'(?im)^(?:[^\n]*androidboot\.qemu\.adb\.pubkey=|[^\n]*Sending adb public key).+$',
+            '<test ADB public key omitted>', result['emulatorLogTail'])
         return result
     finally:
         if process is not None and process.poll() is None:

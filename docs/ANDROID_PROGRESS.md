@@ -8,6 +8,8 @@
 
 첫 ADB 준비는 홈 경로가 없어 실패했습니다. ADB 없는 별도 첫 부팅 시도에서는 SDK의 용량·시스템 검사까지 통과했으나 SwiftShader Vulkan ColorBuffer 초기화가 실패해 에뮬레이터가 종료됐습니다. 게스트 커널·부팅 완료 신호는 관측하지 못했습니다. 새 볼륨은 해제·삭제했고 기존 AVD·SDK·공통 폴더를 보존했습니다. 이 시도에서 기기 연결, APK 설치 및 지도 렌더링은 미실행입니다.
 
+공식 `-feature -Vulkan`을 적용하자 그래픽 초기화를 지나 QEMU 시작 속성까지 도달했습니다. QEMU 내부가 `-serial stdio` 중복으로 코드 1을 기록했지만 바깥 실행기는 0으로 끝났습니다. `netsimd` 실행도 현 프로필에서 거절됐습니다. 게스트 부팅 신호가 없어 검증은 실패로 분류했고 시험 볼륨을 제거했습니다. [Android Emulator 문제 해결](https://developer.android.com/studio/run/emulator-troubleshooting)
+
 ## 11월 14일 P3-02 후속: 디스크 준비와 에뮬레이터 실행 분리 검증
 
 `58a8009`에서 재개했습니다. Mac 가용 공간은 약 49GiB였으며 전용 USB Android 기기, 실행 중인 ADB, 보관된 전용 AVD·userdata 및 마운트된 소유 시험 볼륨은 확인되지 않았습니다. 보관 시험 APK는 발견했습니다.
