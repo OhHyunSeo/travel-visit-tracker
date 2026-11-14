@@ -98,12 +98,12 @@ def mount_device(reply: bytes, mount: Path) -> str:
     return matches[0]
 
 
-def backing_identity(image: Path) -> tuple[int, int]:
+def backing_identity(image: Path, size: int = VOLUME_BYTES) -> tuple[int, int]:
     if image.is_symlink() or not image.is_file():
         raise ComponentError('Expected an owned regular backing image')
     value = image.stat()
-    if value.st_nlink != 1 or value.st_size != VOLUME_BYTES or value.st_blocks * 512 != VOLUME_BYTES:
-        raise ComponentError('Backing image must be fully allocated and exactly 768 MiB')
+    if value.st_nlink != 1 or value.st_size != size or value.st_blocks * 512 != size:
+        raise ComponentError('Backing image must be fully allocated at the requested size')
     return value.st_dev, value.st_ino
 
 
@@ -130,13 +130,15 @@ def probe_capacity(root: Path, mount: Path, free: int, environment: dict) -> dic
         canary.unlink(missing_ok=True)
 
 
-def run(*, fill: bool = False, volume_check=None) -> dict:
+def run(*, fill: bool = False, volume_check=None, size: int = VOLUME_BYTES) -> dict:
     if sys.platform != 'darwin':
         raise ComponentError('The volume component requires macOS')
     temporary = Path(tempfile.gettempdir()).resolve(strict=True)
     space = os.statvfs(temporary)
-    if space.f_bavail * space.f_frsize < HEADROOM_BYTES:
-        raise ComponentError('At least 5 GiB must be available before creating the volume')
+    if size not in (VOLUME_BYTES, 10 * 1024**3) or (fill and size != VOLUME_BYTES):
+        raise ComponentError('Unsupported QA volume size or fill mode')
+    if space.f_bavail * space.f_frsize < size + HEADROOM_BYTES:
+        raise ComponentError('Leave at least 5 GiB available after allocating the QA volume')
     root = Path(tempfile.mkdtemp(prefix='trip-avd-volume.', dir=temporary))
     image = root / 'capacity.dmg'
     mount = root / 'mount'
@@ -144,13 +146,13 @@ def run(*, fill: bool = False, volume_check=None) -> dict:
     environment = {'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'LANG': 'C', 'TMPDIR': str(root)}
 
     def command(*args: str) -> bytes:
-        return _capture([HDIUTIL, *args], cwd=root, env=environment)[0]
+        return _capture([HDIUTIL, *args], cwd=root, env=environment, timeout=45)[0]
 
     attached = False
     try:
-        command('create', '-size', '768m', '-fs', 'HFS+', '-layout', 'NONE', '-type', 'UDIF',
+        command('create', '-size', f'{size // (1024**2)}m', '-fs', 'HFS+', '-layout', 'NONE', '-type', 'UDIF',
                 '-nospotlight', '-volname', 'TripPaintingQA', str(image))
-        identity = backing_identity(image)
+        identity = backing_identity(image, size)
         attached = True  # A failed attach command can still leave an attachment.
         reply = command('attach', str(image), '-nobrowse', '-noautoopen', '-noautofsck',
                         '-owners', 'on', '-mountpoint', str(mount), '-plist')
@@ -162,11 +164,11 @@ def run(*, fill: bool = False, volume_check=None) -> dict:
         volume = os.statvfs(mount)
         capacity = volume.f_blocks * volume.f_frsize
         free = volume.f_bavail * volume.f_frsize
-        if capacity != VOLUME_BYTES or not 0 < free < capacity:
+        if capacity != size or not 0 < free < capacity:
             raise ComponentError('Mounted filesystem does not match the candidate capacity')
         fill_result = probe_capacity(root, mount, free, environment) if fill else None
         volume_result = volume_check(mount) if volume_check else None
-        if backing_identity(image) != identity:
+        if backing_identity(image, size) != identity:
             raise ComponentError('Backing image changed identity while mounted')
     finally:
         try:
@@ -181,7 +183,7 @@ def run(*, fill: bool = False, volume_check=None) -> dict:
             root.rmdir()
         except (ComponentError, OSError, ValueError, KeyError) as error:
             raise ComponentError(f'Owned volume cleanup is unconfirmed at {root}: {error}') from error
-    return {'backingBytes': VOLUME_BYTES, 'backingAllocatedBytes': VOLUME_BYTES,
+    return {'backingBytes': size, 'backingAllocatedBytes': size,
             'filesystemCapacityBytes': capacity, 'filesystemFreeBytes': free,
             'fillProbe': fill_result, 'volumeCheck': volume_result,
             'ownedVolumeRemoved': True, 'nativeAdmissionEnabled': False}

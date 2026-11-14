@@ -299,14 +299,14 @@ def parse_worker_report(body: bytes, expected_pid: int) -> dict:
     return report
 
 
-def _capture(argv: list[str], *, cwd: pathlib.Path, env: dict) -> tuple[bytes, int]:
+def _capture(argv: list[str], *, cwd: pathlib.Path, env: dict, timeout: float | None = None) -> tuple[bytes, int]:
     """Capture the fixed trusted worker, not an arbitrary native process tree."""
     with open(os.devnull, 'rb', buffering=0) as read_only:
         process = subprocess.Popen(argv, cwd=cwd, env=env, stdin=read_only,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    close_fds=True, pass_fds=(), start_new_session=True)
     streams = {process.stdout: bytearray(), process.stderr: bytearray()}
-    deadline = time.monotonic() + COMMAND_SECONDS
+    deadline = time.monotonic() + (COMMAND_SECONDS if timeout is None else timeout)
     completed = False
     try:
         with selectors.DefaultSelector() as selector:
