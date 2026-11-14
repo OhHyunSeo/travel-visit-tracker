@@ -1,7 +1,8 @@
 import { readBackgroundMapPlan, type BackgroundMapPlan } from './backgroundMapPlan';
 
 const marker = 'trip-painting-background-map';
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+export const backgroundMapUuid =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const digest = /^[0-9a-f]{64}$/;
 
 export type BackgroundMapPackMetadata = Readonly<{
@@ -18,10 +19,19 @@ type PackIdentity = Pick<
   'operationId' | 'tileJsonSha256' | 'localStyleSha256'
 >;
 
-function isPackIdentity(value: Record<string, unknown>): value is PackIdentity {
+const metadataKeys = [
+  'kind',
+  'schemaVersion',
+  'operationId',
+  'plan',
+  'tileJsonSha256',
+  'localStyleSha256',
+] as const;
+
+function isPackIdentity<T extends Record<string, unknown>>(value: T): value is T & PackIdentity {
   return (
     typeof value.operationId === 'string' &&
-    uuid.test(value.operationId) &&
+    backgroundMapUuid.test(value.operationId) &&
     typeof value.tileJsonSha256 === 'string' &&
     digest.test(value.tileJsonSha256) &&
     typeof value.localStyleSha256 === 'string' &&
@@ -47,6 +57,23 @@ export function createBackgroundMapPackMetadata(
   });
 }
 
+export function readBackgroundMapPackMetadata(input: unknown): BackgroundMapPackMetadata {
+  if (typeof input !== 'object' || !input || Array.isArray(input))
+    throw new Error('Invalid background map pack metadata');
+  const value = input as Record<string, unknown>;
+  if (
+    value.kind !== marker ||
+    value.schemaVersion !== 1 ||
+    typeof value.plan !== 'string' ||
+    !isPackIdentity(value) ||
+    Object.keys(value).length !== metadataKeys.length ||
+    !metadataKeys.every((key) => Object.hasOwn(value, key))
+  ) {
+    throw new Error('Invalid background map pack metadata');
+  }
+  return createBackgroundMapPackMetadata(readBackgroundMapPlan(value.plan), value);
+}
+
 /** Find a single SDK pack for an operation, including after a restart before its ID was saved. */
 export function findBackgroundMapPack(
   packs: readonly { id: unknown; bounds: unknown; metadata: unknown }[],
@@ -54,7 +81,6 @@ export function findBackgroundMapPack(
   recordedPackId?: string,
 ): { kind: 'found'; packId: string } | { kind: 'missing' | 'conflict' } {
   const plan = readBackgroundMapPlan(expected.plan);
-  const keys = Object.keys(expected) as (keyof BackgroundMapPackMetadata)[];
   let match: string | undefined;
   for (const pack of packs) {
     const value = pack.metadata;
@@ -69,11 +95,13 @@ export function findBackgroundMapPack(
     if (
       !claimsOperation ||
       !metadata ||
-      Object.keys(metadata).length !== keys.length ||
-      !keys.every((key) => Object.hasOwn(metadata, key) && metadata[key] === expected[key]) ||
+      Object.keys(metadata).length !== metadataKeys.length ||
+      !metadataKeys.every(
+        (key) => Object.hasOwn(metadata, key) && metadata[key] === expected[key],
+      ) ||
       match !== undefined ||
       typeof pack.id !== 'string' ||
-      !uuid.test(pack.id) ||
+      !backgroundMapUuid.test(pack.id) ||
       (recordedPackId !== undefined && !usesRecordedId) ||
       !Array.isArray(bounds) ||
       bounds.length !== 4 ||
