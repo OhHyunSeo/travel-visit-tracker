@@ -2,6 +2,10 @@
 
 마지막 갱신: 2026-11-14, Asia/Seoul.
 
+## 11월 14일 P3-02 후속: 격리 Android 시험 APK 설치
+
+새 전용 볼륨을 연 에뮬레이터만 로컬 디버그 연결 대상으로 확인했습니다. 게스트 부팅 표식 직후 첫 연결이 준비되지 않아, 최대 35초 동안 새 전송으로 다시 확인하게 했습니다. 일회용 키 인증으로 `sys.boot_completed=1`을 읽었습니다. API 37·arm64-v8a, 제품과 시험 패키지 부재를 확인하고 기존 서명 시험 APK를 설치했습니다. 설치된 `base.apk`의 SHA-256은 호스트 시험 APK `24dc68cfb9d213e2da83afbe297577f7d73bc408cf0484589b7711ab9334e60f`와 일치했습니다. 개인 ADB 서버와 설정을 사용하지 않았고 전용 볼륨을 제거했습니다. 이 단위의 지도 실행·화면 대조는 미실행입니다. Android 준비 129개, 기기 수집 34개가 통과했습니다. [AOSP ADB 전송 규격](https://android.googlesource.com/platform/packages/modules/adb/+/HEAD/docs/dev/protocol.md)
+
 ## 11월 14일 P3-02 후속: 전용 Android 첫 부팅 완료
 
 새 10GiB 볼륨의 초기 상태에서 커널 시작, 게스트 `init`의 `sys.boot_completed=1` 실행, 에뮬레이터의 새 `bootcompleted.ini` 일반 파일을 모두 확인했습니다. 에뮬레이터가 보고한 첫 부팅은 133,164ms였고 검사 종료 코드는 0이었습니다. 별도 logcat 파일은 0바이트였으므로 시스템 속성과 에뮬레이터 표식을 대조했습니다. Android 전용 프로세스를 종료하고 소유 볼륨을 제거했습니다. 이 실행에는 ADB 연결, APK 설치와 지도 표시는 없었습니다. [AOSP 에뮬레이터 부팅 표식 초기화](https://android.googlesource.com/platform/external/qemu/+/refs/heads/emu-35-3-release/android/emulator/main-emulator.cpp#894)

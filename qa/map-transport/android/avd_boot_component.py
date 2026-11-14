@@ -15,6 +15,7 @@ import time
 import uuid
 
 from avd_config_component import EMULATOR_SHA256, prepare_config
+from avd_guest_component import ADB_PORT, install_fixture, query_boot_property
 from avd_volume_component import run as with_volume
 from single_writer_component import ComponentError, _capture
 
@@ -67,7 +68,7 @@ def boot_marker_exists(marker):
         return False
 
 
-def boot(root, sdk):
+def boot(root, sdk, *, probe_adb=False, fixture_apk=None):
     launcher = pinned(sdk / 'emulator/emulator', EMULATOR_SHA256)
     headless = pinned(sdk / 'emulator/qemu/darwin-aarch64/qemu-system-aarch64-headless', HEADLESS_SHA256)
     name = 'TripPaintingMapTransportQA_' + uuid.uuid4().hex[:12]
@@ -77,7 +78,7 @@ def boot(root, sdk):
                      'hw.lcd.density=320\nhw.gpu.enabled=yes\nPlayStore.enabled=true\n')
     for folder in ('android-user', 'android-config', 'tmp'):
         (root / folder).mkdir(mode=0o700)
-    for port in (5560, 5561):
+    for port in (5560, ADB_PORT):
         with socket.socket() as check:
             check.bind(('127.0.0.1', port))
     env = {'PATH': '/usr/bin:/bin', 'LANG': 'C', 'TMPDIR': str(root / 'tmp'),
@@ -145,6 +146,25 @@ def boot(root, sdk):
                     time.sleep(.25)
         result['exitBeforeCleanup'] = process.poll()
         result['guestLogcatBytes'] = logcat_path.stat().st_size
+        adb_key = root / 'android-config/adbkey'
+        if probe_adb and result['exitBeforeCleanup'] is None and boot_completed(result):
+            result['adbBootPropertyConfirmed'] = False
+            adb_deadline = time.monotonic() + 35
+            while time.monotonic() < adb_deadline and process.poll() is None:
+                try:
+                    result['adbBootPropertyConfirmed'] = query_boot_property(adb_key)
+                except (EOFError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+                    result['adbProbeError'] = str(error)
+                if result['adbBootPropertyConfirmed']:
+                    result.pop('adbProbeError', None)
+                    break
+                time.sleep(2)
+        if fixture_apk and result.get('adbBootPropertyConfirmed'):
+            try:
+                result['fixtureInstall'] = install_fixture(adb_key, fixture_apk)
+                result['apkInstalled'] = True
+            except (EOFError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+                result['fixtureInstallError'] = str(error)
         with log_path.open('rb') as stream:
             stream.seek(max(0, os.fstat(stream.fileno()).st_size - 4000))
             result['emulatorLogTail'] = stream.read().decode(errors='replace').replace(str(root), '<qa-volume>')
@@ -172,10 +192,21 @@ def boot_completed(result):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument('--sdk-root', required=True, type=Path)
+    parser.add_argument('--probe-adb', action='store_true', help='Read only the boot property over direct ADB')
+    parser.add_argument('--fixture-apk', type=Path, help='Install the pinned test APK after the boot query')
     args = parser.parse_args()
+    if args.fixture_apk and not args.probe_adb:
+        parser.error('--fixture-apk requires --probe-adb')
     try:
-        result = with_volume(size=BOOT_VOLUME, volume_check=lambda root: boot(root, args.sdk_root.resolve(strict=True)))
+        result = with_volume(size=BOOT_VOLUME, volume_check=lambda root: boot(
+            root, args.sdk_root.resolve(strict=True), probe_adb=args.probe_adb, fixture_apk=args.fixture_apk))
         print(json.dumps(result, sort_keys=True))
-        sys.exit(0 if boot_completed(result['volumeCheck']) else 2)
+        check = result['volumeCheck']
+        passed = boot_completed(check)
+        if args.probe_adb:
+            passed = passed and check.get('adbBootPropertyConfirmed')
+        if args.fixture_apk:
+            passed = passed and check['apkInstalled']
+        sys.exit(0 if passed else 2)
     except (ComponentError, OSError, ValueError, KeyError) as error:
         sys.exit(f'Isolated Android boot attempt failed: {error}')
