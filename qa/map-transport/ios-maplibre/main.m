@@ -68,6 +68,8 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
 @property BOOL expectPackRevalidation;
 @property BOOL blockPackNetwork;
 @property BOOL resumePackNetwork;
+@property BOOL testPackRetryLimit;
+@property NSTimeInterval packRetryLimitObservedAt;
 @property NSMutableArray<NSString *> *offlineRequestAttempts;
 @property NSMutableArray *cases;
 @property NSUInteger transforms, rewrittenStyles, externalTileRequests, phase;
@@ -165,15 +167,18 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
     NSString *revalidation = env[@"QA_PACK_EXPECT_REVALIDATION"];
     NSString *blockNetwork = env[@"QA_PACK_BLOCK_NETWORK"];
     NSString *resumeNetwork = env[@"QA_PACK_RESUME_NETWORK"];
+    NSString *testRetryLimit = env[@"QA_PACK_TEST_RETRY_LIMIT"];
     self.expectPackRevalidation = reopening && [revalidation isEqual:@"1"];
     self.blockPackNetwork = reopening && [blockNetwork isEqual:@"1"];
     self.resumePackNetwork = self.blockPackNetwork && [resumeNetwork isEqual:@"1"];
+    self.testPackRetryLimit = self.resumePackNetwork && [testRetryLimit isEqual:@"1"];
     BOOL packInputsOK = reopening ? self.priorPackRunID.length && ![self.priorPackRunID isEqual:runID] &&
         [[NSURL URLWithString:TPOrigin ?: @""].host isEqual:@"127.0.0.1"] &&
         [pattern numberOfMatchesInString:self.priorPackRunID options:0 range:NSMakeRange(0, self.priorPackRunID.length)] == 1 &&
         (!revalidation || self.expectPackRevalidation) && (!blockNetwork || self.blockPackNetwork) &&
-        (!resumeNetwork || self.resumePackNetwork) && !(self.blockPackNetwork && self.expectPackRevalidation) :
-        !self.priorPackRunID && !revalidation && !blockNetwork && !resumeNetwork;
+        (!resumeNetwork || self.resumePackNetwork) && (!testRetryLimit || self.testPackRetryLimit) &&
+        !(self.blockPackNetwork && self.expectPackRevalidation) :
+        !self.priorPackRunID && !revalidation && !blockNetwork && !resumeNetwork && !testRetryLimit;
     self.runID = valid ? runID : nil;
     if (usesActionGate && valid) self.actionGate = [[TPFixtureActionGate alloc] initWithRunID:runID processIdentifier:NSProcessInfo.processInfo.processIdentifier cancelNonce:env[@"QA_FIXTURE_CANCEL_NONCE"] reloadNonce:env[@"QA_FIXTURE_RELOAD_NONCE"]];
     NSURL *documents = [[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
@@ -338,7 +343,10 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
     NSURL *ledgerURL = [TPRunDirectory URLByAppendingPathComponent:tlsTrial ? @"tls-ledger.json" : (cancelTrial ? @"cancel-ledger.json" : @"render-ledger.json")];
     BOOL configured;
     if (tlsMixed || tlsPolicy) configured = [TPTransport configureMixedPrivateFixtureTLSOrigin:TPOrigin ledgerURL:ledgerURL certificate:self.fixtureCertificate];
-    else if (tlsTrial) configured = [TPTransport configurePrivateFixtureTLSOrigin:TPOrigin ledgerURL:ledgerURL maxRequests:self.expectPackRevalidation ? 2 : 32 maxTiles:self.expectPackRevalidation ? 1 : 16 maxReservedBytes:self.expectPackRevalidation ? 512 : 8192 certificate:self.fixtureCertificate];
+    else if (tlsTrial) {
+        BOOL boundedPack = self.expectPackRevalidation || self.testPackRetryLimit;
+        configured = [TPTransport configurePrivateFixtureTLSOrigin:TPOrigin ledgerURL:ledgerURL maxRequests:boundedPack ? 2 : 32 maxTiles:boundedPack ? 1 : 16 maxReservedBytes:boundedPack ? 512 : 8192 certificate:self.fixtureCertificate];
+    }
     else configured = [TPTransport configureOrigin:TPOrigin ledgerURL:ledgerURL maxRequests:cancelTrial ? 64 : 32 maxTiles:cancelTrial ? 32 : 16 maxReservedBytes:cancelTrial ? 16384 : 8192];
     if (!configured) { [self finish:NO reason:@"ledger not ready"]; return; }
     if ([self.stage isEqual:@"tls-pack"]) { [self startOfflinePack]; return; }
@@ -403,10 +411,13 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
 - (void)inspectReopenedPack:(MLNOfflineStorage *)storage {
     NSDictionary *native = TPTransport.snapshot;
     if (self.resumePackNetwork && self.phase == 1) {
-        if (![native[@"ledgerOK"] isEqual:@YES] || [native[@"started"] unsignedIntegerValue] > 2 ||
-            ![native[@"blockedBeforeDispatch"] isEqual:@0]) {
+        if (![native[@"ledgerOK"] isEqual:@YES] || [native[@"started"] unsignedIntegerValue] > 2) {
             [self finish:NO reason:@"online reload exceeded the trial bounds"];
             return;
+        }
+        if (self.testPackRetryLimit) { [self inspectPackRetryLimit:native]; return; }
+        if (![native[@"blockedBeforeDispatch"] isEqual:@0]) {
+            [self finish:NO reason:@"unexpected blocked request during online reload"]; return;
         }
     } else if (self.expectPackRevalidation) {
         if (![native[@"ledgerOK"] isEqual:@YES] || [native[@"started"] unsignedIntegerValue] > 2 ||
@@ -456,8 +467,10 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
     NSArray<NSString *> *blocked = nil;
     if (self.blockPackNetwork && self.phase == 0) {
         @synchronized(self) { blocked = [self.offlineRequestAttempts copy]; }
+        NSSet<NSString *> *expected = [NSSet setWithArray:@[@"/resource/style/pack", @"/resource/tile/pack_0_0_0"]];
+        NSSet<NSString *> *seen = [NSSet setWithArray:blocked];
         if (blocked.count < 2) return;
-        if (blocked.count != 2 || ![[NSSet setWithArray:blocked] isEqual:[NSSet setWithArray:@[@"/resource/style/pack", @"/resource/tile/pack_0_0_0"]]]) {
+        if (![seen isSubsetOfSet:expected] || (!self.testPackRetryLimit && (blocked.count != 2 || ![seen isEqual:expected]))) {
             [self finish:NO reason:@"unexpected denied offline requests"];
             return;
         }
@@ -493,6 +506,20 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
     NSString *reason = self.expectPackRevalidation ? @"expired pack rendered after bounded connection attempts" :
         @"reopened pack rendered without transport requests";
     [self finish:MLNNetworkConfiguration.sharedManager.delegate == self.transform reason:reason];
+}
+- (void)inspectPackRetryLimit:(NSDictionary *)native {
+    NSDictionary *ledger = native[@"ledger"];
+    if (![native[@"active"] isEqual:@0] || ![native[@"pending"] isEqual:@0] ||
+        ![native[@"started"] isEqual:@2] || ![native[@"released"] isEqual:@2] || [ledger[@"unresolved"] count] != 0 ||
+        ![native[@"httpRequestSendsSettled"] isEqual:@2] || ![native[@"tlsVerifiedExchanges"] isEqual:@2] ||
+        ![ledger[@"requests"] isEqual:@2] || ![ledger[@"reservedBytes"] isEqual:@512] ||
+        [native[@"blockedBeforeDispatch"] unsignedIntegerValue] == 0) return;
+    NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+    if (!self.packRetryLimitObservedAt) self.packRetryLimitObservedAt = now;
+    NSUInteger observedMs = (NSUInteger)((now - self.packRetryLimitObservedAt) * 1000);
+    if (observedMs < 2500) return;
+    [self.cases addObject:@{@"transportAfterEnable": native, @"afterBudgetRefusalMs": @(observedMs)}];
+    [self finish:MLNNetworkConfiguration.sharedManager.delegate == self.transform reason:@"temporary pack revalidation stopped at the fixture budget"];
 }
 - (void)offlinePackError:(NSNotification *)notification {
     self.offlineErrors++;
