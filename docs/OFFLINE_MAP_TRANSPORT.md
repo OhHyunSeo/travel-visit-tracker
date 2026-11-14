@@ -1,5 +1,7 @@
 # 오프라인 지도 요청 제어 검토
 
+같은 iOS 지도 뷰에서 만료된 자료를 차단 상태로 표시하고, 뒤이어 새 유효 기간을 주는 합성 HTTPS 서버와 다시 연결했습니다. 스타일 요청 1건과 256바이트 예약이 생겼고 저장 타일은 재사용했습니다. 서버가 계속 1초 유효 기간을 줄 때에는 스타일의 반복 요청을 관측했습니다. 제품 화면 전환과 실제 공급원 요청 한도는 남았습니다.
+
 ## 2026-11-14 iOS 시작 코드에 지도 요청 차단 연결
 
 `TripPaintingMapBootstrap`이 기존 MapLibre 세션 설정을 복사하고 전용 `URLProtocol`을 맨 앞에 넣습니다. 기존 프로토콜과 React Native 주소 변환은 그대로 사용합니다. 계정이나 백업에 쓰는 세션에는 이 설정을 등록하지 않습니다. 시작 코드는 첫 지도 뷰나 저장소가 세션을 만들기 전에 실행합니다. [MapLibre 세션 설정](https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/platform/darwin/src/MLNNetworkConfiguration.h#L48-L63)

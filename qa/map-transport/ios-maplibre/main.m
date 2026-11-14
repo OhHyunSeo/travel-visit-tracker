@@ -67,6 +67,7 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
 @property NSString *priorPackRunID;
 @property BOOL expectPackRevalidation;
 @property BOOL blockPackNetwork;
+@property BOOL resumePackNetwork;
 @property NSMutableArray<NSString *> *offlineRequestAttempts;
 @property NSMutableArray *cases;
 @property NSUInteger transforms, rewrittenStyles, externalTileRequests, phase;
@@ -163,13 +164,16 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
     self.priorPackRunID = env[@"QA_PACK_RUN_ID"];
     NSString *revalidation = env[@"QA_PACK_EXPECT_REVALIDATION"];
     NSString *blockNetwork = env[@"QA_PACK_BLOCK_NETWORK"];
+    NSString *resumeNetwork = env[@"QA_PACK_RESUME_NETWORK"];
     self.expectPackRevalidation = reopening && [revalidation isEqual:@"1"];
     self.blockPackNetwork = reopening && [blockNetwork isEqual:@"1"];
+    self.resumePackNetwork = self.blockPackNetwork && [resumeNetwork isEqual:@"1"];
     BOOL packInputsOK = reopening ? self.priorPackRunID.length && ![self.priorPackRunID isEqual:runID] &&
         [[NSURL URLWithString:TPOrigin ?: @""].host isEqual:@"127.0.0.1"] &&
         [pattern numberOfMatchesInString:self.priorPackRunID options:0 range:NSMakeRange(0, self.priorPackRunID.length)] == 1 &&
         (!revalidation || self.expectPackRevalidation) && (!blockNetwork || self.blockPackNetwork) &&
-        !(self.blockPackNetwork && self.expectPackRevalidation) : !self.priorPackRunID && !revalidation && !blockNetwork;
+        (!resumeNetwork || self.resumePackNetwork) && !(self.blockPackNetwork && self.expectPackRevalidation) :
+        !self.priorPackRunID && !revalidation && !blockNetwork && !resumeNetwork;
     self.runID = valid ? runID : nil;
     if (usesActionGate && valid) self.actionGate = [[TPFixtureActionGate alloc] initWithRunID:runID processIdentifier:NSProcessInfo.processInfo.processIdentifier cancelNonce:env[@"QA_FIXTURE_CANCEL_NONCE"] reloadNonce:env[@"QA_FIXTURE_RELOAD_NONCE"]];
     NSURL *documents = [[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
@@ -398,7 +402,13 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
 }
 - (void)inspectReopenedPack:(MLNOfflineStorage *)storage {
     NSDictionary *native = TPTransport.snapshot;
-    if (self.expectPackRevalidation) {
+    if (self.resumePackNetwork && self.phase == 1) {
+        if (![native[@"ledgerOK"] isEqual:@YES] || [native[@"started"] unsignedIntegerValue] > 2 ||
+            ![native[@"blockedBeforeDispatch"] isEqual:@0]) {
+            [self finish:NO reason:@"online reload exceeded the trial bounds"];
+            return;
+        }
+    } else if (self.expectPackRevalidation) {
         if (![native[@"ledgerOK"] isEqual:@YES] || [native[@"started"] unsignedIntegerValue] > 2 ||
             ![native[@"httpRequestSendsSettled"] isEqual:@0] || ![native[@"blockedBeforeDispatch"] isEqual:@0]) {
             [self finish:NO reason:@"expired pack transport differed from the bounded trial"];
@@ -444,7 +454,7 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
     if (!self.styleLoaded || !self.fullyRendered) return;
     if (self.expectPackRevalidation && (![self idleNative:native] || ![native[@"started"] isEqual:@2])) return;
     NSArray<NSString *> *blocked = nil;
-    if (self.blockPackNetwork) {
+    if (self.blockPackNetwork && self.phase == 0) {
         @synchronized(self) { blocked = [self.offlineRequestAttempts copy]; }
         if (blocked.count < 2) return;
         if (blocked.count != 2 || ![[NSSet setWithArray:blocked] isEqual:[NSSet setWithArray:@[@"/resource/style/pack", @"/resource/tile/pack_0_0_0"]]]) {
@@ -462,6 +472,23 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
         @"tiles": @(progress.countOfTilesCompleted), @"storedBytes": @(progress.countOfBytesCompleted),
         @"styleLoaded": @YES, @"fullyRendered": @YES} mutableCopy];
     if (blocked) result[@"blockedRequests"] = blocked;
+    if (self.resumePackNetwork && self.phase == 0) {
+        result[@"transportBeforeEnable"] = native;
+        [self.cases addObject:result];
+        self.phase = 1; self.styleLoaded = NO; self.fullyRendered = NO;
+        self.map.styleJSON = TPEmptyStyleJSON;
+        [TripPaintingMapBootstrap setOfflineMapRequestsBlocked:NO];
+        self.map.styleURL = self.offlinePack.region.styleURL;
+        return;
+    }
+    if (self.resumePackNetwork) {
+        if (![self idleNative:native] || ![native[@"started"] isEqual:@1] ||
+            ![native[@"tlsVerifiedExchanges"] isEqual:@1] || ![native[@"ledger"][@"tiles"] isEqual:@0]) return;
+        result[@"transportAfterEnable"] = native;
+        [self.cases addObject:result];
+        [self finish:MLNNetworkConfiguration.sharedManager.delegate == self.transform reason:@"same stored map rendered before and after explicit online reload"];
+        return;
+    }
     [self.cases addObject:result];
     NSString *reason = self.expectPackRevalidation ? @"expired pack rendered after bounded connection attempts" :
         @"reopened pack rendered without transport requests";
