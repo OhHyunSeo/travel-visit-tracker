@@ -552,8 +552,14 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
         return;
     }
     if (self.resumePackNetwork) {
-        if (![self idleNative:native] || ![native[@"started"] isEqual:@1] ||
-            ![native[@"tlsVerifiedExchanges"] isEqual:@1] || ![native[@"ledger"][@"tiles"] isEqual:@0]) return;
+        NSUInteger started = [native[@"started"] unsignedIntegerValue];
+        NSDictionary *ledger = native[@"ledger"];
+        // The SDK can revalidate the expired tile or reuse its stored bytes.
+        if (![self idleNative:native] || started < 1 || started > 2 ||
+            ![native[@"httpRequestSendsSettled"] isEqual:@(started)] ||
+            ![native[@"tlsVerifiedExchanges"] isEqual:@(started)] ||
+            ![ledger[@"requests"] isEqual:@(started)] || ![ledger[@"tiles"] isEqual:@(started - 1)] ||
+            ![ledger[@"reservedBytes"] isEqual:@(started * 256)]) return;
         result[@"transportAfterEnable"] = native;
         [self.cases addObject:result];
         [self finish:MLNNetworkConfiguration.sharedManager.delegate == self.transform reason:@"same stored map rendered before and after explicit online reload"];
