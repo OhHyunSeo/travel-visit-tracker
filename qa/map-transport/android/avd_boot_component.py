@@ -15,7 +15,7 @@ import time
 import uuid
 
 from avd_config_component import EMULATOR_SHA256, prepare_config
-from avd_guest_component import ADB_PORT, install_fixture, query_boot_property
+from avd_guest_component import ADB_PORT, install_fixture, query_boot_property, render_fixture
 from avd_volume_component import run as with_volume
 from single_writer_component import ComponentError, _capture
 
@@ -68,7 +68,7 @@ def boot_marker_exists(marker):
         return False
 
 
-def boot(root, sdk, *, probe_adb=False, fixture_apk=None):
+def boot(root, sdk, *, probe_adb=False, fixture_apk=None, render_inputs=None):
     launcher = pinned(sdk / 'emulator/emulator', EMULATOR_SHA256)
     headless = pinned(sdk / 'emulator/qemu/darwin-aarch64/qemu-system-aarch64-headless', HEADLESS_SHA256)
     name = 'TripPaintingMapTransportQA_' + uuid.uuid4().hex[:12]
@@ -165,6 +165,11 @@ def boot(root, sdk, *, probe_adb=False, fixture_apk=None):
                 result['apkInstalled'] = True
             except (EOFError, OSError, ValueError, subprocess.TimeoutExpired) as error:
                 result['fixtureInstallError'] = str(error)
+        if render_inputs and result['apkInstalled']:
+            try:
+                result['fixtureRender'] = render_fixture(adb_key, fixture_apk, *render_inputs)
+            except (EOFError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+                result['fixtureRenderError'] = str(error)
         with log_path.open('rb') as stream:
             stream.seek(max(0, os.fstat(stream.fileno()).st_size - 4000))
             result['emulatorLogTail'] = stream.read().decode(errors='replace').replace(str(root), '<qa-volume>')
@@ -194,12 +199,16 @@ if __name__ == '__main__':
     parser.add_argument('--sdk-root', required=True, type=Path)
     parser.add_argument('--probe-adb', action='store_true', help='Read only the boot property over direct ADB')
     parser.add_argument('--fixture-apk', type=Path, help='Install the pinned test APK after the boot query')
+    parser.add_argument('--render-fixture', type=Path, nargs=3, metavar=('RELAY', 'SERVER_LOG', 'CAPTURE'))
     args = parser.parse_args()
     if args.fixture_apk and not args.probe_adb:
         parser.error('--fixture-apk requires --probe-adb')
+    if args.render_fixture and not args.fixture_apk:
+        parser.error('--render-fixture requires --fixture-apk')
     try:
         result = with_volume(size=BOOT_VOLUME, volume_check=lambda root: boot(
-            root, args.sdk_root.resolve(strict=True), probe_adb=args.probe_adb, fixture_apk=args.fixture_apk))
+            root, args.sdk_root.resolve(strict=True), probe_adb=args.probe_adb, fixture_apk=args.fixture_apk,
+            render_inputs=args.render_fixture))
         print(json.dumps(result, sort_keys=True))
         check = result['volumeCheck']
         passed = boot_completed(check)
@@ -207,6 +216,8 @@ if __name__ == '__main__':
             passed = passed and check.get('adbBootPropertyConfirmed')
         if args.fixture_apk:
             passed = passed and check['apkInstalled']
+        if args.render_fixture:
+            passed = passed and 'fixtureRender' in check
         sys.exit(0 if passed else 2)
     except (ComponentError, OSError, ValueError, KeyError) as error:
         sys.exit(f'Isolated Android boot attempt failed: {error}')

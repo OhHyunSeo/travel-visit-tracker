@@ -1,10 +1,11 @@
 import socket
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from avd_guest_component import PACKET, query_boot_property, receive, require_owned_listener, send
+from avd_guest_component import PACKET, query_boot_property, receive, require_owned_listener, send, stream_output
 
 
 class GuestTransportTest(unittest.TestCase):
@@ -21,6 +22,26 @@ class GuestTransportTest(unittest.TestCase):
             outgoing.sendall(PACKET.pack(b'WRTE', 4, 9, 4097, 0, magic))
             with self.assertRaisesRegex(ValueError, 'header'):
                 receive(incoming)
+
+    def test_stream_accepts_empty_ack_before_output(self):
+        guest, host = socket.socketpair()
+        with guest, host:
+            guest.settimeout(1)
+            host.settimeout(1)
+            send(guest, b'OKAY', 4, 1)
+            send(guest, b'WRTE', 4, 1, b'Success\n')
+            send(guest, b'CLSE', 4, 1)
+
+            self.assertEqual(stream_output(host, 4, 32, time.monotonic() + 1), b'Success\n')
+            self.assertEqual(receive(guest), (b'OKAY', 1, 4, b''))
+
+    def test_stream_rejects_ack_for_another_stream(self):
+        guest, host = socket.socketpair()
+        with guest, host:
+            host.settimeout(1)
+            send(guest, b'OKAY', 5, 1)
+            with self.assertRaisesRegex(ValueError, 'stream ID'):
+                stream_output(host, 4, 32, time.monotonic() + 1)
 
     def test_unowned_listener_denies_connection_before_using_key(self):
         with tempfile.TemporaryDirectory() as directory:

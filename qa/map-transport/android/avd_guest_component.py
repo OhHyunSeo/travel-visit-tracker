@@ -1,6 +1,8 @@
 """Bounded direct ADB queries for the cold boot component's own emulator."""
 
+from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
+from pathlib import Path
 import re
 import shlex
 import socket
@@ -8,7 +10,6 @@ import struct
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 
 ADB_PORT = 5561
@@ -16,6 +17,8 @@ PACKET = struct.Struct('<4sIIIII')
 PAYLOAD_LIMIT = 4096
 FIXTURE_APK_SHA256 = '24dc68cfb9d213e2da83afbe297577f7d73bc408cf0484589b7711ab9334e60f'
 FIXTURE_APK_SIZE = 19_438_330
+FIXTURE_RELAY_PATH = '/data/local/tmp/trip-map-transport-relay.jar'
+FIXTURE_RELAY_SHA256 = 'b01869854c2fdc4905c7b28af95af2da7f0c6ca39088e011d7ec4ece63516968'
 
 
 def receive_exact(connection, length):
@@ -106,11 +109,45 @@ def stream_output(connection, remote, limit, deadline):
             raise ValueError('Unexpected guest ADB stream ID')
         if command == b'CLSE' and not payload:
             return bytes(output)
-        if command != b'WRTE' or len(output) + len(payload) > limit:
-            raise ValueError('Unexpected or excessive guest ADB output')
+        if command == b'OKAY' and not payload:
+            continue
+        if command != b'WRTE':
+            raise ValueError(f'Unexpected guest ADB output packet {command!r}')
+        if len(output) + len(payload) > limit:
+            raise ValueError(f'Guest ADB output exceeded {limit} bytes')
         output.extend(payload)
         send(connection, b'OKAY', 1, remote)
     raise ValueError('Guest ADB stream did not close in time')
+
+
+def return_stream(connection, remote, data, deadline):
+    for start in range(0, len(data), PAYLOAD_LIMIT):
+        if time.monotonic() >= deadline:
+            raise ValueError('Guest ADB upload deadline expired')
+        send(connection, b'WRTE', 1, remote, data[start:start + PAYLOAD_LIMIT])
+        if receive(connection) != (b'OKAY', remote, 1, b''):
+            raise ValueError('Guest did not acknowledge the upload stream')
+
+
+def guest_command(key_path, limit, mode, *args, input_data=b'', timeout=15):
+    prefixes = {'exec-out': 'exec:', 'shell': 'shell:', 'logcat': 'shell:logcat '}
+    if mode not in prefixes:
+        raise ValueError('Unexpected fixture guest command mode')
+    command = (prefixes[mode] + shlex.join(args)).encode('ascii')
+    require_owned_listener(key_path)
+    with socket.create_connection(('127.0.0.1', ADB_PORT), timeout=6) as connection:
+        try:
+            authenticate(connection, load_key(key_path))
+            remote = open_stream(connection, command)
+            deadline = time.monotonic() + timeout
+            if input_data:
+                return_stream(connection, remote, input_data, deadline)
+            connection.settimeout(timeout)
+            data = stream_output(connection, remote, limit, deadline)
+        except (EOFError, OSError) as error:
+            raise ValueError(f'Guest ADB {args[0] if args else mode} stream failed: {error}') from error
+    require_owned_listener(key_path)
+    return data.replace(b'\r\n', b'\n') if mode != 'exec-out' else data
 
 
 def query_boot_property(key_path):
@@ -141,26 +178,82 @@ def install_fixture(key_path, apk):
     def command(limit, mode, *args):
         if mode != 'shell':
             raise ValueError('The install check uses shell queries only')
-        require_owned_listener(key_path)
-        with socket.create_connection(('127.0.0.1', ADB_PORT), timeout=5) as connection:
-            authenticate(connection, key)
-            remote = open_stream(connection, ('shell:' + shlex.join(args)).encode('ascii'))
-            return stream_output(connection, remote, limit, time.monotonic() + 10)
+        for attempt in range(3):
+            require_owned_listener(key_path)
+            try:
+                with socket.create_connection(('127.0.0.1', ADB_PORT), timeout=5) as connection:
+                    authenticate(connection, key)
+                    remote = open_stream(connection, ('shell:' + shlex.join(args)).encode('ascii'))
+                    return stream_output(connection, remote, limit, time.monotonic() + 10)
+            except (EOFError, OSError) as error:
+                if attempt == 2:
+                    raise ValueError(f'Guest {args[0]} query failed: {error}') from error
+                time.sleep(.5)
+            except ValueError as error:
+                raise ValueError(f'Guest {args[0]} query failed: {error}') from error
 
     device = check_fresh_device(command)
     require_owned_listener(key_path)
-    with socket.create_connection(('127.0.0.1', ADB_PORT), timeout=7) as connection:
-        authenticate(connection, key)
-        remote = open_stream(connection, f'exec:cmd package install -t -S {len(data)}'.encode('ascii'))
-        deadline = time.monotonic() + 90
-        for start in range(0, len(data), PAYLOAD_LIMIT):
-            if time.monotonic() >= deadline:
-                raise ValueError('Fixture APK streaming deadline expired')
-            send(connection, b'WRTE', 1, remote, data[start:start + PAYLOAD_LIMIT])
-            if receive(connection) != (b'OKAY', remote, 1, b''):
-                raise ValueError('Guest did not acknowledge the fixture APK stream')
-        connection.settimeout(45)
-        if stream_output(connection, remote, 4096, time.monotonic() + 45).strip() != b'Success':
-            raise ValueError('Guest package manager did not accept the fixture APK')
+    try:
+        with socket.create_connection(('127.0.0.1', ADB_PORT), timeout=7) as connection:
+            authenticate(connection, key)
+            remote = open_stream(connection, f'exec:cmd package install -t -S {len(data)}'.encode('ascii'))
+            return_stream(connection, remote, data, time.monotonic() + 90)
+            connection.settimeout(45)
+            if stream_output(connection, remote, 4096, time.monotonic() + 45).strip() != b'Success':
+                raise ValueError('Guest package manager did not accept the fixture APK')
+    except (EOFError, OSError, ValueError) as error:
+        raise ValueError(f'Guest APK install stream failed: {error}') from error
     check_installed_apk(command, FIXTURE_APK_SHA256)
     return {**device, 'installedApkSha256': FIXTURE_APK_SHA256}
+
+
+def render_fixture(key_path, apk, relay, server_log, destination):
+    sys.path.append(str(Path(__file__).with_name('sdk-smoke')))
+    from capture_device import ACTIVITY, collect, running_pid
+    from verify_device_capture import LOG_LIMIT, read_apk
+
+    port, apk_hash = read_apk(apk)
+    if apk_hash != FIXTURE_APK_SHA256 or relay.is_symlink() or relay.stat().st_size > 16_384:
+        raise ValueError('Unexpected fixture APK or relay')
+    with relay.open('rb') as stream:
+        relay_data = stream.read(16_385)
+    if sha256(relay_data).hexdigest() != FIXTURE_RELAY_SHA256:
+        raise ValueError('Fixture relay hash changed')
+    expected = f'STYLE_SERVER_READY port={port}\n'.encode('ascii')
+    if server_log.is_symlink() or not server_log.is_file() or server_log.stat().st_size != len(expected) or server_log.read_bytes() != expected:
+        raise ValueError('Expected a fresh synthetic server on the APK port')
+
+    def command(limit, mode, *args):
+        return guest_command(key_path, limit, mode, *args)
+
+    stage = (f'umask 077; head -c {len(relay_data)} > {FIXTURE_RELAY_PATH} && '
+             f'chmod 400 {FIXTURE_RELAY_PATH} && sha256sum {FIXTURE_RELAY_PATH}')
+    reply = guest_command(key_path, 512, 'exec-out', 'sh', '-c', stage, input_data=relay_data)
+    expected_relay = f'{FIXTURE_RELAY_SHA256}  {FIXTURE_RELAY_PATH}'.encode('ascii')
+    if reply.strip() != expected_relay:
+        raise ValueError('Guest relay hash does not match the staged file')
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        relay_task = executor.submit(
+            guest_command, key_path, LOG_LIMIT, 'shell', 'env', f'CLASSPATH={FIXTURE_RELAY_PATH}',
+            'app_process', '/system/bin', 'FixtureLoopbackRelay', str(port), timeout=40,
+        )
+        time.sleep(2)
+        if relay_task.done():
+            raise ValueError('Guest relay stopped before launching the map')
+        launch = command(4096, 'shell', 'am', 'start', '-W', '-n', ACTIVITY)
+        if b'Status: ok' not in launch:
+            raise ValueError('Guest fixture activity did not start')
+        relay_output = relay_task.result()
+        if b'RELAY_COMPLETE ' not in relay_output:
+            raise ValueError(f'Guest relay did not complete: {relay_output.decode(errors="replace")[:500]}')
+    pid = running_pid(command)
+    deadline = time.monotonic() + 18
+    while time.monotonic() < deadline:
+        app = command(LOG_LIMIT, 'logcat', '-d', '--pid', str(pid), '-v', 'threadtime', '-s', 'TripMapSdkFixture:V', '*:S')
+        if b'FRAME_RENDERED fully=true' in app:
+            return collect(command, destination, apk, server_log.read_bytes(), relay_output,
+                           expected_apk_sha256=FIXTURE_APK_SHA256)
+        time.sleep(1)
+    raise ValueError('Guest fixture did not report a rendered map frame')
