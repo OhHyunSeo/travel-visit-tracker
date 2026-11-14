@@ -2,6 +2,10 @@
 
 마지막 갱신: 2026-11-14, Asia/Seoul.
 
+## 11월 14일 P3-02 후속: 전용 Android 첫 부팅 완료
+
+새 10GiB 볼륨의 초기 상태에서 커널 시작, 게스트 `init`의 `sys.boot_completed=1` 실행, 에뮬레이터의 새 `bootcompleted.ini` 일반 파일을 모두 확인했습니다. 에뮬레이터가 보고한 첫 부팅은 133,164ms였고 검사 종료 코드는 0이었습니다. 별도 logcat 파일은 0바이트였으므로 시스템 속성과 에뮬레이터 표식을 대조했습니다. Android 전용 프로세스를 종료하고 소유 볼륨을 제거했습니다. 이 실행에는 ADB 연결, APK 설치와 지도 표시는 없었습니다. [AOSP 에뮬레이터 부팅 표식 초기화](https://android.googlesource.com/platform/external/qemu/+/refs/heads/emu-35-3-release/android/emulator/main-emulator.cpp#894)
+
 ## 11월 14일 P3-02 후속: 격리 환경 Android 커널·시스템 서비스 시작
 
 QEMU의 커널 직렬 출력과 Android 로그 출력을 분리하자 중복 오류가 사라졌습니다. 전용 10GiB 볼륨에서 Linux 6.12 커널, `/data` 암호화 정책 적용, zygote와 `system_server` 동작을 관측했습니다. `netsimd`는 계속 차단됐고 에뮬레이터가 이전 네트워크 방식으로 전환했습니다. 호스트 제한 150초 안에 별도 게스트 로그 파일은 0바이트였으며 부팅 완료를 확인하지 못했습니다. 시험 전용 프로세스를 종료하고 볼륨을 제거했습니다. ADB, APK 설치와 Android 지도 표시는 미실행입니다. [AOSP 에뮬레이터 콘솔 구성](https://android.googlesource.com/platform/external/qemu/+/emu-master-dev/android-qemu2-glue/main.cpp#2893)

@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import time
@@ -19,7 +20,9 @@ from single_writer_component import ComponentError, _capture
 
 
 BOOT_VOLUME = 10 * 1024**3
+BOOT_TIMEOUT_SECONDS = 360
 HEADLESS_SHA256 = 'debac868b79f1170e64c5c202f8b39ce3dd0215c358b8d0e62ba63256ef6a819'
+BOOT_PROPERTY_ACTION = re.compile(rb'init: processing action \([^\r\n)]*\bsys\.boot_completed=1\b')
 PREP_PROFILE = '''(version 1)
 (deny default)
 (allow file-read* file-map-executable)
@@ -55,6 +58,13 @@ def pinned(path, expected):
         if hashlib.file_digest(stream, 'sha256').hexdigest() != expected:
             raise ComponentError(f'SDK executable hash changed: {path.name}')
     return str(path)
+
+
+def boot_marker_exists(marker):
+    try:
+        return stat.S_ISREG(marker.lstat().st_mode)
+    except FileNotFoundError:
+        return False
 
 
 def boot(root, sdk):
@@ -99,7 +109,9 @@ def boot(root, sdk):
     process = None
     log_path = root / 'emulator.log'
     logcat_path = root / 'guest-logcat.log'
+    boot_marker = avd / 'bootcompleted.ini'
     result = {'outsideAccessDenied': True, 'guestKernelObserved': False, 'guestBootCompletedLog': False,
+              'guestBootPropertyAction': False, 'emulatorBootCompletedMarker': False,
               'adbStarted': False, 'apkInstalled': False}
     try:
         # Serial kernel output uses stdio. Give the virtio logcat console its own file.
@@ -111,7 +123,7 @@ def boot(root, sdk):
         with log_path.open('xb') as log, open(os.devnull, 'rb', buffering=0) as input_file:
             process = subprocess.Popen(launch, cwd=root, env=env, stdin=input_file, stdout=log, stderr=log,
                                        start_new_session=True)
-        deadline = time.monotonic() + 150
+        deadline = time.monotonic() + BOOT_TIMEOUT_SECONDS
         with log_path.open('rb') as output, logcat_path.open('rb') as logcat:
             kernel_tail = b''
             logcat_tail = b''
@@ -122,12 +134,12 @@ def boot(root, sdk):
                 guest = logcat_tail + logcat_chunk
                 result['guestKernelObserved'] |= b'Linux version ' in kernel
                 result['guestBootCompletedLog'] |= b'ActivityManager: Finished booting' in guest
+                result['guestBootPropertyAction'] |= bool(BOOT_PROPERTY_ACTION.search(kernel))
+                result['emulatorBootCompletedMarker'] |= boot_marker_exists(boot_marker)
                 kernel_tail = kernel[-256:]
                 logcat_tail = guest[-256:]
                 has_output = kernel_chunk or logcat_chunk
-                if (result['guestKernelObserved'] and result['guestBootCompletedLog']) or (
-                    not has_output and process.poll() is not None
-                ):
+                if boot_completed(result) or (not has_output and process.poll() is not None):
                     break
                 if not has_output:
                     time.sleep(.25)
@@ -150,6 +162,13 @@ def boot(root, sdk):
                 process.wait(timeout=5)
 
 
+def boot_completed(result):
+    return result['guestKernelObserved'] and (
+        result['guestBootCompletedLog']
+        or (result['guestBootPropertyAction'] and result['emulatorBootCompletedMarker'])
+    )
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument('--sdk-root', required=True, type=Path)
@@ -157,7 +176,6 @@ if __name__ == '__main__':
     try:
         result = with_volume(size=BOOT_VOLUME, volume_check=lambda root: boot(root, args.sdk_root.resolve(strict=True)))
         print(json.dumps(result, sort_keys=True))
-        check = result['volumeCheck']
-        sys.exit(0 if check['guestKernelObserved'] and check['guestBootCompletedLog'] else 2)
+        sys.exit(0 if boot_completed(result['volumeCheck']) else 2)
     except (ComponentError, OSError, ValueError, KeyError) as error:
         sys.exit(f'Isolated Android boot attempt failed: {error}')
