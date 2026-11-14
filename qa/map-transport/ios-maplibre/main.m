@@ -168,17 +168,20 @@ static NSDictionary *TPProbe(NSURLSession *session, NSURL *url) {
     NSString *blockNetwork = env[@"QA_PACK_BLOCK_NETWORK"];
     NSString *resumeNetwork = env[@"QA_PACK_RESUME_NETWORK"];
     NSString *testRetryLimit = env[@"QA_PACK_TEST_RETRY_LIMIT"];
+    NSString *allowPrivatePackOrigin = env[@"QA_PACK_ALLOW_PRIVATE_ORIGIN"];
     self.expectPackRevalidation = reopening && [revalidation isEqual:@"1"];
     self.blockPackNetwork = reopening && [blockNetwork isEqual:@"1"];
     self.resumePackNetwork = self.blockPackNetwork && [resumeNetwork isEqual:@"1"];
     self.testPackRetryLimit = self.resumePackNetwork && [testRetryLimit isEqual:@"1"];
-    BOOL packInputsOK = reopening ? self.priorPackRunID.length && ![self.priorPackRunID isEqual:runID] &&
-        [[NSURL URLWithString:TPOrigin ?: @""].host isEqual:@"127.0.0.1"] &&
+    BOOL packOriginOK = allowPrivatePackOrigin ? [allowPrivatePackOrigin isEqual:@"1"] &&
+        [TPTransport safePrivateFixtureTLSOrigin:TPOrigin] && self.fixtureCertificate != nil :
+        [[NSURL URLWithString:TPOrigin ?: @""].host isEqual:@"127.0.0.1"];
+    BOOL packInputsOK = reopening ? self.priorPackRunID.length && ![self.priorPackRunID isEqual:runID] && packOriginOK &&
         [pattern numberOfMatchesInString:self.priorPackRunID options:0 range:NSMakeRange(0, self.priorPackRunID.length)] == 1 &&
         (!revalidation || self.expectPackRevalidation) && (!blockNetwork || self.blockPackNetwork) &&
         (!resumeNetwork || self.resumePackNetwork) && (!testRetryLimit || self.testPackRetryLimit) &&
         !(self.blockPackNetwork && self.expectPackRevalidation) :
-        !self.priorPackRunID && !revalidation && !blockNetwork && !resumeNetwork && !testRetryLimit;
+        !self.priorPackRunID && !revalidation && !blockNetwork && !resumeNetwork && !testRetryLimit && !allowPrivatePackOrigin;
     self.runID = valid ? runID : nil;
     if (usesActionGate && valid) self.actionGate = [[TPFixtureActionGate alloc] initWithRunID:runID processIdentifier:NSProcessInfo.processInfo.processIdentifier cancelNonce:env[@"QA_FIXTURE_CANCEL_NONCE"] reloadNonce:env[@"QA_FIXTURE_RELOAD_NONCE"]];
     NSURL *documents = [[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
