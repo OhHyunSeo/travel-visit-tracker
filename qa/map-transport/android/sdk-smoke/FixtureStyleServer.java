@@ -22,23 +22,24 @@ public final class FixtureStyleServer {
       .getBytes(StandardCharsets.UTF_8);
 
   public static void main(String[] args) throws Exception {
-    if ((args.length != 2 && !(args.length == 3 && "--raster-tile".equals(args[2])))
-        || !args[1].matches("[1-9][0-9]{3,4}")) {
-      throw new IllegalArgumentException("Usage: java FixtureStyleServer.java <fixture.p12> <port> [--raster-tile]");
+    boolean raster = args.length >= 3 && "--raster-tile".equals(args[2]);
+    boolean expire = args.length == 4 && "--expire-pack".equals(args[3]);
+    if (!(args.length == 2 || (raster && (args.length == 3 || expire))) || !args[1].matches("[1-9][0-9]{3,4}")) {
+      throw new IllegalArgumentException("Usage: java FixtureStyleServer.java <fixture.p12> <port> [--raster-tile [--expire-pack]]");
     }
     int port = Integer.parseInt(args[1]);
     if (port < 1024 || port > 65535) throw new IllegalArgumentException("Invalid fixture port");
-    HttpsServer server = bind(Path.of(args[0]), port, args.length == 3);
+    HttpsServer server = bind(Path.of(args[0]), port, raster, expire);
     Runtime.getRuntime().addShutdownHook(new Thread(() -> server.stop(0)));
     server.start();
     System.out.println("STYLE_SERVER_READY port=" + port);
   }
 
   static HttpsServer bind(Path keyStore, int port) throws Exception {
-    return bind(keyStore, port, false);
+    return bind(keyStore, port, false, false);
   }
 
-  private static HttpsServer bind(Path keyStore, int port, boolean raster) throws Exception {
+  private static HttpsServer bind(Path keyStore, int port, boolean raster, boolean expire) throws Exception {
     byte[] style = raster ? rasterStyle(port) : STYLE;
     byte[] tile = raster ? rasterTile() : null;
     char[] password = "fixture-only-password".toCharArray();
@@ -80,7 +81,7 @@ public final class FixtureStyleServer {
         }
         byte[] body = tileRequest ? tile : style;
         exchange.getResponseHeaders().set("Content-Type", tileRequest ? "image/png" : "application/json");
-        exchange.getResponseHeaders().set("Cache-Control", raster ? "max-age=300" : "no-store");
+        exchange.getResponseHeaders().set("Cache-Control", expire ? "max-age=1" : raster ? "max-age=300" : "no-store");
         exchange.sendResponseHeaders(200, body.length);
         exchange.getResponseBody().write(body);
         String resource = tileRequest ? "TILE path=/resource/tile/0_0_0" : "STYLE";

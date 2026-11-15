@@ -213,10 +213,12 @@ def install_fixture(key_path, apk, *, expected_hash=FIXTURE_APK_SHA256):
 
 
 @contextmanager
-def pack_server(java, identity, source, port, log_path):
+def pack_server(java, identity, source, port, log_path, *, expire_pack):
     with log_path.open('xb') as log:
-        process = subprocess.Popen([java, '-Djava.awt.headless=true', source, identity, str(port), '--raster-tile'],
-                                   stdout=log, stderr=log)
+        arguments = [java, '-Djava.awt.headless=true', source, identity, str(port), '--raster-tile']
+        if expire_pack:
+            arguments.append('--expire-pack')
+        process = subprocess.Popen(arguments, stdout=log, stderr=log)
         try:
             deadline = time.monotonic() + 15
             ready = f'STYLE_SERVER_READY port={port}\n'.encode('ascii')
@@ -237,12 +239,12 @@ def pack_server(java, identity, source, port, log_path):
                     process.wait(timeout=5)
 
 
-def reopen_fixture(key_path, apk, relay, server_log, destination, java, identity, *, expected_hash):
+def reopen_fixture(key_path, apk, relay, server_log, destination, java, identity, *, expected_hash, expire_pack=False):
     sys.path.append(str(Path(__file__).with_name('sdk-smoke')))
     from capture_device import (ACTIVITY, JOURNAL, PACKAGE, check_installed_apk, require_foreground, running_pid,
                                 write_capture)
     from verify_device_capture import JOURNAL_HEADER, JOURNAL_RECORD, LOG_LIMIT, PNG_LIMIT, read_apk
-    from verify_pack_reopen import DATABASE, verify_reopen
+    from verify_pack_reopen import DATABASE, pack_database, verify_reopen
 
     def command(limit, mode, *args):
         return guest_command(key_path, limit, mode, *args)
@@ -268,7 +270,7 @@ def reopen_fixture(key_path, apk, relay, server_log, destination, java, identity
     destination.mkdir(mode=0o700)
     download = destination / 'download'
     server_source = Path(__file__).with_name('sdk-smoke') / 'FixtureStyleServer.java'
-    with pack_server(java, identity, server_source, port, server_log):
+    with pack_server(java, identity, server_source, port, server_log, expire_pack=expire_pack):
         pack = render_fixture(key_path, apk, relay, server_log, download, raster_tile=True,
                               offline_pack=True, expected_hash=expected_hash)
         first_pid = running_pid(command)
@@ -281,6 +283,13 @@ def reopen_fixture(key_path, apk, relay, server_log, destination, java, identity
 
     reopen = destination / 'reopen'
     reopen.mkdir(mode=0o700)
+    if expire_pack:
+        saved = pack_database(download, pack['packId'], port)
+        expiration = (saved['styleStorage'][1], saved['tileStorage'][1])
+        epoch = command(32, 'shell', 'date', '+%s').strip()
+        if not epoch.isdigit() or any(not isinstance(value, int) or value >= int(epoch) for value in expiration):
+            raise ValueError('Style and tile must both expire before the app restarts')
+        write_capture(reopen / 'guest-epoch.txt', epoch + b'\n')
     launch = command(4096, 'shell', 'am', 'start', '-W', '-n', ACTIVITY,
                      '--el', 'fixture-reopen-pack', str(pack['packId']))
     if b'Status: ok' not in launch:
@@ -309,7 +318,7 @@ def reopen_fixture(key_path, apk, relay, server_log, destination, java, identity
     stop_app()
     capture_database(reopen)
     write_capture(reopen / 'server.log', server_log.read_bytes())
-    return {'download': pack, **verify_reopen(destination, pack, port, first_pid, second_pid)}
+    return {'download': pack, **verify_reopen(destination, pack, port, first_pid, second_pid, expire_pack=expire_pack)}
 
 
 def render_fixture(key_path, apk, relay, server_log, destination, *, raster_tile=False,

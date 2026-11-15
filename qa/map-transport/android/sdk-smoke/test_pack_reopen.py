@@ -3,8 +3,9 @@ from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
 import unittest
+import zlib
 
-from verify_pack_reopen import DATABASE, METADATA, pack_database, verify_reopen
+from verify_pack_reopen import DATABASE, METADATA, body_size, pack_database, verify_reopen
 
 
 class PackReopenTest(unittest.TestCase):
@@ -44,3 +45,8 @@ class PackReopenTest(unittest.TestCase):
     def test_reopen_rejects_reused_pid_before_reading_evidence(self):
         with self.assertRaisesRegex(ValueError, 'different Android process'):
             verify_reopen(self.root, {}, 39443, 19, 19)
+
+    def test_counts_logical_body_size_and_rejects_oversized_output(self):
+        self.assertEqual(body_size(zlib.compress(b'tile'), 1), 4)
+        with self.assertRaisesRegex(ValueError, 'expected size'):
+            body_size(zlib.compress(b'x' * 4097), 1)

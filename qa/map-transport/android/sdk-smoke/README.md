@@ -194,6 +194,12 @@ foreground screenshot that shows the synthetic tile. It compares the request
 journal before and after reopening and checks the app's transport count three
 seconds after the first complete frame. Replay it independently with
 `verify_pack_reopen.py CAPTURE --port PORT --first-pid PID --reopened-pid PID`.
+
+Add `--expire-pack` to the runner and the replay command to check expired
+resources. The server sends a one-second cache lifetime. The capture confirms
+both SQLite expiration times precede the new process and reports how many
+requests entered the fixture transport. New server responses and journal
+reservations must remain zero with the server stopped.
 checks that the fixture is the sole resumed activity before and after the
 screenshot, verifies the PID again before saving screen or journal data, and
 writes only to a new private capture directory. It leaves partial evidence on

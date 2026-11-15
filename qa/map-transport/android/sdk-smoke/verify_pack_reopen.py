@@ -5,13 +5,31 @@ from contextlib import closing
 import hashlib
 import json
 from pathlib import Path
+import re
 import sqlite3
+import zlib
 
-from verify_device_capture import FRAME_EVENT, LOG_LIMIT, check_journal, check_pack_log, check_render, check_transport_logs, fixture_messages, read_bounded
+from verify_device_capture import (FRAME_EVENT, LOG_LIMIT, RESERVATION, check_journal, check_pack_log,
+                                   check_render, check_transport_logs, fixture_messages, read_bounded)
 
 
 DATABASE = 'mbgl-offline.db'
 METADATA = b'trip-painting-offline-raster-z0-v1'
+
+
+def body_size(blob, compressed):
+    if compressed == 0:
+        return len(blob)
+    if compressed != 1:
+        raise ValueError('Unknown SDK offline compression flag')
+    decoder = zlib.decompressobj()
+    try:
+        size = len(decoder.decompress(blob, RESERVATION + 1))
+    except zlib.error as error:
+        raise ValueError('Invalid compressed offline resource') from error
+    if not decoder.eof or decoder.unused_data or not 0 < size <= RESERVATION:
+        raise ValueError('Offline resource exceeds its expected size or has trailing data')
+    return size
 
 
 def pack_database(directory, pack_id, port):
@@ -47,15 +65,19 @@ def pack_database(directory, pack_id, port):
         'tileSha256': hashlib.sha256(tile[4]).hexdigest(),
         'styleStorage': style[3:],
         'tileStorage': tile[5:],
+        'storedResourceBytes': len(style[2]) + len(tile[4]),
+        'storedTileBytes': len(tile[4]),
+        'styleBodyBytes': body_size(style[2], style[3]),
+        'tileBodyBytes': body_size(tile[4], tile[5]),
     }
 
 
-def verify_reopen(directory, pack, port, first_pid, second_pid):
+def verify_reopen(directory, pack, port, first_pid, second_pid, *, expire_pack=False):
     if min(first_pid, second_pid) <= 0 or first_pid == second_pid:
         raise ValueError('Reopen must use a different Android process')
     download = directory / 'download'
     reopen = directory / 'reopen'
-    check_transport_logs(download, port, raster_tile=True)
+    style_body_bytes, tile_body_bytes, _ = check_transport_logs(download, port, raster_tile=True)
     check_journal(download / 'budget.journal', raster_tile=True)
     original = check_pack_log(read_bounded(download / 'app.log', LOG_LIMIT), first_pid)
     if any(pack.get(name) != value for name, value in original.items()):
@@ -67,16 +89,29 @@ def verify_reopen(directory, pack, port, first_pid, second_pid):
     summary = (f'PACK_REOPENED id={pack["packId"]} resources=2 tiles=1 required=2 '
                f'resourceBytes={pack["storedResourceBytes"]} tileBytes={pack["storedTileBytes"]}')
     messages = fixture_messages(read_bounded(reopen / 'app.log', LOG_LIMIT), second_pid)
-    if messages != ['TRANSPORT_READY', summary, 'STYLE_LOADED attempts=2 tiles=1 reserved=8192', FRAME_EVENT,
-                    'REOPEN_TRANSPORT calls=0 attempts=2 tiles=1 reserved=8192']:
-        raise ValueError('Reopen did not report the original pack, complete frame and zero transport calls')
+    transport = re.fullmatch(r'REOPEN_TRANSPORT calls=(0|[1-9][0-9]{0,4}) attempts=2 tiles=1 reserved=8192',
+                             messages[-1] if messages else '')
+    if messages[:-1] != ['TRANSPORT_READY', summary, 'STYLE_LOADED attempts=2 tiles=1 reserved=8192', FRAME_EVENT] or not transport:
+        raise ValueError('Reopen did not report the original pack, complete frame and transport count')
+    calls = int(transport[1])
+    if not expire_pack and calls:
+        raise ValueError('Fresh cached resources unexpectedly reached the fixture transport')
     before = pack_database(download, pack['packId'], port)
+    if (before['styleBodyBytes'], before['tileBodyBytes']) != (style_body_bytes, tile_body_bytes):
+        raise ValueError('Saved response lengths differ from the fixture server lengths')
+    if (before['storedResourceBytes'], before['storedTileBytes']) != (pack['storedResourceBytes'], pack['storedTileBytes']):
+        raise ValueError('SQLite stored lengths differ from SDK progress')
     if pack_database(reopen, pack['packId'], port) != before:
         raise ValueError('The saved region or resource data changed during reopen')
-    return {'firstPid': first_pid, 'reopenedPid': second_pid, 'packId': pack['packId'],
+    if expire_pack:
+        epoch = read_bounded(reopen / 'guest-epoch.txt', 32).strip()
+        expiration = (before['styleStorage'][1], before['tileStorage'][1])
+        if not epoch.isdigit() or any(not isinstance(value, int) or value >= int(epoch) for value in expiration):
+            raise ValueError('Both SQLite resources must have expired before reopen')
+    return {'firstPid': first_pid, 'reopenedPid': second_pid, 'packId': pack['packId'], 'expiredBeforeReopen': expire_pack,
             'renderedFrame': check_render(reopen / 'screen.png', raster_tile=True),
             'styleSha256': before['styleSha256'], 'tileSha256': before['tileSha256'],
-            'transportCalls': 0, 'newReservations': 0, 'newServerResponses': 0}
+            'transportCalls': calls, 'newReservations': 0, 'newServerResponses': 0}
 
 
 if __name__ == '__main__':
@@ -85,10 +120,12 @@ if __name__ == '__main__':
     parser.add_argument('--port', required=True, type=int)
     parser.add_argument('--first-pid', required=True, type=int)
     parser.add_argument('--reopened-pid', required=True, type=int)
+    parser.add_argument('--expire-pack', action='store_true')
     args = parser.parse_args()
     try:
         pack = check_pack_log(read_bounded(args.capture / 'download/app.log', LOG_LIMIT), args.first_pid)
-        result = verify_reopen(args.capture, pack, args.port, args.first_pid, args.reopened_pid)
+        result = verify_reopen(args.capture, pack, args.port, args.first_pid, args.reopened_pid,
+                               expire_pack=args.expire_pack)
     except (OSError, ValueError, sqlite3.Error) as error:
         parser.exit(1, f'Pack reopen capture failed: {error}\n')
     print(json.dumps(result, sort_keys=True))
