@@ -239,7 +239,8 @@ def pack_server(java, identity, source, port, log_path, *, expire_pack):
                     process.wait(timeout=5)
 
 
-def reopen_fixture(key_path, apk, relay, server_log, destination, java, identity, *, expected_hash, expire_pack=False):
+def reopen_fixture(key_path, apk, relay, server_log, destination, java, identity, *, expected_hash,
+                   expire_pack=False, sdk_offline=False):
     sys.path.append(str(Path(__file__).with_name('sdk-smoke')))
     from capture_device import (ACTIVITY, JOURNAL, PACKAGE, check_installed_apk, require_foreground, running_pid,
                                 write_capture)
@@ -290,8 +291,10 @@ def reopen_fixture(key_path, apk, relay, server_log, destination, java, identity
         if not epoch.isdigit() or any(not isinstance(value, int) or value >= int(epoch) for value in expiration):
             raise ValueError('Style and tile must both expire before the app restarts')
         write_capture(reopen / 'guest-epoch.txt', epoch + b'\n')
-    launch = command(4096, 'shell', 'am', 'start', '-W', '-n', ACTIVITY,
-                     '--el', 'fixture-reopen-pack', str(pack['packId']))
+    extras = ['--el', 'fixture-reopen-pack', str(pack['packId'])]
+    if sdk_offline:
+        extras.extend(('--ez', 'fixture-sdk-offline', 'true'))
+    launch = command(4096, 'shell', 'am', 'start', '-W', '-n', ACTIVITY, *extras)
     if b'Status: ok' not in launch:
         raise ValueError('Guest fixture reopen activity did not start')
     second_pid = running_pid(command)
@@ -318,7 +321,8 @@ def reopen_fixture(key_path, apk, relay, server_log, destination, java, identity
     stop_app()
     capture_database(reopen)
     write_capture(reopen / 'server.log', server_log.read_bytes())
-    return {'download': pack, **verify_reopen(destination, pack, port, first_pid, second_pid, expire_pack=expire_pack)}
+    return {'download': pack, **verify_reopen(destination, pack, port, first_pid, second_pid,
+                                              expire_pack=expire_pack, sdk_offline=sdk_offline)}
 
 
 def render_fixture(key_path, apk, relay, server_log, destination, *, raster_tile=False,

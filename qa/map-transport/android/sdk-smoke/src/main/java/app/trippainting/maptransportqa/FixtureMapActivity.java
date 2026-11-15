@@ -6,6 +6,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.widget.TextView;
+import org.maplibre.android.MapLibre;
 import org.maplibre.android.maps.MapView;
 import org.maplibre.android.maps.Style;
 
@@ -44,6 +45,10 @@ public final class FixtureMapActivity extends Activity {
     long reopenId = getIntent().getLongExtra("fixture-reopen-pack", 0);
     if (reopenId > 0) {
       reopening = true;
+      if (getIntent().getBooleanExtra("fixture-sdk-offline", false)) {
+        MapLibre.setConnected(false);
+        Log.i(FixtureApplication.LOG_TAG, "REOPEN_SDK_OFFLINE connected=" + MapLibre.isConnected());
+      }
       FixtureOfflinePack.reopen(this, app.styleUrl(), reopenId, () -> openMap(app, state));
     } else {
       openMap(app, state);

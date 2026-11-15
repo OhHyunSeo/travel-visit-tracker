@@ -70,7 +70,8 @@ def boot_marker_exists(marker):
 
 
 def boot(root, sdk, *, probe_adb=False, fixture_apk=None, render_inputs=None, raster_tile=False,
-         offline_pack=False, expected_hash=FIXTURE_APK_SHA256, reopen_inputs=None, expire_pack=False):
+         offline_pack=False, expected_hash=FIXTURE_APK_SHA256, reopen_inputs=None, expire_pack=False,
+         sdk_offline=False):
     launcher = pinned(sdk / 'emulator/emulator', EMULATOR_SHA256)
     headless = pinned(sdk / 'emulator/qemu/darwin-aarch64/qemu-system-aarch64-headless', HEADLESS_SHA256)
     name = 'TripPaintingMapTransportQA_' + uuid.uuid4().hex[:12]
@@ -172,7 +173,8 @@ def boot(root, sdk, *, probe_adb=False, fixture_apk=None, render_inputs=None, ra
             try:
                 if reopen_inputs:
                     result['fixtureReopen'] = reopen_fixture(adb_key, fixture_apk, *render_inputs, *reopen_inputs,
-                                                            expected_hash=expected_hash, expire_pack=expire_pack)
+                                                            expected_hash=expected_hash, expire_pack=expire_pack,
+                                                            sdk_offline=sdk_offline)
                 else:
                     evidence = render_fixture(adb_key, fixture_apk, *render_inputs, raster_tile=raster_tile,
                                               offline_pack=offline_pack, expected_hash=expected_hash)
@@ -214,6 +216,7 @@ if __name__ == '__main__':
     parser.add_argument('--reopen-pack', type=Path, nargs=2, metavar=('JAVA', 'IDENTITY'),
                         help='Own a local server for the download, stop it, then reopen the same pack')
     parser.add_argument('--expire-pack', action='store_true', help='Wait until both cached resources have expired')
+    parser.add_argument('--sdk-offline', action='store_true', help='Set MapLibre offline before reopening an expired pack')
     parser.add_argument('--fixture-apk-sha256', help='Verified hash of a separately signed pack fixture APK')
     args = parser.parse_args()
     if args.fixture_apk and not args.probe_adb:
@@ -228,6 +231,8 @@ if __name__ == '__main__':
         parser.error('--reopen-pack requires --offline-pack')
     if args.expire_pack and not args.reopen_pack:
         parser.error('--expire-pack requires --reopen-pack')
+    if args.sdk_offline and not args.expire_pack:
+        parser.error('--sdk-offline requires --expire-pack')
     if args.fixture_apk_sha256 and not re.fullmatch(r'[0-9a-f]{64}', args.fixture_apk_sha256):
         parser.error('Expected a lowercase SHA-256 digest')
     try:
@@ -235,7 +240,7 @@ if __name__ == '__main__':
             root, args.sdk_root.resolve(strict=True), probe_adb=args.probe_adb, fixture_apk=args.fixture_apk,
             render_inputs=args.render_fixture, raster_tile=args.raster_tile, offline_pack=args.offline_pack,
             expected_hash=args.fixture_apk_sha256 or FIXTURE_APK_SHA256, reopen_inputs=args.reopen_pack,
-            expire_pack=args.expire_pack))
+            expire_pack=args.expire_pack, sdk_offline=args.sdk_offline))
         print(json.dumps(result, sort_keys=True))
         check = result['volumeCheck']
         passed = boot_completed(check)

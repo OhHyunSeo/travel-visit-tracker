@@ -2,6 +2,14 @@
 
 마지막 갱신: 2026-11-15, Asia/Seoul.
 
+## 11월 15일 P3-02 후속: MapLibre 오프라인 상태에서 만료 팩 표시
+
+전용 API 37 에뮬레이터에서 새 서명 시험 APK `0914274f761c5d8e40e061ad5938137229e819d6c7379c459d76c92cd1a82be8`를 설치했습니다. 스타일과 타일 만료, 서버 종료와 게스트 중계 완료를 확인한 뒤 같은 설치를 PID 3117에서 3800으로 재실행했습니다. 지도 생성 전에 `MapLibre.setConnected(false)`를 적용하고 SDK 조회의 `connected=false`를 확인했습니다. [MapLibre 연결 상태 API](https://maplibre.org/maplibre-native/android/api/-map-libre%20-native%20-android/org.maplibre.android/-map-libre/set-connected.html)
+
+같은 팩 ID와 SQLite 스타일·타일 해시, 전면 화면 중앙의 타일 색 25/25점이 일치했습니다. 완전 프레임 3초 뒤까지 앱 전송 호출·새 서버 응답·새 장부 예약은 각각 0건이었습니다. APK 빌드 35개 작업과 Android 준비 131개·수집 42개를 통과했습니다. 최종 원문은 Git 제외 `docs/test-results/android-map-transport-20261114-checkpoint/reopen.q59w6G/`입니다.
+
+공유 5시간 한도 잔여 18%에서 실행 중인 단위만 마쳤습니다. 전용 볼륨·서버·에뮬레이터를 종료했고 이번에 생성한 전용 Gradle 캐시 약 508MiB를 삭제했습니다. 온라인 복귀, 제품 화면 연결, 실제 공급원·수신량·실기기·Release는 미실행입니다.
+
 ## 11월 15일 P3-02 후속: 만료된 팩을 서버 없이 다시 표시
 
 서버가 유효 기간을 1초로 지정한 합성 스타일과 타일을 저장했습니다. SQLite의 두 만료 시각이 지난 것을 게스트 시각으로 확인한 뒤 같은 설치를 새 PID 3943으로 열었습니다. 종료한 Mac 서버와 끝난 게스트 중계는 다시 띄우지 않았습니다. MapLibre는 동일 팩 ID와 완료 상태를 읽고, 대조한 화면 중앙의 25/25점에 저장 타일을 표시했습니다. SQLite 팩 정의와 연결된 내용 해시도 일치했습니다.

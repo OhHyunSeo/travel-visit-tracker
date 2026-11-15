@@ -72,7 +72,7 @@ def pack_database(directory, pack_id, port):
     }
 
 
-def verify_reopen(directory, pack, port, first_pid, second_pid, *, expire_pack=False):
+def verify_reopen(directory, pack, port, first_pid, second_pid, *, expire_pack=False, sdk_offline=False):
     if min(first_pid, second_pid) <= 0 or first_pid == second_pid:
         raise ValueError('Reopen must use a different Android process')
     download = directory / 'download'
@@ -89,13 +89,17 @@ def verify_reopen(directory, pack, port, first_pid, second_pid, *, expire_pack=F
     summary = (f'PACK_REOPENED id={pack["packId"]} resources=2 tiles=1 required=2 '
                f'resourceBytes={pack["storedResourceBytes"]} tileBytes={pack["storedTileBytes"]}')
     messages = fixture_messages(read_bounded(reopen / 'app.log', LOG_LIMIT), second_pid)
+    expected = ['TRANSPORT_READY']
+    if sdk_offline:
+        expected.append('REOPEN_SDK_OFFLINE connected=false')
+    expected.extend((summary, 'STYLE_LOADED attempts=2 tiles=1 reserved=8192', FRAME_EVENT))
     transport = re.fullmatch(r'REOPEN_TRANSPORT calls=(0|[1-9][0-9]{0,4}) attempts=2 tiles=1 reserved=8192',
                              messages[-1] if messages else '')
-    if messages[:-1] != ['TRANSPORT_READY', summary, 'STYLE_LOADED attempts=2 tiles=1 reserved=8192', FRAME_EVENT] or not transport:
+    if messages[:-1] != expected or not transport:
         raise ValueError('Reopen did not report the original pack, complete frame and transport count')
     calls = int(transport[1])
-    if not expire_pack and calls:
-        raise ValueError('Fresh cached resources unexpectedly reached the fixture transport')
+    if (sdk_offline or not expire_pack) and calls:
+        raise ValueError('A cache-only reopen unexpectedly reached the fixture transport')
     before = pack_database(download, pack['packId'], port)
     if (before['styleBodyBytes'], before['tileBodyBytes']) != (style_body_bytes, tile_body_bytes):
         raise ValueError('Saved response lengths differ from the fixture server lengths')
@@ -109,6 +113,7 @@ def verify_reopen(directory, pack, port, first_pid, second_pid, *, expire_pack=F
         if not epoch.isdigit() or any(not isinstance(value, int) or value >= int(epoch) for value in expiration):
             raise ValueError('Both SQLite resources must have expired before reopen')
     return {'firstPid': first_pid, 'reopenedPid': second_pid, 'packId': pack['packId'], 'expiredBeforeReopen': expire_pack,
+            'sdkOffline': sdk_offline,
             'renderedFrame': check_render(reopen / 'screen.png', raster_tile=True),
             'styleSha256': before['styleSha256'], 'tileSha256': before['tileSha256'],
             'transportCalls': calls, 'newReservations': 0, 'newServerResponses': 0}
@@ -121,11 +126,14 @@ if __name__ == '__main__':
     parser.add_argument('--first-pid', required=True, type=int)
     parser.add_argument('--reopened-pid', required=True, type=int)
     parser.add_argument('--expire-pack', action='store_true')
+    parser.add_argument('--sdk-offline', action='store_true')
     args = parser.parse_args()
+    if args.sdk_offline and not args.expire_pack:
+        parser.error('--sdk-offline requires --expire-pack')
     try:
         pack = check_pack_log(read_bounded(args.capture / 'download/app.log', LOG_LIMIT), args.first_pid)
         result = verify_reopen(args.capture, pack, args.port, args.first_pid, args.reopened_pid,
-                               expire_pack=args.expire_pack)
+                               expire_pack=args.expire_pack, sdk_offline=args.sdk_offline)
     except (OSError, ValueError, sqlite3.Error) as error:
         parser.exit(1, f'Pack reopen capture failed: {error}\n')
     print(json.dumps(result, sort_keys=True))

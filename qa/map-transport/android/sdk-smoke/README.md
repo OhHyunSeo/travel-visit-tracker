@@ -200,6 +200,10 @@ resources. The server sends a one-second cache lifetime. The capture confirms
 both SQLite expiration times precede the new process and reports how many
 requests entered the fixture transport. New server responses and journal
 reservations must remain zero with the server stopped.
+
+Add `--sdk-offline` with `--expire-pack` to make the separate trial require
+MapLibre's disconnected state and zero transport calls while the expired tile
+is displayed. The offline flag is set before the map is constructed.
 checks that the fixture is the sole resumed activity before and after the
 screenshot, verifies the PID again before saving screen or journal data, and
 writes only to a new private capture directory. It leaves partial evidence on
