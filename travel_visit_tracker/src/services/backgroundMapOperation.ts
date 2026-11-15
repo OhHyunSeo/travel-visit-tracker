@@ -1,6 +1,8 @@
 import {
   createBackgroundMapPackMetadata,
   findBackgroundMapPack,
+  readBackgroundMapPackMetadata,
+  type BackgroundMapPackMetadata,
 } from '../domain/backgroundMapPack';
 import {
   planBackgroundMapFromMetadata,
@@ -8,6 +10,7 @@ import {
   type BackgroundMapSha256,
   type ReviewedBackgroundMapMetadata,
 } from '../domain/backgroundMapMetadata';
+import { readBackgroundMapPlan } from '../domain/backgroundMapPlan';
 import type { BackgroundMapOperationRepository } from '../storage/backgroundMapOperationRepository';
 
 type Pack = { id: string; bounds: unknown; metadata: unknown };
@@ -22,13 +25,11 @@ type BackgroundMapPreparation = {
   maxZoom?: number;
 };
 
-/** Verify the source data and save the exact generated style identity before any SDK call. */
-export async function prepareBackgroundMapOperation(
-  store: Pick<BackgroundMapOperationRepository, 'prepare'>,
-  input: BackgroundMapPreparation,
+async function verifyBackgroundMapStyle(
+  input: Omit<BackgroundMapPreparation, 'operationId'>,
   digestSha256: BackgroundMapSha256,
 ) {
-  const { operationId, regionId, bytes, reference, minZoom, maxZoom } = input;
+  const { regionId, bytes, reference, minZoom, maxZoom } = input;
   const reviewed = await planBackgroundMapFromMetadata(
     regionId,
     bytes,
@@ -37,15 +38,54 @@ export async function prepareBackgroundMapOperation(
     minZoom,
     maxZoom,
   );
-  const localStyleSha256 = await digestSha256(new TextEncoder().encode(reviewed.offlineStyleJson));
-  const metadata = createBackgroundMapPackMetadata(reviewed.plan, {
-    operationId,
+  const styleJson = reviewed.offlineStyleJson;
+  const localStyleSha256 = await digestSha256(new TextEncoder().encode(styleJson));
+  return {
+    plan: reviewed.plan,
     tileJsonSha256: reviewed.tileJsonSha256,
+    styleJson,
     localStyleSha256,
+  };
+}
+
+/** Verify the source data and save the exact generated style identity before any SDK call. */
+export async function prepareBackgroundMapOperation(
+  store: Pick<BackgroundMapOperationRepository, 'prepare'>,
+  input: BackgroundMapPreparation,
+  digestSha256: BackgroundMapSha256,
+) {
+  const reviewed = await verifyBackgroundMapStyle(input, digestSha256);
+  const metadata = createBackgroundMapPackMetadata(reviewed.plan, {
+    operationId: input.operationId,
+    tileJsonSha256: reviewed.tileJsonSha256,
+    localStyleSha256: reviewed.localStyleSha256,
   });
   return (await store.prepare(metadata))
-    ? { kind: 'prepared' as const, metadata, styleJson: reviewed.offlineStyleJson }
+    ? { kind: 'prepared' as const, metadata, styleJson: reviewed.styleJson }
     : { kind: 'busy' as const };
+}
+
+/** Regenerate only the bytes recorded for this operation, without updating its identity. */
+export async function recoverBackgroundMapStyle(
+  stored: BackgroundMapPackMetadata,
+  bytes: BackgroundMapMetadataBytes,
+  digestSha256: BackgroundMapSha256,
+): Promise<string> {
+  const metadata = readBackgroundMapPackMetadata(stored);
+  const plan = readBackgroundMapPlan(metadata.plan);
+  const reviewed = await verifyBackgroundMapStyle(
+    {
+      regionId: plan.regionId,
+      bytes,
+      reference: { ...plan.revision, tileJsonSha256: metadata.tileJsonSha256 },
+      minZoom: plan.minZoom,
+      maxZoom: plan.maxZoom,
+    },
+    digestSha256,
+  );
+  if (reviewed.localStyleSha256 !== metadata.localStyleSha256)
+    throw new Error('Saved background map style hash differs');
+  return reviewed.styleJson;
 }
 
 export type BackgroundMapOperationStatus =

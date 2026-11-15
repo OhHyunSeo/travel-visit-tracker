@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { regions } from '../src/data/regions';
-import { prepareBackgroundMapOperation } from '../src/services/backgroundMapOperation';
+import {
+  prepareBackgroundMapOperation,
+  recoverBackgroundMapStyle,
+} from '../src/services/backgroundMapOperation';
 import {
   matchBackgroundMapSymbolRequest,
   matchBackgroundMapTileRequest,
@@ -102,6 +105,27 @@ describe('preparing a background map operation', () => {
       ),
     ).rejects.toMatchObject({ reason: 'digest' });
     expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it('regenerates the exact style from a saved operation after reading it again', async () => {
+    const { bytes, reference } = fixture();
+    const prepared = await prepareBackgroundMapOperation(
+      { prepare: vi.fn().mockResolvedValue(true) },
+      { operationId, regionId, bytes, reference, minZoom: 10, maxZoom: 10 },
+      digest,
+    );
+    if (prepared.kind !== 'prepared') throw new Error('Expected prepared style');
+    const restored = JSON.parse(JSON.stringify(prepared.metadata));
+    await expect(recoverBackgroundMapStyle(restored, bytes, digest)).resolves.toBe(
+      prepared.styleJson,
+    );
+    await expect(
+      recoverBackgroundMapStyle({ ...restored, localStyleSha256: '0'.repeat(64) }, bytes, digest),
+    ).rejects.toThrow('Saved background map style hash differs');
+    const changedConfig = encode({ ...tileJson, attribution: 'changed' });
+    await expect(
+      recoverBackgroundMapStyle(restored, { ...bytes, tileJson: changedConfig }, digest),
+    ).rejects.toMatchObject({ reason: 'digest' });
   });
 });
 
