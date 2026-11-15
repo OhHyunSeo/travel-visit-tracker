@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { regions } from '../src/data/regions';
+import { prepareBackgroundMapOperation } from '../src/services/backgroundMapOperation';
 import {
   matchBackgroundMapSymbolRequest,
   matchBackgroundMapTileRequest,
@@ -53,6 +54,56 @@ function fixture(styleBytes: Uint8Array = encode(style), tileBytes: Uint8Array =
     reference: { styleSha256: sha256(styleBytes), tileJsonSha256: sha256(tileBytes), tileVersion },
   };
 }
+
+describe('preparing a background map operation', () => {
+  const operationId = '9729af8d-20ac-42db-ae59-3773944d5530';
+
+  it('stores the hash of the generated UTF-8 style and the exact reviewed plan', async () => {
+    const { bytes, reference } = fixture();
+    const prepare = vi.fn().mockResolvedValue(true);
+    const result = await prepareBackgroundMapOperation(
+      { prepare },
+      { operationId, regionId, bytes, reference, minZoom: 10, maxZoom: 11 },
+      digest,
+    );
+    expect(result.kind).toBe('prepared');
+    if (result.kind !== 'prepared') throw new Error('Expected prepared style');
+    expect(prepare).toHaveBeenCalledExactlyOnceWith(result.metadata);
+    expect(result.metadata).toMatchObject({
+      operationId,
+      tileJsonSha256: reference.tileJsonSha256,
+      localStyleSha256: sha256(Buffer.from(result.styleJson)),
+    });
+    expect(result.metadata.localStyleSha256).not.toBe(reference.styleSha256);
+    expect(JSON.parse(result.metadata.plan)).toMatchObject({ regionId, minZoom: 10, maxZoom: 11 });
+  });
+
+  it('keeps an existing operation and withholds the next style', async () => {
+    const prepare = vi.fn().mockResolvedValue(false);
+    expect(
+      await prepareBackgroundMapOperation(
+        { prepare },
+        { operationId, regionId, ...fixture() },
+        digest,
+      ),
+    ).toEqual({ kind: 'busy' });
+    expect(prepare).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not write an operation if reviewed metadata fails verification', async () => {
+    const { bytes, reference } = fixture();
+    const prepare = vi.fn();
+    bytes.style[0] = 0;
+    await expect(
+      prepareBackgroundMapOperation(
+        { prepare },
+        { operationId, regionId, bytes, reference },
+        digest,
+      ),
+    ).rejects.toMatchObject({ reason: 'digest' });
+    expect(prepare).not.toHaveBeenCalled();
+  });
+});
 
 describe('background map metadata verification', () => {
   it('plans a region and returns the four reviewed resource templates', async () => {

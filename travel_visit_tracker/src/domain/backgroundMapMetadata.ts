@@ -5,9 +5,10 @@ import {
   type BackgroundMapRevision,
 } from './backgroundMapPlan';
 
-type ReviewedMetadata = BackgroundMapRevision & Readonly<{ tileJsonSha256: string }>;
-type MetadataBytes = Readonly<{ style: Uint8Array; tileJson: Uint8Array }>;
-type Sha256 = (bytes: Uint8Array) => Promise<string>;
+export type ReviewedBackgroundMapMetadata = BackgroundMapRevision &
+  Readonly<{ tileJsonSha256: string }>;
+export type BackgroundMapMetadataBytes = Readonly<{ style: Uint8Array; tileJson: Uint8Array }>;
+export type BackgroundMapSha256 = (bytes: Uint8Array) => Promise<string>;
 type BackgroundMapMetadata = Readonly<{
   plan: BackgroundMapPlan;
   tileJsonSha256: string;
@@ -175,9 +176,9 @@ function readCoverage(value: unknown, region: BackgroundMapPlan['bounds']) {
 /** Checks two local documents against a separately reviewed reference before planning a region. */
 export async function planBackgroundMapFromMetadata(
   regionId: string,
-  bytes: MetadataBytes,
-  reference: ReviewedMetadata,
-  digestSha256: Sha256,
+  bytes: BackgroundMapMetadataBytes,
+  reference: ReviewedBackgroundMapMetadata,
+  digestSha256: BackgroundMapSha256,
   minZoom?: number,
   maxZoom?: number,
 ): Promise<BackgroundMapMetadata> {
