@@ -36,6 +36,35 @@ final class FixtureOfflinePack implements OfflineRegion.OfflineRegionObserver {
     });
   }
 
+  static void reopen(Context context, String styleUrl, long expectedId, Runnable ready) {
+    FixtureOfflinePack trial = new FixtureOfflinePack(OfflineManager.getInstance(context));
+    trial.manager.listOfflineRegions(new OfflineManager.ListOfflineRegionsCallback() {
+      @Override public void onList(OfflineRegion[] regions) {
+        if (regions == null || regions.length != 1 || regions[0].getId() != expectedId
+            || !Arrays.equals(regions[0].getMetadata(), METADATA)
+            || !styleUrl.equals(regions[0].getDefinition().getStyleURL())) {
+          trial.fail("reopen region identity");
+          return;
+        }
+        regions[0].getStatus(new OfflineRegion.OfflineRegionStatusCallback() {
+          @Override public void onStatus(OfflineRegionStatus status) {
+            if (!status.isComplete() || !status.isRequiredResourceCountPrecise()
+                || status.getDownloadState() != OfflineRegion.STATE_INACTIVE) {
+              trial.fail("reopen region status");
+              return;
+            }
+            log("PACK_REOPENED id=" + expectedId + summary(status));
+            ready.run();
+          }
+
+          @Override public void onError(String error) { trial.fail("reopen region status"); }
+        });
+      }
+
+      @Override public void onError(String error) { trial.fail("reopen region listing"); }
+    });
+  }
+
   private void create(String styleUrl) {
     OfflineTilePyramidRegionDefinition definition = new OfflineTilePyramidRegionDefinition(
         styleUrl, LatLngBounds.from(1.0, 1.0, -1.0, -1.0), 0.0, 0.0, 1.0f, false);

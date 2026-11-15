@@ -1,6 +1,8 @@
 """Bounded direct ADB queries for the cold boot component's own emulator."""
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+import errno
 from hashlib import sha256
 from pathlib import Path
 import re
@@ -208,6 +210,106 @@ def install_fixture(key_path, apk, *, expected_hash=FIXTURE_APK_SHA256):
         raise ValueError(f'Guest APK install stream failed: {error}') from error
     check_installed_apk(command, expected_hash)
     return {**device, 'installedApkSha256': expected_hash}
+
+
+@contextmanager
+def pack_server(java, identity, source, port, log_path):
+    with log_path.open('xb') as log:
+        process = subprocess.Popen([java, '-Djava.awt.headless=true', source, identity, str(port), '--raster-tile'],
+                                   stdout=log, stderr=log)
+        try:
+            deadline = time.monotonic() + 15
+            ready = f'STYLE_SERVER_READY port={port}\n'.encode('ascii')
+            while time.monotonic() < deadline and process.poll() is None:
+                if log_path.read_bytes() == ready:
+                    break
+                time.sleep(.25)
+            else:
+                raise ValueError('Owned synthetic server did not become ready')
+            yield
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+
+
+def reopen_fixture(key_path, apk, relay, server_log, destination, java, identity, *, expected_hash):
+    sys.path.append(str(Path(__file__).with_name('sdk-smoke')))
+    from capture_device import (ACTIVITY, JOURNAL, PACKAGE, check_installed_apk, require_foreground, running_pid,
+                                write_capture)
+    from verify_device_capture import JOURNAL_HEADER, JOURNAL_RECORD, LOG_LIMIT, PNG_LIMIT, read_apk
+    from verify_pack_reopen import DATABASE, verify_reopen
+
+    def command(limit, mode, *args):
+        return guest_command(key_path, limit, mode, *args)
+
+    def stop_app():
+        command(1024, 'shell', 'am', 'force-stop', PACKAGE)
+        if command(128, 'shell', 'pidof', PACKAGE).strip():
+            raise ValueError('Fixture app process did not stop')
+
+    def capture_database(directory):
+        for name in (DATABASE, DATABASE + '-wal'):
+            guest_path = f'files/{name}'
+            data = command(4 * 1024**2, 'exec-out', 'run-as', PACKAGE, 'sh', '-c',
+                           f'if [ -s {guest_path} ]; then cat {guest_path}; fi')
+            if data:
+                write_capture(directory / name, data)
+            elif name == DATABASE:
+                raise ValueError('SDK offline database was not found in the fixture files directory')
+
+    port, digest = read_apk(apk)
+    if digest != expected_hash:
+        raise ValueError('Reopen fixture APK hash changed')
+    destination.mkdir(mode=0o700)
+    download = destination / 'download'
+    server_source = Path(__file__).with_name('sdk-smoke') / 'FixtureStyleServer.java'
+    with pack_server(java, identity, server_source, port, server_log):
+        pack = render_fixture(key_path, apk, relay, server_log, download, raster_tile=True,
+                              offline_pack=True, expected_hash=expected_hash)
+        first_pid = running_pid(command)
+    with socket.socket() as probe:
+        probe.settimeout(2)
+        if probe.connect_ex(('127.0.0.1', port)) != errno.ECONNREFUSED:
+            raise ValueError('Host fixture server still accepts connections')
+    stop_app()
+    capture_database(download)
+
+    reopen = destination / 'reopen'
+    reopen.mkdir(mode=0o700)
+    launch = command(4096, 'shell', 'am', 'start', '-W', '-n', ACTIVITY,
+                     '--el', 'fixture-reopen-pack', str(pack['packId']))
+    if b'Status: ok' not in launch:
+        raise ValueError('Guest fixture reopen activity did not start')
+    second_pid = running_pid(command)
+    if second_pid == first_pid:
+        raise ValueError('Reopen did not start a new process')
+    deadline = time.monotonic() + 25
+    while time.monotonic() < deadline:
+        app = command(LOG_LIMIT, 'logcat', '-d', '--pid', str(second_pid), '-v', 'threadtime',
+                      '-s', 'TripMapSdkFixture:V', '*:S')
+        if b'REOPEN_TRANSPORT ' in app or b'PACK_FAILED ' in app or b'STYLE_LOAD_FAILED' in app:
+            break
+        time.sleep(1)
+    write_capture(reopen / 'app.log', app)
+    if b'REOPEN_TRANSPORT ' not in app:
+        raise ValueError('Reopened pack did not report a complete frame and request count')
+    require_foreground(command)
+    write_capture(reopen / 'screen.png', command(PNG_LIMIT, 'exec-out', 'screencap', '-p'))
+    require_foreground(command)
+    if running_pid(command) != second_pid:
+        raise ValueError('Reopened app process changed during capture')
+    journal_size = JOURNAL_HEADER.size + 2 * JOURNAL_RECORD.size
+    write_capture(reopen / 'budget.journal', command(journal_size, 'exec-out', 'run-as', PACKAGE, 'cat', JOURNAL))
+    check_installed_apk(command, expected_hash)
+    stop_app()
+    capture_database(reopen)
+    write_capture(reopen / 'server.log', server_log.read_bytes())
+    return {'download': pack, **verify_reopen(destination, pack, port, first_pid, second_pid)}
 
 
 def render_fixture(key_path, apk, relay, server_log, destination, *, raster_tile=False,

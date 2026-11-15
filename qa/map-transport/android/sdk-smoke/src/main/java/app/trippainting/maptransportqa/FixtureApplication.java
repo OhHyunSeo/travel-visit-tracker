@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.maplibre.android.MapLibre;
 import org.maplibre.android.storage.FileSource;
 
@@ -21,6 +22,7 @@ public final class FixtureApplication extends Application {
   static final String LOG_TAG = "TripMapSdkFixture";
   private String styleUrl;
   private FixtureBudget budget;
+  private final AtomicInteger transportCalls = new AtomicInteger();
 
   @Override public void onCreate() {
     super.onCreate();
@@ -41,7 +43,10 @@ public final class FixtureApplication extends Application {
         // Reopen the same reservation journal for this package.
       }
       budget = FixtureBudget.open(journal, 16, 8, 4_096, 65_536);
-      client = FixtureHttpClient.https(port, chain -> chain.proceed(chain.request()), budget, certificate);
+      client = FixtureHttpClient.https(port, chain -> {
+        transportCalls.incrementAndGet();
+        return chain.proceed(chain.request());
+      }, budget, certificate);
       FixtureModuleProvider.install(client);
       Path resources = Path.of(FileSource.getResourcesCachePath(this)).toRealPath();
       if (!resources.startsWith(files)) throw new IOException("Fixture resources must stay in the package files directory");
@@ -75,5 +80,11 @@ public final class FixtureApplication extends Application {
     FixtureBudget.Snapshot totals = budget.snapshot();
     Log.i(LOG_TAG, "STYLE_LOADED attempts=" + totals.attempts + " tiles=" + totals.tileAttempts
         + " reserved=" + totals.reservedBytes);
+  }
+
+  void reportReopenTransport() {
+    FixtureBudget.Snapshot totals = budget.snapshot();
+    Log.i(LOG_TAG, "REOPEN_TRANSPORT calls=" + transportCalls.get() + " attempts=" + totals.attempts
+        + " tiles=" + totals.tileAttempts + " reserved=" + totals.reservedBytes);
   }
 }

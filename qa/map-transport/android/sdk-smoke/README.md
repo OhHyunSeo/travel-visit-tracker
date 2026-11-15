@@ -178,6 +178,22 @@ downloads one zoom-zero region, then queries the same region ID, metadata and
 completed status again. The capture compares its two resources with two server
 responses and two on-device reservations. A process restart and cache-only
 render are separate checks.
+
+## Reopen the installed pack with the server stopped
+
+Build and verify the APK that includes the reopen activity. Add
+`--reopen-pack /absolute/path/to/java /absolute/path/to/fixture.p12` to the
+offline pack command, and give `--render-fixture` a new server log and capture
+directory. The runner starts and stops its loopback server. It waits for the
+guest relay to finish, verifies that the server port refuses a connection, then
+force-stops just the fixture package and starts the same installation again.
+
+The capture requires two different PIDs, the same region ID and metadata, an
+unchanged SQLite link and payload hash for both the style and the tile, and a
+foreground screenshot that shows the synthetic tile. It compares the request
+journal before and after reopening and checks the app's transport count three
+seconds after the first complete frame. Replay it independently with
+`verify_pack_reopen.py CAPTURE --port PORT --first-pid PID --reopened-pid PID`.
 checks that the fixture is the sole resumed activity before and after the
 screenshot, verifies the PID again before saving screen or journal data, and
 writes only to a new private capture directory. It leaves partial evidence on
