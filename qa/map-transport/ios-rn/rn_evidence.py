@@ -115,3 +115,22 @@ def verify_pack_recovery(result, recovery, ledger, server, origin, certificate, 
           _same(native.get("acceptedBodyBytes"), sum(item["bytes"] for item in requests)), "pack response evidence differs")
     return {"validated": True, "runtime": runtime, "bundle": BUNDLE, "resources": paths,
             "verifiedHTTPSExchanges": 2, "samePackPersisted": True, "operationStates": states}
+
+
+def verify_pack_reopen(result, recovery, ledger, origin, certificate, run, pid, previous_pid, previous_pack):
+    _need(result.get("complete") is True and result.get("pass") is True and
+          result.get("delegatePreserved") is True and result.get("runID") == run and
+          result.get("process") == pid and pid != previous_pid, "QA did not complete in a new process")
+    _need(recovery.get("pass") is True and recovery.get("states") == ["complete"] and
+          recovery.get("savedPackId") == previous_pack.get("savedPackId") and
+          _same(recovery.get("status"), previous_pack.get("status")), "saved pack or completion changed")
+    native = result["native"]
+    _need(result.get("observedRequests") == [] and native.get("ledgerOK") is True and
+          all(_same(native.get(k), 0) for k in ("started", "released", "httpRequestSendsSettled", "tlsVerifiedExchanges",
+              "active", "pending", "blockedBeforeDispatch", "acceptedBodyBytes")), "reopen attempted transport")
+    _need(_same(native.get("ledger"), ledger) and ledger.get("origin") == origin and
+          all(_same(ledger.get(k), 0) for k in ("requests", "tiles", "reservedBytes")) and
+          ledger.get("unresolved") == [], "reopen reserved resources")
+    _certificate(ledger.get("fixtureTLSLeafDER"), certificate)
+    return {"validated": True, "runtime": "physical-iphone", "bundle": BUNDLE,
+            "samePackPersisted": True, "newProcess": True, "verifiedHTTPSExchanges": 0}

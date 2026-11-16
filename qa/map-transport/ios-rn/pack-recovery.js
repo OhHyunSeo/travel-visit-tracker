@@ -5,11 +5,19 @@ import { planBackgroundMap } from './product-source/domain/backgroundMapPlan';
 import { recoverInstalledBackgroundMapOperation } from './product-source/services/backgroundMapRecovery.native';
 import { getBackgroundMapOperationRepository } from './product-source/storage/database';
 
-export async function verifyPackRecovery(origin) {
+export async function verifyPackRecovery(origin, reopening) {
   const states = [];
   try {
     const initial = await recoverInstalledBackgroundMapOperation();
     states.push(initial.kind);
+    const store = await getBackgroundMapOperationRepository();
+    if (reopening) {
+      const saved = await store.current();
+      if (initial.kind !== 'complete' || saved?.packId !== initial.packId)
+        throw new Error('The recovered pack did not survive restart');
+      await NativeModules.TPRNProbe.reportPackRecovery({ pass: true, states, status: initial, savedPackId: saved.packId });
+      return;
+    }
     if (initial.kind !== 'idle') throw new Error('Expected a fresh synthetic operation database');
     const plan = planBackgroundMap(regions[0].id, {
       styleSha256: 'a'.repeat(64), tileVersion: '20261028_120000_pt',
@@ -18,7 +26,6 @@ export async function verifyPackRecovery(origin) {
       operationId: '9729af8d-20ac-42db-ae59-3773944d5530',
       tileJsonSha256: 'b'.repeat(64), localStyleSha256: 'c'.repeat(64),
     });
-    const store = await getBackgroundMapOperationRepository();
     if (!await store.prepare(metadata)) throw new Error('Could not save the synthetic operation');
     const waiting = await recoverInstalledBackgroundMapOperation();
     states.push(waiting.kind);

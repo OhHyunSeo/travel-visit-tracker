@@ -38,25 +38,25 @@ const styles = StyleSheet.create({
 });
 
 function QAEntry(props) {
-  return props.packRecovery ? <PackRecoveryEntry {...props} /> : <Trial {...props} />;
+  return props.trial === 'render' ? <Trial {...props} /> : <PackRecoveryEntry {...props} />;
 }
 
-function PackRecoveryEntry({ origin }) {
+function PackRecoveryEntry({ origin, trial }) {
   useEffect(() => {
     // Metro reports lazy module initialization errors to its global handler.
     const previousHandler = global.ErrorUtils.getGlobalHandler();
     let loadError;
     global.ErrorUtils.setGlobalHandler((error) => { loadError = error; });
     try {
-      const trial = require('./pack-recovery');
-      if (!trial) throw loadError ?? new Error('Could not load the pack recovery trial');
-      void trial.verifyPackRecovery(origin);
+      const module = require('./pack-recovery');
+      if (!module) throw loadError ?? new Error('Could not load the pack recovery trial');
+      void module.verifyPackRecovery(origin, trial === 'pack-reopen');
     } catch (error) {
       void NativeModules.TPRNProbe.reportPackRecovery({ pass: false, states: [], error: String(error) });
     } finally {
       global.ErrorUtils.setGlobalHandler(previousHandler);
     }
-  }, [origin]);
+  }, [origin, trial]);
   return <Text style={styles.label}>저장 지도 팩 복구 시험</Text>;
 }
 

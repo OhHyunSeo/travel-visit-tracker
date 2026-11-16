@@ -4,7 +4,7 @@ import base64
 from copy import deepcopy
 import unittest
 
-from rn_evidence import verify, verify_pack_recovery
+from rn_evidence import verify, verify_pack_recovery, verify_pack_reopen
 from tls_result import EvidenceError
 
 
@@ -161,6 +161,26 @@ class PackRecoveryEvidenceTests(unittest.TestCase):
         values[3]["requests"][1]["path"] = "/resource/tile/0_0_0"
         with self.assertRaises(EvidenceError):
             self.verify_case(values)
+
+    def test_reopen_requires_the_same_completion_in_a_new_process_without_requests(self):
+        result, previous, ledger, _ = self.evidence()
+        reopened = {"pass": True, "states": ["complete"], "savedPackId": previous["savedPackId"],
+                    "status": deepcopy(previous["status"])}
+        ledger.update(requests=0, tiles=0, reservedBytes=0)
+        result.update(process=1235, observedRequests=[])
+        result["native"].update(ledger=deepcopy(ledger), started=0, released=0, httpRequestSendsSettled=0,
+                                tlsVerifiedExchanges=0, acceptedBodyBytes=0)
+        def verify_reopen():
+            return verify_pack_reopen(result, reopened, ledger, ORIGIN, CERTIFICATE,
+                                      "synthetic-run", result["process"], 1234, previous)
+        self.assertTrue(verify_reopen()["newProcess"])
+        for target, key, unrelated in ((result, "process", 1234), (reopened, "savedPackId", "other"),
+                                       (result["native"], "started", 1), (ledger, "reservedBytes", 256)):
+            before = target[key]
+            target[key] = unrelated
+            with self.subTest(key=key), self.assertRaises(EvidenceError):
+                verify_reopen()
+            target[key] = before
 
 
 if __name__ == "__main__":
