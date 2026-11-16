@@ -4,7 +4,7 @@
 
 - 사용자는 `체크리스트 진행` 채팅에서 공통·iOS와 Android에 한 번만 진행을 지시합니다. 범위를 따로 지정하지 않은 진행·재개 요청이면 이 채팅에서 공통·iOS 항목을 이어가고, 기존 `Android 개발·검증` 채팅에도 저장된 다음 항목을 전달합니다. Android가 이미 진행 중이면 같은 요청을 보내지 않습니다.
 - 각 채팅은 자기 작업 폴더에서 한 항목씩 검증하고 저장한 뒤, 다음 진행 가능한 체크리스트 항목으로 이어갑니다. 한 항목이 막히면 원인을 남기고 다른 진행 가능한 항목을 찾습니다. 체크리스트 담당은 양쪽의 진행, 대기 이유, 검증 결과와 저장 지점을 한 곳에 정리합니다. 검증된 공통 변경만 검토해 합칩니다.
-- 사용자 중지·저장 지시는 양쪽에 적용합니다. 각 항목의 시작과 저장 시 공유 5시간 한도를 확인합니다. 사용자가 중지를 요청하거나 잔여가 20% 미만이면 진행 중인 항목만 정리하고 양쪽의 저장 상태와 미실행 범위를 확인합니다. 사용자가 지정한 작업 범위와 실제로 필요한 승인·기기·증거는 계속 지킵니다.
+- 사용자 중지·저장 지시는 양쪽에 적용합니다. 각 항목의 시작과 저장 시 공유 5시간 한도를 확인합니다. 사용자가 중지를 요청하거나 잔여가 10% 미만이면 진행 중인 항목만 정리하고 양쪽의 저장 상태와 미실행 범위를 확인합니다. 사용자가 지정한 작업 범위와 실제로 필요한 승인·기기·증거는 계속 지킵니다.
 
 ## Start here
 
@@ -60,7 +60,7 @@
 ## Usage reserve requested by the user
 
 - From 2026-11-03, check the account's 300-minute usage window through `get_usage_limits` at stage boundaries. Use `rateLimitsByLimitId` when available; remaining is `100 - usedPercent`. Missing data is unknown, never zero.
-- If remaining is below 20% (`usedPercent > 80`), start no new item. Finish only the already-started bounded work, archive evidence and incomplete state, save exact resume points in both platform chats, clean up that work's owned services/materials safely, and stop all project work until a fresh human resume. Do not spend resets, buy credits or switch models automatically.
+- User update on 2026-11-16 applies to both platform chats and supersedes the 20% reserve in earlier checkpoint notes. If remaining is below 10% (`usedPercent > 90`), start no new item. Finish only the already-started bounded work, archive evidence and incomplete state, save exact resume points in both platform chats, clean up that work's owned services/materials safely, and stop all project work until a fresh human resume. Do not spend resets, buy credits or switch models automatically.
 
 ## Preserve work and data
 
