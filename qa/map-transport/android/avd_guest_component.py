@@ -242,13 +242,12 @@ def pack_server(java, identity, source, port, log_path, *, expire_pack, online_r
 
 
 def reopen_fixture(key_path, apk, relay, server_log, destination, java, identity, *, expected_hash,
-                   expire_pack=False, sdk_offline=False, online_recovery=False):
+                   expire_pack=False, sdk_offline=False, online_recovery=False, verify_refreshed_pack=False):
     sys.path.append(str(Path(__file__).with_name('sdk-smoke')))
-    from capture_device import (ACTIVITY, JOURNAL, PACKAGE, check_installed_apk, require_foreground, running_pid,
-                                write_capture)
-    from verify_device_capture import JOURNAL_HEADER, JOURNAL_RECORD, LOG_LIMIT, PNG_LIMIT, read_apk
+    from capture_device import ACTIVITY, JOURNAL, PACKAGE, check_installed_apk, running_pid, write_capture
+    from verify_device_capture import JOURNAL_HEADER, JOURNAL_RECORD, read_apk
     from verify_pack_reopen import DATABASE, pack_database, verify_reopen
-    from verify_online_recovery import verify_online
+    from verify_online_recovery import verify_online, verify_refreshed
 
     def command(limit, mode, *args, timeout=15):
         return guest_command(key_path, limit, mode, *args, timeout=timeout)
@@ -257,6 +256,12 @@ def reopen_fixture(key_path, apk, relay, server_log, destination, java, identity
         command(1024, 'shell', 'am', 'force-stop', PACKAGE)
         if command(128, 'shell', 'pidof', PACKAGE).strip():
             raise ValueError('Fixture app process did not stop')
+
+    def require_server_closed():
+        with socket.socket() as probe:
+            probe.settimeout(2)
+            if probe.connect_ex(('127.0.0.1', port)) != errno.ECONNREFUSED:
+                raise ValueError('Host fixture server still accepts connections')
 
     def capture_database(directory):
         for name in (DATABASE, DATABASE + '-wal'):
@@ -278,10 +283,7 @@ def reopen_fixture(key_path, apk, relay, server_log, destination, java, identity
         pack = render_fixture(key_path, apk, relay, server_log, download, raster_tile=True,
                               offline_pack=True, expected_hash=expected_hash)
         first_pid = running_pid(command)
-    with socket.socket() as probe:
-        probe.settimeout(2)
-        if probe.connect_ex(('127.0.0.1', port)) != errno.ECONNREFUSED:
-            raise ValueError('Host fixture server still accepts connections')
+    require_server_closed()
     stop_app()
     capture_database(download)
 
@@ -305,24 +307,8 @@ def reopen_fixture(key_path, apk, relay, server_log, destination, java, identity
     second_pid = running_pid(command)
     if second_pid == first_pid:
         raise ValueError('Reopen did not start a new process')
-    deadline = time.monotonic() + 25
-    while time.monotonic() < deadline:
-        app = command(LOG_LIMIT, 'logcat', '-d', '--pid', str(second_pid), '-v', 'threadtime',
-                      '-s', 'TripMapSdkFixture:V', '*:S')
-        if b'REOPEN_TRANSPORT ' in app or b'PACK_FAILED ' in app or b'STYLE_LOAD_FAILED' in app:
-            break
-        time.sleep(1)
-    write_capture(reopen / 'app.log', app)
-    if b'REOPEN_TRANSPORT ' not in app:
-        raise ValueError('Reopened pack did not report a complete frame and request count')
-    require_foreground(command)
-    write_capture(reopen / 'screen.png', command(PNG_LIMIT, 'exec-out', 'screencap', '-p'))
-    require_foreground(command)
-    if running_pid(command) != second_pid:
-        raise ValueError('Reopened app process changed during capture')
     journal_size = JOURNAL_HEADER.size + 2 * JOURNAL_RECORD.size
-    write_capture(reopen / 'budget.journal', command(journal_size, 'exec-out', 'run-as', PACKAGE, 'cat', JOURNAL))
-    check_installed_apk(command, expected_hash)
+    capture_reopened_view(command, reopen, second_pid, journal_size, expected_hash)
     write_capture(reopen / 'server.log', server_log.read_bytes())
     if online_recovery:
         verify_reopen(destination, pack, port, first_pid, second_pid, expire_pack=True, sdk_offline=True,
@@ -332,16 +318,54 @@ def reopen_fixture(key_path, apk, relay, server_log, destination, java, identity
         with pack_server(java, identity, server_source, port, online / 'server.log', expire_pack=False,
                          online_recovery=True):
             capture_online_recovery(command, online, port, pack['packId'], second_pid)
-        write_capture(online / 'budget.journal', command(journal_size + 2 * JOURNAL_RECORD.size, 'exec-out',
-                                                        'run-as', PACKAGE, 'cat', JOURNAL))
+        online_journal_size = journal_size + 2 * JOURNAL_RECORD.size
+        write_capture(online / 'budget.journal', command(online_journal_size, 'exec-out', 'run-as', PACKAGE, 'cat', JOURNAL))
         check_installed_apk(command, expected_hash)
         stop_app()
         capture_database(online)
-        return {'download': pack, **verify_online(destination, pack, port, first_pid, second_pid)}
+        result = {'download': pack, **verify_online(destination, pack, port, first_pid, second_pid)}
+        if verify_refreshed_pack:
+            require_server_closed()
+            restored = destination / 'restored'
+            restored.mkdir(mode=0o700)
+            launch = command(4096, 'shell', 'am', 'start', '-W', '-n', ACTIVITY,
+                             '--el', 'fixture-reopen-pack', str(pack['packId']), '--ez', 'fixture-sdk-offline', 'true')
+            if b'Status: ok' not in launch:
+                raise ValueError('Refreshed pack activity did not start')
+            restored_pid = running_pid(command)
+            capture_reopened_view(command, restored, restored_pid, online_journal_size, expected_hash)
+            write_capture(restored / 'server.log', (online / 'server.log').read_bytes())
+            stop_app()
+            capture_database(restored)
+            result['restored'] = verify_refreshed(destination, result, port, restored_pid)
+        return result
     stop_app()
     capture_database(reopen)
     return {'download': pack, **verify_reopen(destination, pack, port, first_pid, second_pid,
                                               expire_pack=expire_pack, sdk_offline=sdk_offline)}
+
+
+def capture_reopened_view(command, directory, pid, journal_size, expected_hash):
+    from capture_device import JOURNAL, PACKAGE, check_installed_apk, require_foreground, running_pid, write_capture
+    from verify_device_capture import LOG_LIMIT, PNG_LIMIT
+
+    deadline = time.monotonic() + 25
+    while time.monotonic() < deadline:
+        app = command(LOG_LIMIT, 'logcat', '-d', '--pid', str(pid), '-v', 'threadtime',
+                      '-s', 'TripMapSdkFixture:V', '*:S')
+        if b'REOPEN_TRANSPORT ' in app or b'PACK_FAILED ' in app or b'STYLE_LOAD_FAILED' in app:
+            break
+        time.sleep(1)
+    write_capture(directory / 'app.log', app)
+    if b'REOPEN_TRANSPORT ' not in app:
+        raise ValueError('Reopened pack did not report a complete frame and request count')
+    require_foreground(command)
+    write_capture(directory / 'screen.png', command(PNG_LIMIT, 'exec-out', 'screencap', '-p'))
+    require_foreground(command)
+    write_capture(directory / 'budget.journal', command(journal_size, 'exec-out', 'run-as', PACKAGE, 'cat', JOURNAL))
+    check_installed_apk(command, expected_hash)
+    if running_pid(command) != pid:
+        raise ValueError('Reopened app process changed during capture')
 
 
 def capture_online_recovery(command, online, port, pack_id, pid):

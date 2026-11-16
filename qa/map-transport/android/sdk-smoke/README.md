@@ -151,7 +151,10 @@ callback using an existing transport ID and the runner's identity check. The
 callback checks identity before and after each command, enforces stdout and
 stderr limits and a deadline, and fails on a nonzero exit. The collector
 compares the fixture package's installed `base.apk` hash before and after capture.
-It rejects split or unrelated APK paths.
+It rejects split or unrelated APK paths. The collector checks that the fixture
+is the sole resumed activity before and after the screenshot, verifies the PID
+again before saving screen or journal data, and writes only to a new private
+capture directory. It leaves partial evidence on failure.
 
 ## Verify one synthetic raster tile
 
@@ -211,7 +214,9 @@ cache lifetime and a differently colored tile. The runner sends the reconnect
 intent to the existing Android activity. The two screen captures, view identity,
 PID, separate server logs, journal records, and the final database are checked
 by `verify_online_recovery.py CAPTURE --port PORT --first-pid PID --map-pid PID`.
-checks that the fixture is the sole resumed activity before and after the
-screenshot, verifies the PID again before saving screen or journal data, and
-writes only to a new private capture directory. It leaves partial evidence on
-failure. There is no device selection or launch command in this module.
+
+Add `--verify-refreshed-pack` to the same trial to stop the restarted server
+and reopen the refreshed pack offline in a third fixture process. The capture
+checks that the same pack still displays the refreshed tile with no new
+transport calls or journal reservations. Replay it with the same verifier and
+`--restored-pid PID`.

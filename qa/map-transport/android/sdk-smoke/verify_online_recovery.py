@@ -66,16 +66,46 @@ def verify_online(directory, pack, port, first_pid, map_pid):
                                          'tileSha256': after['tileSha256'], 'renderedFrame': frame}}
 
 
+def verify_refreshed(directory, result, port, restored_pid):
+    offline, online = result['offline'], result['online']
+    if restored_pid <= 0 or restored_pid in (offline['firstPid'], online['pid']):
+        raise ValueError('Refreshed pack must be reopened in a third app process')
+    before = directory / 'online'
+    restored = directory / 'restored'
+    pack_id = online['packId']
+    after_online = pack_database(before, pack_id, port)
+    if pack_database(restored, pack_id, port) != after_online:
+        raise ValueError('Refreshed pack contents changed on offline restart')
+    limits = {'server.log': LOG_LIMIT, 'budget.journal': JOURNAL_HEADER.size + 4 * JOURNAL_RECORD.size}
+    for name, limit in limits.items():
+        if read_bounded(before / name, limit) != read_bounded(restored / name, limit):
+            raise ValueError(f'Offline restart changed {name}')
+    messages = fixture_messages(read_bounded(restored / 'app.log', LOG_LIMIT), restored_pid)
+    pack_log = (f'PACK_REOPENED id={pack_id} resources=2 tiles=1 required=2 resourceBytes={after_online["storedResourceBytes"]} '
+                f'tileBytes={after_online["storedTileBytes"]}')
+    if messages != ['TRANSPORT_READY', 'REOPEN_SDK_OFFLINE connected=false', pack_log,
+                    'STYLE_LOADED attempts=4 tiles=2 reserved=16384', 'FRAME_RENDERED fully=true',
+                    'REOPEN_TRANSPORT calls=0 attempts=4 tiles=2 reserved=16384']:
+        raise ValueError('Refreshed pack did not report a complete offline frame and zero transport calls')
+    frame = check_render(restored / 'screen.png', raster_tile=True, expected_rgb=ONLINE_TILE_RGB)
+    return {'packId': pack_id, 'pid': restored_pid, 'renderedFrame': frame,
+            'tileSha256': after_online['tileSha256'], 'transportCalls': 0,
+            'newReservations': 0, 'newServerResponses': 0}
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument('capture', type=Path)
     parser.add_argument('--port', required=True, type=int)
     parser.add_argument('--first-pid', required=True, type=int)
     parser.add_argument('--map-pid', required=True, type=int)
+    parser.add_argument('--restored-pid', type=int)
     args = parser.parse_args()
     try:
         pack = check_pack_log(read_bounded(args.capture / 'download/app.log', LOG_LIMIT), args.first_pid)
         result = verify_online(args.capture, pack, args.port, args.first_pid, args.map_pid)
+        if args.restored_pid is not None:
+            result['restored'] = verify_refreshed(args.capture, result, args.port, args.restored_pid)
     except (OSError, ValueError, sqlite3.Error) as error:
         parser.exit(1, f'Online recovery capture failed: {error}\n')
     print(json.dumps(result, sort_keys=True))
