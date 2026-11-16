@@ -83,8 +83,12 @@ public final class FixtureApplication extends Application {
   }
 
   void reportReopenTransport() {
+    reportTransport("REOPEN_TRANSPORT");
+  }
+
+  void reportTransport(String phase) {
     FixtureBudget.Snapshot totals = budget.snapshot();
-    Log.i(LOG_TAG, "REOPEN_TRANSPORT calls=" + transportCalls.get() + " attempts=" + totals.attempts
+    Log.i(LOG_TAG, phase + " calls=" + transportCalls.get() + " attempts=" + totals.attempts
         + " tiles=" + totals.tileAttempts + " reserved=" + totals.reservedBytes);
   }
 }

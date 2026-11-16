@@ -1,11 +1,14 @@
 import hashlib
 from pathlib import Path
 import sqlite3
+import struct
 from tempfile import TemporaryDirectory
 import unittest
 import zlib
 
 from verify_pack_reopen import DATABASE, METADATA, body_size, pack_database, verify_reopen
+from verify_online_recovery import check_online_journal
+from verify_device_capture import JOURNAL_HEADER, JOURNAL_RECORD
 
 
 class PackReopenTest(unittest.TestCase):
@@ -50,3 +53,14 @@ class PackReopenTest(unittest.TestCase):
         self.assertEqual(body_size(zlib.compress(b'tile'), 1), 4)
         with self.assertRaisesRegex(ValueError, 'expected size'):
             body_size(zlib.compress(b'x' * 4097), 1)
+
+    def test_online_journal_preserves_original_and_accepts_tile_first(self):
+        old = bytes(JOURNAL_HEADER.size + 2 * JOURNAL_RECORD.size)
+        tile = struct.pack('>IIQI', 3, 1, 12288, 2)
+        style = struct.pack('>IIQI', 4, 0, 16384, 2)
+        updated = old + tile + struct.pack('>I', zlib.crc32(tile)) + style + struct.pack('>I', zlib.crc32(style))
+        check_online_journal(old, updated)
+        with self.assertRaisesRegex(ValueError, 'two new reservations'):
+            check_online_journal(old, updated[:-JOURNAL_RECORD.size])
+        with self.assertRaisesRegex(ValueError, 'Invalid online journal'):
+            check_online_journal(old, updated[:-1] + bytes((updated[-1] ^ 1,)))

@@ -1,6 +1,12 @@
 # Android 개발·검증 기록
 
-마지막 갱신: 2026-11-15, Asia/Seoul.
+마지막 갱신: 2026-11-16, Asia/Seoul.
+
+## 11월 16일 P3-02 후속: 같은 Android 지도에서 온라인 복귀
+
+전용 10GiB API 37 에뮬레이터의 서명 APK `74212405de16df96476c42975134f1f8768e9b169a60e23e0e6583ebac7ed821`에서 합성 스타일과 타일을 만료시켰습니다. 서버와 중계가 닫힌 상태에서 같은 팩을 재실행한 뒤 저장 타일 색 25/25점과 전송 호출 0건을 확인했습니다. 같은 주소·인증서의 시험 서버를 다시 시작하고 SDK 연결 상태를 켰습니다. 지도 재생성이나 스타일 재지정 없이 같은 PID와 지도 뷰에서 완전 프레임과 새 타일 색 25/25점을 확인했습니다. [MapLibre 연결 상태 API](https://maplibre.org/maplibre-native/android/api/-map-libre%20-native%20-android/org.maplibre.android/-map-libre/set-connected.html)
+
+복귀 서버는 스타일 370바이트와 타일 1,880바이트를 각각 한 번 반환했습니다. 앱 전송 진입 2건과 장부의 새 예약 2건(8,192바이트)을 대조했습니다. SQLite 사본에서 팩 ID·정의·메타데이터와 스타일 해시가 일치했고, 두 만료 시각과 타일 해시가 갱신됐습니다. 첫 시도는 스타일 응답 뒤 게스트 중계기가 종료돼 타일이 갱신되지 않았습니다. 종료 원인은 확정하지 않았고 전용 에뮬레이터 메모리를 4GiB로 설정한 다음 실행에서 통과했습니다. 최종 원문은 Git 제외 `docs/test-results/android-map-transport-20261114-checkpoint/online.FqlcJk/`입니다. 실제 공급원과 제품 앱, 실기기·Release는 미실행입니다.
 
 ## 11월 15일 P3-02 후속: MapLibre 오프라인 상태에서 만료 팩 표시
 

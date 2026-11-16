@@ -204,6 +204,13 @@ reservations must remain zero with the server stopped.
 Add `--sdk-offline` with `--expire-pack` to make the separate trial require
 MapLibre's disconnected state and zero transport calls while the expired tile
 is displayed. The offline flag is set before the map is constructed.
+
+Add `--online-recovery` to that trial to restart the synthetic server after the
+offline frame. The server uses the same origin and certificate with a fresh
+cache lifetime and a differently colored tile. The runner sends the reconnect
+intent to the existing Android activity. The two screen captures, view identity,
+PID, separate server logs, journal records, and the final database are checked
+by `verify_online_recovery.py CAPTURE --port PORT --first-pid PID --map-pid PID`.
 checks that the fixture is the sole resumed activity before and after the
 screenshot, verifies the PID again before saving screen or journal data, and
 writes only to a new private capture directory. It leaves partial evidence on

@@ -1,6 +1,7 @@
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
+import java.awt.Color;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -24,24 +25,25 @@ public final class FixtureStyleServer {
   public static void main(String[] args) throws Exception {
     boolean raster = args.length >= 3 && "--raster-tile".equals(args[2]);
     boolean expire = args.length == 4 && "--expire-pack".equals(args[3]);
-    if (!(args.length == 2 || (raster && (args.length == 3 || expire))) || !args[1].matches("[1-9][0-9]{3,4}")) {
-      throw new IllegalArgumentException("Usage: java FixtureStyleServer.java <fixture.p12> <port> [--raster-tile [--expire-pack]]");
+    boolean recover = args.length == 4 && "--online-recovery".equals(args[3]);
+    if (!(args.length == 2 || (raster && (args.length == 3 || expire || recover))) || !args[1].matches("[1-9][0-9]{3,4}")) {
+      throw new IllegalArgumentException("Usage: FixtureStyleServer <fixture.p12> <port> [--raster-tile [--expire-pack | --online-recovery]]");
     }
     int port = Integer.parseInt(args[1]);
     if (port < 1024 || port > 65535) throw new IllegalArgumentException("Invalid fixture port");
-    HttpsServer server = bind(Path.of(args[0]), port, raster, expire);
+    HttpsServer server = bind(Path.of(args[0]), port, raster, expire, recover);
     Runtime.getRuntime().addShutdownHook(new Thread(() -> server.stop(0)));
     server.start();
     System.out.println("STYLE_SERVER_READY port=" + port);
   }
 
   static HttpsServer bind(Path keyStore, int port) throws Exception {
-    return bind(keyStore, port, false, false);
+    return bind(keyStore, port, false, false, false);
   }
 
-  private static HttpsServer bind(Path keyStore, int port, boolean raster, boolean expire) throws Exception {
+  private static HttpsServer bind(Path keyStore, int port, boolean raster, boolean expire, boolean recover) throws Exception {
     byte[] style = raster ? rasterStyle(port) : STYLE;
-    byte[] tile = raster ? rasterTile() : null;
+    byte[] tile = raster ? rasterTile(recover ? new Color(52, 121, 206) : new Color(217, 93, 47)) : null;
     char[] password = "fixture-only-password".toCharArray();
     KeyStore keys = KeyStore.getInstance("PKCS12");
     try (InputStream input = Files.newInputStream(keyStore)) {
@@ -101,11 +103,11 @@ public final class FixtureStyleServer {
         .getBytes(StandardCharsets.UTF_8);
   }
 
-  private static byte[] rasterTile() throws Exception {
+  private static byte[] rasterTile(Color color) throws Exception {
     BufferedImage image = new BufferedImage(512, 512, BufferedImage.TYPE_INT_RGB);
     var graphics = image.createGraphics();
     try {
-      graphics.setColor(new java.awt.Color(217, 93, 47));
+      graphics.setColor(color);
       graphics.fillRect(0, 0, 512, 512);
     } finally {
       graphics.dispose();

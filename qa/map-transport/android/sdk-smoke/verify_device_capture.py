@@ -49,13 +49,14 @@ def read_apk(path):
     return int(value), hashlib.sha256(data).hexdigest()
 
 
-def check_transport_logs(capture, port, *, raster_tile=False):
+def check_transport_logs(capture, port, *, raster_tile=False, ordered=True):
     server = read_bounded(capture / "server.log", LOG_LIMIT).decode().splitlines()
     if raster_tile:
         if len(server) != 3 or server[0] != f"STYLE_SERVER_READY port={port}":
             raise ValueError("Expected one style and one tile in the server log")
-        style = re.fullmatch(r"SERVED_STYLE bytes=([1-9][0-9]{0,3})", server[1])
-        tile = re.fullmatch(r"SERVED_TILE path=/resource/tile/0_0_0 bytes=([1-9][0-9]{0,3})", server[2])
+        style_line, tile_line = server[1:] if ordered else sorted(server[1:])
+        style = re.fullmatch(r"SERVED_STYLE bytes=([1-9][0-9]{0,3})", style_line)
+        tile = re.fullmatch(r"SERVED_TILE path=/resource/tile/0_0_0 bytes=([1-9][0-9]{0,3})", tile_line)
         if not style or not tile:
             raise ValueError("Server did not record the expected zoom-zero tile after the style")
         style_bytes, tile_bytes = int(style[1]), int(tile[1])
@@ -139,7 +140,7 @@ def check_journal(path, *, raster_tile=False):
             raise ValueError("Journal does not contain one tile reservation after the style")
 
 
-def check_render(path, *, raster_tile=False):
+def check_render(path, *, raster_tile=False, expected_rgb=None):
     data = read_bounded(path, PNG_LIMIT)
     with Image.open(io.BytesIO(data), formats=("PNG",)) as frame:
         width, height = frame.size
@@ -149,7 +150,8 @@ def check_render(path, *, raster_tile=False):
             raise ValueError("Screenshot must be a single RGB or RGBA frame")
         frame.load()
         samples = (42, 46, 50, 54, 58) if raster_tile else (30, 40, 50, 60, 70)
-        expected_rgb = RASTER_TILE_RGB if raster_tile else STYLE_RGB
+        if expected_rgb is None:
+            expected_rgb = RASTER_TILE_RGB if raster_tile else STYLE_RGB
         matching = 0
         for x in samples:
             for y in samples:

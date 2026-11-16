@@ -1,6 +1,7 @@
 package app.trippainting.maptransportqa;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -16,6 +17,10 @@ public final class FixtureMapActivity extends Activity {
   private boolean reopening;
   private boolean started;
   private boolean resumed;
+  private long reopenId;
+  private boolean verifyRecovery;
+  private boolean offlineFrameCaptured;
+  private boolean reconnecting;
   private final MapView.OnDidFinishRenderingFrameListener renderedFrame = (fully, encodingTime, renderTime) -> {
     if (fully && fixtureStyleLoaded && mapView != null) reportRenderedFrame();
   };
@@ -25,8 +30,36 @@ public final class FixtureMapActivity extends Activity {
     Log.i(FixtureApplication.LOG_TAG, "FRAME_RENDERED fully=true");
     if (reopening) {
       FixtureApplication app = (FixtureApplication) getApplication();
-      new Handler(Looper.getMainLooper()).postDelayed(app::reportReopenTransport, 3_000);
+      if (verifyRecovery) Log.i(FixtureApplication.LOG_TAG, "OFFLINE_MAP view=" + viewIdentity());
+      new Handler(Looper.getMainLooper()).postDelayed(() -> {
+        offlineFrameCaptured = true;
+        app.reportReopenTransport();
+      }, 3_000);
     }
+  }
+
+  private final MapView.OnDidFinishRenderingFrameListener recoveredFrame = (fully, encodingTime, renderTime) -> {
+    if (fully && mapView != null) reportRecoveredFrame();
+  };
+
+  private String viewIdentity() { return Integer.toUnsignedString(System.identityHashCode(mapView)); }
+
+  private void reportRecoveredFrame() {
+    mapView.removeOnDidFinishRenderingFrameListener(recoveredFrame);
+    Log.i(FixtureApplication.LOG_TAG, "ONLINE_FRAME view=" + viewIdentity());
+    FixtureApplication app = (FixtureApplication) getApplication();
+    new Handler(Looper.getMainLooper()).postDelayed(() -> app.reportTransport("ONLINE_TRANSPORT"), 3_000);
+  }
+
+  @Override protected void onNewIntent(Intent intent) {
+    super.onNewIntent(intent);
+    long packId = intent.getLongExtra("fixture-reconnect-pack", 0);
+    if (!verifyRecovery || !offlineFrameCaptured || reconnecting || packId != reopenId || mapView == null) return;
+    reconnecting = true;
+    mapView.addOnDidFinishRenderingFrameListener(recoveredFrame);
+    MapLibre.setConnected(true);
+    Log.i(FixtureApplication.LOG_TAG, "ONLINE_MAP id=" + packId + " view=" + viewIdentity()
+        + " connected=" + MapLibre.isConnected());
   }
 
   @Override protected void onCreate(Bundle state) {
@@ -42,10 +75,11 @@ public final class FixtureMapActivity extends Activity {
       FixtureOfflinePack.start(this, app.styleUrl());
       return;
     }
-    long reopenId = getIntent().getLongExtra("fixture-reopen-pack", 0);
+    reopenId = getIntent().getLongExtra("fixture-reopen-pack", 0);
     if (reopenId > 0) {
       reopening = true;
       if (getIntent().getBooleanExtra("fixture-sdk-offline", false)) {
+        verifyRecovery = getIntent().getBooleanExtra("fixture-online-recovery", false);
         MapLibre.setConnected(false);
         Log.i(FixtureApplication.LOG_TAG, "REOPEN_SDK_OFFLINE connected=" + MapLibre.isConnected());
       }
@@ -110,6 +144,7 @@ public final class FixtureMapActivity extends Activity {
   @Override protected void onDestroy() {
     if (mapView != null) {
       mapView.removeOnDidFinishRenderingFrameListener(renderedFrame);
+      mapView.removeOnDidFinishRenderingFrameListener(recoveredFrame);
       mapView.onDestroy();
       mapView = null;
     }

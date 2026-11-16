@@ -213,11 +213,13 @@ def install_fixture(key_path, apk, *, expected_hash=FIXTURE_APK_SHA256):
 
 
 @contextmanager
-def pack_server(java, identity, source, port, log_path, *, expire_pack):
+def pack_server(java, identity, source, port, log_path, *, expire_pack, online_recovery=False):
     with log_path.open('xb') as log:
         arguments = [java, '-Djava.awt.headless=true', source, identity, str(port), '--raster-tile']
         if expire_pack:
             arguments.append('--expire-pack')
+        if online_recovery:
+            arguments.append('--online-recovery')
         process = subprocess.Popen(arguments, stdout=log, stderr=log)
         try:
             deadline = time.monotonic() + 15
@@ -240,15 +242,16 @@ def pack_server(java, identity, source, port, log_path, *, expire_pack):
 
 
 def reopen_fixture(key_path, apk, relay, server_log, destination, java, identity, *, expected_hash,
-                   expire_pack=False, sdk_offline=False):
+                   expire_pack=False, sdk_offline=False, online_recovery=False):
     sys.path.append(str(Path(__file__).with_name('sdk-smoke')))
     from capture_device import (ACTIVITY, JOURNAL, PACKAGE, check_installed_apk, require_foreground, running_pid,
                                 write_capture)
     from verify_device_capture import JOURNAL_HEADER, JOURNAL_RECORD, LOG_LIMIT, PNG_LIMIT, read_apk
     from verify_pack_reopen import DATABASE, pack_database, verify_reopen
+    from verify_online_recovery import verify_online
 
-    def command(limit, mode, *args):
-        return guest_command(key_path, limit, mode, *args)
+    def command(limit, mode, *args, timeout=15):
+        return guest_command(key_path, limit, mode, *args, timeout=timeout)
 
     def stop_app():
         command(1024, 'shell', 'am', 'force-stop', PACKAGE)
@@ -294,6 +297,8 @@ def reopen_fixture(key_path, apk, relay, server_log, destination, java, identity
     extras = ['--el', 'fixture-reopen-pack', str(pack['packId'])]
     if sdk_offline:
         extras.extend(('--ez', 'fixture-sdk-offline', 'true'))
+    if online_recovery:
+        extras.extend(('--ez', 'fixture-online-recovery', 'true'))
     launch = command(4096, 'shell', 'am', 'start', '-W', '-n', ACTIVITY, *extras)
     if b'Status: ok' not in launch:
         raise ValueError('Guest fixture reopen activity did not start')
@@ -318,11 +323,65 @@ def reopen_fixture(key_path, apk, relay, server_log, destination, java, identity
     journal_size = JOURNAL_HEADER.size + 2 * JOURNAL_RECORD.size
     write_capture(reopen / 'budget.journal', command(journal_size, 'exec-out', 'run-as', PACKAGE, 'cat', JOURNAL))
     check_installed_apk(command, expected_hash)
+    write_capture(reopen / 'server.log', server_log.read_bytes())
+    if online_recovery:
+        verify_reopen(destination, pack, port, first_pid, second_pid, expire_pack=True, sdk_offline=True,
+                      online_recovery=True)
+        online = destination / 'online'
+        online.mkdir(mode=0o700)
+        with pack_server(java, identity, server_source, port, online / 'server.log', expire_pack=False,
+                         online_recovery=True):
+            capture_online_recovery(command, online, port, pack['packId'], second_pid)
+        write_capture(online / 'budget.journal', command(journal_size + 2 * JOURNAL_RECORD.size, 'exec-out',
+                                                        'run-as', PACKAGE, 'cat', JOURNAL))
+        check_installed_apk(command, expected_hash)
+        stop_app()
+        capture_database(online)
+        return {'download': pack, **verify_online(destination, pack, port, first_pid, second_pid)}
     stop_app()
     capture_database(reopen)
-    write_capture(reopen / 'server.log', server_log.read_bytes())
     return {'download': pack, **verify_reopen(destination, pack, port, first_pid, second_pid,
                                               expire_pack=expire_pack, sdk_offline=sdk_offline)}
+
+
+def capture_online_recovery(command, online, port, pack_id, pid):
+    from capture_device import ACTIVITY, require_foreground, running_pid, write_capture
+    from verify_device_capture import LOG_LIMIT, PNG_LIMIT
+
+    # Leave live relay output in the isolated guest so readiness can be observed before signaling the map.
+    relay_log = '/data/local/tmp/trip-map-online-relay.log'
+    relay_command = (f'CLASSPATH={FIXTURE_RELAY_PATH} app_process /system/bin FixtureLoopbackRelay {port} '
+                     f'--raster-tile > {relay_log} 2>&1; cat {relay_log}')
+    ready_message = f'RELAY_READY port={port}\n'.encode('ascii')
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        relay = executor.submit(command, LOG_LIMIT, 'shell', 'sh', '-c', relay_command, timeout=40)
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline and not relay.done():
+            ready = command(LOG_LIMIT, 'shell', 'sh', '-c', f'if [ -f {relay_log} ]; then cat {relay_log}; fi')
+            if ready == ready_message:
+                break
+            time.sleep(.25)
+        else:
+            raise ValueError('Online relay was not ready before reconnecting')
+        launch = command(4096, 'shell', 'am', 'start', '-W', '--activity-single-top', '-n', ACTIVITY,
+                         '--el', 'fixture-reconnect-pack', str(pack_id))
+        write_capture(online / 'transition.txt', launch)
+        if b'Status: ok' not in launch or running_pid(command) != pid:
+            raise ValueError('Reconnect did not reach the original fixture app process')
+        output = relay.result()
+        write_capture(online / 'relay.log', output)
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        app = command(LOG_LIMIT, 'logcat', '-d', '--pid', str(pid), '-v', 'threadtime', '-s', 'TripMapSdkFixture:V', '*:S')
+        if b'ONLINE_TRANSPORT ' in app:
+            break
+        time.sleep(.25)
+    write_capture(online / 'app.log', app)
+    require_foreground(command)
+    write_capture(online / 'screen.png', command(PNG_LIMIT, 'exec-out', 'screencap', '-p'))
+    require_foreground(command)
+    if running_pid(command) != pid:
+        raise ValueError('The online app process changed during capture')
 
 
 def render_fixture(key_path, apk, relay, server_log, destination, *, raster_tile=False,

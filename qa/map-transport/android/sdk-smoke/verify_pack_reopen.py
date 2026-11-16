@@ -72,7 +72,8 @@ def pack_database(directory, pack_id, port):
     }
 
 
-def verify_reopen(directory, pack, port, first_pid, second_pid, *, expire_pack=False, sdk_offline=False):
+def verify_reopen(directory, pack, port, first_pid, second_pid, *, expire_pack=False, sdk_offline=False,
+                  online_recovery=False):
     if min(first_pid, second_pid) <= 0 or first_pid == second_pid:
         raise ValueError('Reopen must use a different Android process')
     download = directory / 'download'
@@ -93,6 +94,13 @@ def verify_reopen(directory, pack, port, first_pid, second_pid, *, expire_pack=F
     if sdk_offline:
         expected.append('REOPEN_SDK_OFFLINE connected=false')
     expected.extend((summary, 'STYLE_LOADED attempts=2 tiles=1 reserved=8192', FRAME_EVENT))
+    view = None
+    if online_recovery and len(messages) >= 2:
+        offline_view = re.fullmatch(r'OFFLINE_MAP view=([1-9][0-9]*)', messages[-2])
+        if not offline_view:
+            raise ValueError('Offline map view was not identified')
+        view = int(offline_view[1])
+        expected.append(messages[-2])
     transport = re.fullmatch(r'REOPEN_TRANSPORT calls=(0|[1-9][0-9]{0,4}) attempts=2 tiles=1 reserved=8192',
                              messages[-1] if messages else '')
     if messages[:-1] != expected or not transport:
@@ -105,18 +113,21 @@ def verify_reopen(directory, pack, port, first_pid, second_pid, *, expire_pack=F
         raise ValueError('Saved response lengths differ from the fixture server lengths')
     if (before['storedResourceBytes'], before['storedTileBytes']) != (pack['storedResourceBytes'], pack['storedTileBytes']):
         raise ValueError('SQLite stored lengths differ from SDK progress')
-    if pack_database(reopen, pack['packId'], port) != before:
+    if not online_recovery and pack_database(reopen, pack['packId'], port) != before:
         raise ValueError('The saved region or resource data changed during reopen')
     if expire_pack:
         epoch = read_bounded(reopen / 'guest-epoch.txt', 32).strip()
         expiration = (before['styleStorage'][1], before['tileStorage'][1])
         if not epoch.isdigit() or any(not isinstance(value, int) or value >= int(epoch) for value in expiration):
             raise ValueError('Both SQLite resources must have expired before reopen')
-    return {'firstPid': first_pid, 'reopenedPid': second_pid, 'packId': pack['packId'], 'expiredBeforeReopen': expire_pack,
+    result = {'firstPid': first_pid, 'reopenedPid': second_pid, 'packId': pack['packId'], 'expiredBeforeReopen': expire_pack,
             'sdkOffline': sdk_offline,
             'renderedFrame': check_render(reopen / 'screen.png', raster_tile=True),
             'styleSha256': before['styleSha256'], 'tileSha256': before['tileSha256'],
             'transportCalls': calls, 'newReservations': 0, 'newServerResponses': 0}
+    if view is not None:
+        result['viewIdentity'] = view
+    return result
 
 
 if __name__ == '__main__':
