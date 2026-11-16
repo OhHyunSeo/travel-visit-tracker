@@ -37,4 +37,27 @@ const styles = StyleSheet.create({
   map: { flex: 1, marginTop: 12 },
 });
 
-AppRegistry.registerComponent('TPRNMapQA', () => Trial);
+function QAEntry(props) {
+  return props.packRecovery ? <PackRecoveryEntry {...props} /> : <Trial {...props} />;
+}
+
+function PackRecoveryEntry({ origin }) {
+  useEffect(() => {
+    // Metro reports lazy module initialization errors to its global handler.
+    const previousHandler = global.ErrorUtils.getGlobalHandler();
+    let loadError;
+    global.ErrorUtils.setGlobalHandler((error) => { loadError = error; });
+    try {
+      const trial = require('./pack-recovery');
+      if (!trial) throw loadError ?? new Error('Could not load the pack recovery trial');
+      void trial.verifyPackRecovery(origin);
+    } catch (error) {
+      void NativeModules.TPRNProbe.reportPackRecovery({ pass: false, states: [], error: String(error) });
+    } finally {
+      global.ErrorUtils.setGlobalHandler(previousHandler);
+    }
+  }, [origin]);
+  return <Text style={styles.label}>저장 지도 팩 복구 시험</Text>;
+}
+
+AppRegistry.registerComponent('TPRNMapQA', () => QAEntry);

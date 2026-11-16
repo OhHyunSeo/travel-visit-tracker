@@ -26,11 +26,11 @@ sys.path.insert(0, str(QA / "ios"))
 sys.path.insert(0, str(QA / "ios-maplibre"))
 from test_tls_exchange import make_certificate
 from tls_cancel_capture import FixtureControl
-from rn_evidence import BUNDLE, save, verify
+from rn_evidence import BUNDLE, CASES, save, verify, verify_pack_recovery
 from tls_result import _need, _same
 
 
-def run(app, output, directory):
+def run(app, output, directory, trial):
     device_set = directory / "devices"
     device_set.mkdir()
     sim = ["xcrun", "simctl", "--set", str(device_set)]
@@ -65,6 +65,7 @@ def run(app, output, directory):
                                   "resourceCount": 0, "requests": []}), "fixture was not fresh")
             env = {key: value for key, value in os.environ.items() if not key.startswith("SIMCTL_CHILD_")}
             env.update(SIMCTL_CHILD_QA_SERVER_ORIGIN=origin, SIMCTL_CHILD_QA_RUN_ID=run_id,
+                       SIMCTL_CHILD_QA_RN_CASE=trial,
                        SIMCTL_CHILD_QA_TLS_LEAF_DER_BASE64=base64.b64encode(certificate).decode("ascii"))
             launch = command("launch", device_id, BUNDLE, env=env)
             process = re.fullmatch(re.escape(BUNDLE) + r": (\d+)", launch)
@@ -93,6 +94,13 @@ def run(app, output, directory):
                     "--predicate", 'process == "TripPainting"'))
             ledger = json.loads((documents / "ledger.json").read_text())
             save(output, "ledger", ledger)
+            if trial == "pack-recovery":
+                recovery = json.loads((documents / "pack-recovery.json").read_text())
+                save(output, "pack-recovery", recovery)
+                summary = verify_pack_recovery(result, recovery, ledger, server, origin, certificate,
+                                               run_id, pid, runtime=RUNTIME)
+                save(output, "summary", summary)
+                return
             save(output, "summary", verify(result, ledger, server, origin, certificate, run_id, pid,
                                            runtime=RUNTIME, initial_style="local-empty"))
         finally:
@@ -112,6 +120,7 @@ def run(app, output, directory):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--case", choices=CASES, default="render")
     parser.add_argument("app", type=Path)
     parser.add_argument("output", type=Path, help="a new evidence directory")
     args = parser.parse_args()
@@ -125,7 +134,7 @@ def main():
           "expected an isolated simulator app")
     args.output.mkdir(mode=0o700)
     with tempfile.TemporaryDirectory(prefix="tp-rn-map-") as directory:
-        run(app, args.output, Path(directory).resolve())
+        run(app, args.output, Path(directory).resolve(), args.case)
     print((args.output / "summary.json").read_text(), end="")
 
 

@@ -4,7 +4,7 @@ import base64
 from copy import deepcopy
 import unittest
 
-from rn_evidence import verify
+from rn_evidence import verify, verify_pack_recovery
 from tls_result import EvidenceError
 
 
@@ -123,6 +123,44 @@ class InitialStyleEvidenceTests(unittest.TestCase):
         for field in ("rnSchema", "initialStyleMode", "localBootstrap", "renderConfirmedAfterTile", "observedRequests"):
             del values[0][field]
         self.assertTrue(check(values, None)["validated"])
+
+
+class PackRecoveryEvidenceTests(unittest.TestCase):
+    def evidence(self):
+        result, ledger, server = evidence()
+        ledger.update(requests=2, reservedBytes=512)
+        native = result["native"]
+        native.update(ledger=deepcopy(ledger), started=2, released=2, httpRequestSendsSettled=2,
+                      tlsVerifiedExchanges=2, acceptedBodyBytes=4)
+        paths = ["/resource/style/pack-recovery", "/resource/tile/pack_8_219_98"]
+        result["observedRequests"] = [{"resource": path} for path in paths]
+        server.update(resourceCount=2, requests=server["requests"][:2])
+        for item, path in zip(server["requests"], paths):
+            item["path"] = path
+        recovery = {"pass": True, "states": ["idle", "awaiting-pack", "incomplete", "complete"],
+                    "createdPackId": "test-pack", "savedPackId": "test-pack",
+                    "status": {"kind": "complete", "packId": "test-pack",
+                               "completedResourceCount": 2, "requiredResourceCount": 2,
+                               "completedTileCount": 1}}
+        return result, recovery, ledger, server
+
+    def verify_case(self, values):
+        return verify_pack_recovery(*values, ORIGIN, CERTIFICATE, "synthetic-run", 1234,
+                                    runtime="synthetic-host")
+
+    def test_requires_discovery_and_persistence_of_the_created_pack(self):
+        self.assertTrue(self.verify_case(self.evidence())["samePackPersisted"])
+        for patch in ({"savedPackId": "different"}, {"states": ["idle", "complete"]}):
+            values = self.evidence()
+            values[1].update(patch)
+            with self.subTest(patch=patch), self.assertRaises(EvidenceError):
+                self.verify_case(values)
+
+    def test_requires_the_exact_style_and_tile_requests(self):
+        values = self.evidence()
+        values[3]["requests"][1]["path"] = "/resource/tile/0_0_0"
+        with self.assertRaises(EvidenceError):
+            self.verify_case(values)
 
 
 if __name__ == "__main__":

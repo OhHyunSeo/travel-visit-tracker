@@ -1,22 +1,24 @@
+internal import Expo
 import React
-import React_RCTAppDelegate
 import ReactAppDependencyProvider
 import UIKit
 
 @main
-final class AppDelegate: UIResponder, UIApplicationDelegate {
+final class AppDelegate: ExpoAppDelegate, ExpoReactNativeFactoryProvider {
   private var reactDelegate: TrialReactDelegate?
-  var factory: RCTReactNativeFactory?
+  var reactNativeFactory: RCTReactNativeFactory?
+  var window: UIWindow?
+  let reactNativeFactoryModuleName = "TPRNMapQA"
 
-  func application(_ application: UIApplication,
+  override func application(_ application: UIApplication,
                    didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
     if TPRNBootstrap.prepare() {
       let delegate = TrialReactDelegate()
       delegate.dependencyProvider = RCTAppDependencyProvider()
       reactDelegate = delegate
-      factory = RCTReactNativeFactory(delegate: delegate)
+      reactNativeFactory = ExpoReactNativeFactory(delegate: delegate)
     }
-    return true
+    return super.application(application, didFinishLaunchingWithOptions: options)
   }
 }
 
@@ -30,7 +32,7 @@ final class TrialScene: UIResponder, UIWindowSceneDelegate {
     let window = UIWindow(windowScene: scene)
     self.window = window
     guard let delegate = UIApplication.shared.delegate as? AppDelegate,
-          let factory = delegate.factory else {
+          let factory = delegate.reactNativeFactory else {
       let controller = UIViewController()
       let label = UILabel()
       label.text = "시험 서버 설정을 확인해 주세요."
@@ -40,13 +42,14 @@ final class TrialScene: UIResponder, UIWindowSceneDelegate {
       window.makeKeyAndVisible()
       return
     }
-    factory.startReactNative(withModuleName: "TPRNMapQA", in: window,
+    delegate.window = window
+    factory.startReactNative(withModuleName: delegate.reactNativeFactoryModuleName, in: window,
                             initialProperties: TPRNBootstrap.initialProperties(), launchOptions: nil)
     TPRNBootstrap.observe()
   }
 }
 
-private final class TrialReactDelegate: RCTDefaultReactNativeFactoryDelegate {
+private final class TrialReactDelegate: ExpoReactNativeFactoryDelegate {
   override func bundleURL() -> URL? { Bundle.main.url(forResource: "main", withExtension: "jsbundle") }
   override func sourceURL(for bridge: RCTBridge) -> URL? { bundleURL() }
 }

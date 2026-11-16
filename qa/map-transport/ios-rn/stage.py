@@ -38,7 +38,7 @@ def stage(name, sdk):
 
     app = ios / 'TripPainting'
     shutil.copyfile(app / 'AppDelegate.swift', target / 'ProductAppDelegate.swift')
-    for name in ('AppDelegate.swift', 'TPRNBootstrap.h', 'TPRNBootstrap.m'):
+    for name in ('AppDelegate.swift', 'TPRNBootstrap.h', 'TPRNBootstrap.m', 'QAExpoModulesProvider.swift'):
         shutil.copyfile(HERE / name, app / name)
     for name in ('TPTransport.h', 'TPTransport.m', 'TPHTTPExchange.h', 'TPHTTPExchange.m'):
         shutil.copyfile(HERE.parent / 'ios' / name, app / name)
@@ -62,13 +62,16 @@ def stage(name, sdk):
     deps = json.loads((PRODUCT / 'package.json').read_text())['dependencies']
     (target / 'package.json').write_text(json.dumps({'name': 'trip-painting-rn-map-qa', 'version': '0.1.0',
         'private': True, 'main': 'index.js', 'dependencies': {k: deps[k] for k in
-            ('expo', 'react', 'react-native', '@maplibre/maplibre-react-native')}}))
+            ('expo', 'expo-constants', 'expo-sqlite', 'react', 'react-native', '@maplibre/maplibre-react-native')}}))
+    (target / 'product-source').symlink_to(PRODUCT / 'src', target_is_directory=True)
+    shutil.copyfile(HERE / 'pack-recovery.js', target / 'pack-recovery.js')
     shutil.copyfile(HERE / 'index.js', target / 'index.js')
     (target / 'babel.config.js').write_text("module.exports = { presets: ['babel-preset-expo'] };\n")
     (target / 'metro.config.js').write_text("""const fs = require('node:fs');
 const { getDefaultConfig } = require('expo/metro-config');
 const config = getDefaultConfig(__dirname);
-config.watchFolders = [...new Set([...config.watchFolders, fs.realpathSync('./node_modules')])];
+config.watchFolders = [...new Set([...config.watchFolders, fs.realpathSync('./node_modules'),
+  fs.realpathSync('./product-source')])];
 module.exports = config;
 """)
     print(target)

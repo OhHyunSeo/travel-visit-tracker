@@ -4,6 +4,8 @@
 
 기본 시험 `local-empty`는 제품 Expo 플러그인으로 등록한 Swift 코드와 번들의 빈 스타일 파일을 사용합니다. `--initial-style local-missing`은 같은 Swift 코드에 파일이 없는 시험 경로를 넘깁니다. 두 모드 모두 추가 외부 요청 없이 합성 HTTPS 세 건이 완료돼야 합니다. `--initial-style sdk-default`는 SDK 기본 스타일과 일치한 추가 요청 한 건이 전송 전에 차단되는지 확인하는 대조 시험입니다.
 
+`--case pack-recovery`는 별도 시험 앱의 빈 지도 저장소에서 Expo SQLite에 작업을 저장하고, MapLibre가 스타일과 타일을 받도록 합니다. SDK가 생성 후 반환한 팩 ID를 저장하지 않은 채 공통 복구를 호출합니다. 최신 SDK 목록에서 찾은 ID가 SQLite에 저장되고, 실제 완료 상태와 서버·전송 장부가 일치해야 통과합니다. Expo 시작에 필요한 에셋과 상수 모듈, 지도 작업을 위한 SQLite만 등록합니다.
+
 MapLibre 6.31의 기본 스타일은 `maplibre://maps/style` 별칭입니다. SDK가 HTTP 요청으로 바꾸는 설정까지 대조해 기본 스타일 요청을 식별합니다. [지도 뷰 초기화](https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/platform/ios/src/MLNMapView.mm#L474), [기본 서버 설정](https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/src/mln/util/tile_server_options.cpp#L195)
 
 ## Mac에서 실행
@@ -21,6 +23,8 @@ python3 -B qa/map-transport/ios-rn/run-simulator.py \
 
 이 검사는 React Native 초기화, URL 변환, 렌더 이벤트와 시험용 HTTPS 경로를 확인합니다. 실기기, 여행색칠 제품 앱, HTTP/2와 오프라인 지도 저장은 별도 검사입니다.
 
+같은 시뮬레이터 도구에 `--case pack-recovery`를 붙여 합성 지도 팩을 저장하고 복구를 확인할 수 있습니다.
+
 ## iPhone 실기기에서 확인
 
 같은 소스를 개발용으로 서명합니다. 기존 여행색칠과 다른 앱 식별자를 씁니다. 시험 앱을 연결한 iPhone에 설치한 뒤, Mac과 iPhone을 같은 네트워크에 연결하고 iPhone의 잠금을 해제합니다.
@@ -32,4 +36,4 @@ python3 -B qa/map-transport/ios-rn/capture-device.py \
   docs/test-results/my-rn-device-run
 ```
 
-`QA_ORIGIN`은 새 [합성 서버](../fixture/sdk-server.mjs)를 실행해 얻은 Mac의 사설 HTTPS 주소입니다. 서버에 그 주소를 SAN으로 넣은 새 시험 인증서를 쓰고 공개 DER만 검사에 넘깁니다. capture 도구는 별도 시험 앱만 실행하고, 한 번의 실행에서 얻은 앱 장부와 서버 기록을 대조합니다. 개발자 신뢰와 로컬 네트워크 허용이 필요한 경우 iPhone 설정에서 시험 앱에만 적용하세요. 시험이 끝나면 이번에 설치한 시험 앱과 서버를 정리합니다.
+`QA_ORIGIN`은 새 [합성 서버](../fixture/sdk-server.mjs)를 실행해 얻은 Mac의 사설 HTTPS 주소입니다. 서버에 그 주소를 SAN으로 넣은 새 시험 인증서를 쓰고 공개 DER만 검사에 넘깁니다. capture 도구는 별도 시험 앱만 실행하고, 한 번의 실행에서 얻은 앱 장부와 서버 기록을 대조합니다. 개발자 신뢰와 로컬 네트워크 허용이 필요한 경우 iPhone 설정에서 시험 앱에만 적용하세요. 시험이 끝나면 서버를 종료합니다. 같은 시험 앱을 다시 쓸 때는 설치를 유지할 수 있습니다.

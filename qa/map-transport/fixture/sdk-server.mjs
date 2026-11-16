@@ -86,12 +86,12 @@ export function syntheticRasterStyle(origin, blocked = false, multi = false, hel
   }));
 }
 
-function syntheticPackStyle(origin) {
+function syntheticPackStyle(origin, zoom) {
   return Buffer.from(JSON.stringify({
     version: 8,
     sources: { t: {
       type: "raster", tiles: [`${origin}/resource/tile/pack_{z}_{x}_{y}`],
-      tileSize: 512, minzoom: 0, maxzoom: 0,
+      tileSize: 512, minzoom: zoom, maxzoom: zoom,
     } },
     layers: [{ id: "t", type: "raster", source: "t" }],
   }));
@@ -260,19 +260,21 @@ export async function createSDKFixture({ host = "127.0.0.1", port = 0, allowLan 
       return json(404, { error: "Policy path reached the fixture" });
     }
     const mixedStyle = mixed && request.url === "/resource/style/mixed";
-    const packStyle = request.url === "/resource/style/pack";
+    const recoveryStyle = request.url === "/resource/style/pack-recovery";
+    const packStyle = recoveryStyle || request.url === "/resource/style/pack";
     const style = mixedStyle || packStyle || ["/resource/style/sdk", "/resource/style/multi", "/resource/style/blocked", "/resource/style/held", "/resource/style/empty"].includes(request.url);
     const multiTile = /^\/resource\/tile\/2_[0-3]_[0-3]$/.test(request.url);
     const heldTile = /^\/resource\/tile\/h_2_[0-3]_[0-3]$/.test(request.url);
     const mixedTile = mixed && /^\/resource\/tile\/m_2_[0-3]_[0-3]$/.test(request.url);
     const asset = mixedAssets.get(request.url);
-    const offlineTile = request.url === "/resource/tile/pack_0_0_0";
+    // The first ADM2 region (Sokcho) fits entirely inside z8/x219/y98.
+    const offlineTile = ["/resource/tile/pack_0_0_0", "/resource/tile/pack_8_219_98"].includes(request.url);
     if (!style && !multiTile && !heldTile && !mixedTile && !asset && !offlineTile && request.url !== "/resource/tile/0_0_0") return json(404, { error: "Unknown synthetic SDK resource" });
     const redirect = policyTarget && request.url === "/resource/tile/m_2_0_0";
     const body = redirect ? Buffer.alloc(0)
       : mixedStyle ? (policyTarget ? syntheticPolicyStyle(origin, policyTarget) : syntheticMixedStyle(origin, fontStack))
       : request.url === "/resource/style/empty" ? Buffer.from('{"version":8,"sources":{},"layers":[]}')
-      : packStyle ? syntheticPackStyle(origin)
+      : packStyle ? syntheticPackStyle(origin, recoveryStyle ? 8 : 0)
       : style ? syntheticRasterStyle(origin, request.url.endsWith("/blocked"), request.url.endsWith("/multi"), request.url.endsWith("/held"))
       : (asset?.body ?? (offlineTile ? packTile : tile));
     if (body.length > (mixedStyle ? 1024 : 256)) return json(500, { error: "Synthetic reservation exceeded" });

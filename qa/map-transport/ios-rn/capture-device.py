@@ -10,7 +10,7 @@ import time
 from urllib.parse import urlsplit
 import uuid
 
-from rn_evidence import BUNDLE, INITIAL_STYLES, save, verify
+from rn_evidence import BUNDLE, CASES, INITIAL_STYLES, save, verify, verify_pack_recovery
 from action_delivery import CoreDeviceError, _device, _pid, _read
 from tls_cancel_capture import FixtureControl
 from tls_result import EvidenceError, _need, _origin, _same
@@ -25,8 +25,9 @@ def copy_result(device, run, name, deadline):
         return _read(destination)
 
 
-def capture(device, origin, certificate, output, *, initial_style="local-empty"):
+def capture(device, origin, certificate, output, *, initial_style="local-empty", trial="render"):
     _need(initial_style in INITIAL_STYLES, "invalid initial style mode")
+    _need(trial in CASES and (trial != "pack-recovery" or initial_style == "local-empty"), "invalid trial or style")
     _need(urlsplit(_origin(origin)).hostname != "127.0.0.1", "use the Mac's private LAN address")
     lock = _device(device, ("info", "lockState"), deadline=time.monotonic() + 8)
     _need(lock.get("passcodeRequired") is False and lock.get("unlockedSinceBoot") is True,
@@ -41,7 +42,7 @@ def capture(device, origin, certificate, output, *, initial_style="local-empty")
 
     run = "rn-device-" + secrets.token_hex(12)
     environment = {"QA_RUN_ID": run, "QA_SERVER_ORIGIN": origin,
-                   "QA_INITIAL_STYLE": initial_style,
+                   "QA_INITIAL_STYLE": initial_style, "QA_RN_CASE": trial,
                    "QA_TLS_LEAF_DER_BASE64": base64.b64encode(certificate).decode("ascii")}
     launch = _device(device, ("process", "launch"),
                      ("--terminate-existing", "--environment-variables", json.dumps(environment), BUNDLE),
@@ -74,6 +75,11 @@ def capture(device, origin, certificate, output, *, initial_style="local-empty")
     _need(len(matching) == 1 and _pid(matching[0].get("processIdentifier")) == pid,
           "the original QA process was not observed at completion")
     save(output, "process-after", {"process": pid})
+    if trial == "pack-recovery":
+        recovery = copy_result(device, run, "pack-recovery.json", time.monotonic() + 8)
+        save(output, "pack-recovery", recovery)
+        return verify_pack_recovery(result, recovery, ledger, server, origin, certificate, run, pid,
+                                    runtime="physical-iphone")
     return verify(result, ledger, server, origin, certificate, run, pid,
                   runtime="physical-iphone", initial_style=initial_style)
 
@@ -84,11 +90,12 @@ def main():
     parser.add_argument("--origin", required=True, help="exact private HTTPS fixture origin")
     parser.add_argument("--certificate", required=True, type=Path, help="the fixture's public DER certificate")
     parser.add_argument("--initial-style", choices=INITIAL_STYLES, default="local-empty")
+    parser.add_argument("--case", choices=CASES, default="render")
     parser.add_argument("evidence", type=Path, help="a new evidence directory")
     args = parser.parse_args()
     try:
         summary = capture(str(args.device).upper(), args.origin, args.certificate.read_bytes(), args.evidence,
-                          initial_style=args.initial_style)
+                          initial_style=args.initial_style, trial=args.case)
         save(args.evidence, "summary", summary)
     except (EvidenceError, OSError, KeyError) as error:
         parser.exit(1, f"Trial could not be verified: {error}\n")

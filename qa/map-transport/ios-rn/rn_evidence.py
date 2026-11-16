@@ -7,6 +7,7 @@ import sys
 
 BUNDLE = "app.trippainting.rnmapqa"
 INITIAL_STYLES = ("local-empty", "local-missing", "sdk-default")
+CASES = ("render", "pack-recovery")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ios-maplibre"))
 from tls_result import _certificate, _need, _same
 
@@ -77,3 +78,40 @@ def verify(result, ledger, server, origin, certificate, run, pid, *, runtime, in
         summary.update(initialStyleMode=initial_style, blockedSdkDefaultStyle=expected_blocks,
                        renderConfirmedAfterTile=True)
     return summary
+
+
+def verify_pack_recovery(result, recovery, ledger, server, origin, certificate, run, pid, *, runtime):
+    _need(result.get("complete") is True and result.get("pass") is True and
+          result.get("delegatePreserved") is True and result.get("runID") == run and
+          result.get("process") == pid, "native pack recovery evidence differs")
+    states = recovery.get("states")
+    _need(isinstance(states, list) and states[:2] == ["idle", "awaiting-pack"] and
+          states[-1] == "complete" and all(state == "incomplete" for state in states[2:-1]),
+          "unexpected Expo operation states")
+    status = recovery.get("status", {})
+    pack_id = recovery.get("createdPackId")
+    _need(recovery.get("pass") is True and isinstance(pack_id, str) and pack_id and
+          recovery.get("savedPackId") == pack_id and status.get("packId") == pack_id and
+          status.get("kind") == "complete" and
+          _same(status.get("completedResourceCount"), 2) and _same(status.get("requiredResourceCount"), 2) and
+          _same(status.get("completedTileCount"), 1),
+          "the recovered SDK and SQLite pack records differ")
+    paths = ["/resource/style/pack-recovery", "/resource/tile/pack_8_219_98"]
+    native = result["native"]
+    _need(native.get("ledgerOK") is True and
+          all(_same(native.get(k), 2) for k in ("started", "released", "httpRequestSendsSettled", "tlsVerifiedExchanges")) and
+          all(_same(native.get(k), 0) for k in ("active", "pending", "blockedBeforeDispatch")), "pack exchanges differ")
+    _need(_same(native.get("ledger"), ledger) and ledger.get("origin") == origin and
+          _same(ledger.get("requests"), 2) and _same(ledger.get("tiles"), 1) and
+          _same(ledger.get("reservedBytes"), 512) and _same(ledger.get("unresolved"), []), "pack request ledger differs")
+    _certificate(ledger.get("fixtureTLSLeafDER"), certificate)
+    requests = server.get("requests", [])
+    _need(_same(server.get("active"), 0) and _same(server.get("resourceCount"), 2) and
+          [item.get("path") for item in requests] == paths, "pack server resources differ")
+    _need([item.get("resource") for item in result.get("observedRequests", [])] == paths and
+          all(item.get("finished") is True and item.get("receivedAuthHeader") is False and
+              item.get("cookieHeader") is False and item.get("alpn") == "http/1.1" and
+              _same(item.get("bytes"), item.get("bytesWritten")) for item in requests) and
+          _same(native.get("acceptedBodyBytes"), sum(item["bytes"] for item in requests)), "pack response evidence differs")
+    return {"validated": True, "runtime": runtime, "bundle": BUNDLE, "resources": paths,
+            "verifiedHTTPSExchanges": 2, "samePackPersisted": True, "operationStates": states}

@@ -13,8 +13,8 @@ app.source_build_phase.files.to_a.each do |file|
   file.remove_from_project if file.file_ref&.display_name == 'ExpoModulesProvider.swift'
 end
 group = project.main_group.find_subpath('TripPainting', false) || abort('Missing staged app group')
-%w[TPRNBootstrap.m TPTransport.m TPHTTPExchange.m main.jsbundle].each do |file|
-  phase = file.end_with?('.m') ? app.source_build_phase : app.resources_build_phase
+%w[TPRNBootstrap.m TPTransport.m TPHTTPExchange.m QAExpoModulesProvider.swift main.jsbundle].each do |file|
+  phase = file == 'main.jsbundle' ? app.resources_build_phase : app.source_build_phase
   reference = group.files.find { |item| item.display_name == file }
   reference ||= group.new_file("TripPainting/#{file}")
   reference.path = "TripPainting/#{file}"

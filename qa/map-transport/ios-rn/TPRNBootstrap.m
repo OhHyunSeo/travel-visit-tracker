@@ -13,7 +13,7 @@ static MLRNTransformRequest *TPRNDelegate;
 static NSMutableArray<NSDictionary *> *TPRNRequests;
 static NSURL *TPRNOriginalDefaultStyle;
 static NSString *TPRNInitialStyleMode;
-static BOOL TPRNLocalBootstrap, TPRNRenderConfirmed;
+static BOOL TPRNLocalBootstrap, TPRNRenderConfirmed, TPRNPackRecovery, TPRNRecoveryReported, TPRNRecoveryPassed;
 
 @interface TPRNTransport : TPTransport
 @end
@@ -23,8 +23,8 @@ static BOOL TPRNLocalBootstrap, TPRNRenderConfirmed;
     NSURLComponents *parts = [NSURLComponents componentsWithURL:self.request.URL resolvingAgainstBaseURL:NO];
     NSString *origin = [NSString stringWithFormat:@"%@://%@:%@", parts.scheme, parts.host, parts.port];
     NSString *path = parts.percentEncodedPath;
-    NSArray *fixturePaths = @[@"/resource/style/rn-entry", @"/resource/style/sdk",
-        @"/resource/tile/0_0_0", @"/resource/style/empty"];
+    NSArray *fixturePaths = TPRNPackRecovery ? @[@"/resource/style/pack-recovery", @"/resource/tile/pack_8_219_98"] :
+        @[@"/resource/style/rn-entry", @"/resource/style/sdk", @"/resource/tile/0_0_0", @"/resource/style/empty"];
     BOOL fixtureOrigin = [origin isEqual:TPRNOrigin];
     NSString *resource = fixtureOrigin && [fixturePaths containsObject:path ?: @""] ? path : @"other";
     @synchronized (TPRNTransport.class) {
@@ -54,6 +54,14 @@ RCT_EXPORT_METHOD(confirmRendered:(RCTPromiseResolveBlock)resolve rejecter:(RCTP
     TPRNRenderConfirmed |= ready;
     resolve(@(ready));
 }
+RCT_EXPORT_METHOD(reportPackRecovery:(NSDictionary *)report resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject) {
+    if (!TPRNPackRecovery || TPRNRecoveryReported) { resolve(@NO); return; }
+    NSData *data = [NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingSortedKeys error:nil];
+    NSURL *file = [TPRNDirectory URLByAppendingPathComponent:@"pack-recovery.json"];
+    TPRNRecoveryReported = data.length > 0 && [data writeToURL:file options:NSDataWritingAtomic error:nil];
+    TPRNRecoveryPassed = TPRNRecoveryReported && [report[@"pass"] isEqual:@YES];
+    resolve(@(TPRNRecoveryReported));
+}
 @end
 
 static void TPRNWrite(BOOL complete, BOOL pass, NSDictionary *native) {
@@ -75,10 +83,13 @@ static void TPRNWrite(BOOL complete, BOOL pass, NSDictionary *native) {
     NSString *origin = env[@"QA_SERVER_ORIGIN"], *run = env[@"QA_RUN_ID"];
     NSData *leaf = [TPTransport fixtureCertificateFromBase64:env[@"QA_TLS_LEAF_DER_BASE64"]];
     NSString *mode = env[@"QA_INITIAL_STYLE"] ?: @"local-empty";
+    NSString *trial = env[@"QA_RN_CASE"] ?: @"render";
     NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:@"\\A[A-Za-z0-9_-]{1,64}\\z" options:0 error:nil];
     if (!origin.length || ![TPTransport safePrivateFixtureTLSOrigin:origin] || !leaf || !run.length || run.length > 64 ||
         [pattern numberOfMatchesInString:run options:0 range:NSMakeRange(0, run.length)] != 1 ||
-        ![@[@"local-empty", @"local-missing", @"sdk-default"] containsObject:mode]) return NO;
+        ![@[@"local-empty", @"local-missing", @"sdk-default"] containsObject:mode] ||
+        ![@[@"render", @"pack-recovery"] containsObject:trial] ||
+        ([trial isEqual:@"pack-recovery"] && ![mode isEqual:@"local-empty"])) return NO;
 
     NSURL *documents = [[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     NSURL *directory = [documents URLByAppendingPathComponent:run];
@@ -99,6 +110,9 @@ static void TPRNWrite(BOOL complete, BOOL pass, NSDictionary *native) {
     }
     TPRNInitialStyleMode = mode;
     TPRNRenderConfirmed = NO;
+    TPRNPackRecovery = [trial isEqual:@"pack-recovery"];
+    TPRNRecoveryReported = NO;
+    TPRNRecoveryPassed = NO;
     TPRNLocalBootstrap = ![mode isEqual:@"sdk-default"];
     if (TPRNLocalBootstrap) {
         BOOL missing = [mode isEqual:@"local-missing"];
@@ -127,7 +141,7 @@ static void TPRNWrite(BOOL complete, BOOL pass, NSDictionary *native) {
     TPRNWrite(NO, NO, TPTransport.snapshot);
     return YES;
 }
-+ (NSDictionary *)initialProperties { return @{ @"origin": TPRNOrigin }; }
++ (NSDictionary *)initialProperties { return @{ @"origin": TPRNOrigin, @"packRecovery": @(TPRNPackRecovery), @"runID": TPRNRunID }; }
 + (void)observe {
     NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 30;
     [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) {
@@ -135,12 +149,15 @@ static void TPRNWrite(BOOL complete, BOOL pass, NSDictionary *native) {
         BOOL delegateOK = MLNNetworkConfiguration.sharedManager.delegate == TPRNDelegate;
         BOOL idle = [native[@"active"] isEqual:@0] && [native[@"pending"] isEqual:@0];
         NSNumber *expectedBlocks = TPRNLocalBootstrap ? @0 : @1;
-        BOOL pass = delegateOK && idle && TPRNRenderConfirmed && [native[@"ledgerOK"] isEqual:@YES] &&
-            [native[@"blockedBeforeDispatch"] isEqual:expectedBlocks] && [native[@"started"] isEqual:@3] &&
-            [native[@"tlsVerifiedExchanges"] isEqual:@3] && [native[@"ledger"][@"tiles"] isEqual:@1];
+        NSNumber *expectedStarts = TPRNPackRecovery ? @2 : @3;
+        BOOL confirmed = TPRNPackRecovery ? TPRNRecoveryPassed : TPRNRenderConfirmed;
+        BOOL pass = delegateOK && idle && confirmed && [native[@"ledgerOK"] isEqual:@YES] &&
+            [native[@"blockedBeforeDispatch"] isEqual:expectedBlocks] && [native[@"started"] isEqual:expectedStarts] &&
+            [native[@"tlsVerifiedExchanges"] isEqual:expectedStarts] && [native[@"ledger"][@"tiles"] isEqual:@1];
         BOOL blocked = [native[@"blockedBeforeDispatch"] unsignedIntegerValue] > 0;
-        if (pass || !delegateOK || (blocked && idle && [native[@"started"] unsignedIntegerValue] >= 3) ||
-            [native[@"started"] unsignedIntegerValue] > 3 || NSProcessInfo.processInfo.systemUptime >= deadline) {
+        if (pass || !delegateOK || (TPRNPackRecovery && (blocked || (TPRNRecoveryReported && !TPRNRecoveryPassed))) ||
+            (blocked && idle && [native[@"started"] unsignedIntegerValue] >= expectedStarts.unsignedIntegerValue) ||
+            [native[@"started"] unsignedIntegerValue] > expectedStarts.unsignedIntegerValue || NSProcessInfo.processInfo.systemUptime >= deadline) {
             [timer invalidate];
             TPRNWrite(YES, pass, native);
         }

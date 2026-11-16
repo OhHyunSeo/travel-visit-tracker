@@ -90,6 +90,24 @@ test("original indexed PNG is 256px with bounded decompressed and encoded bytes"
   assert.equal(offset, tile.length);
 });
 
+test("offline recovery uses the one synthetic z8 tile without changing the z0 fixture", async t => {
+  const fixture = await createSDKFixture({ tls: tlsMaterials() });
+  t.after(() => fixture.close());
+  for (const [style, zoom, tile] of [["pack", 0, "0_0_0"], ["pack-recovery", 8, "8_219_98"]]) {
+    const styleResponse = await openHTTPS(fixture.origin, `/resource/style/${style}`);
+    assert.equal(styleResponse.response.statusCode, 200);
+    const source = JSON.parse(await styleResponse.body).sources.t;
+    assert.deepEqual([source.minzoom, source.maxzoom, source.tileSize], [zoom, zoom, 512]);
+    assert.deepEqual(source.tiles, [`${fixture.origin}/resource/tile/pack_{z}_{x}_{y}`]);
+    const tileResponse = await openHTTPS(fixture.origin, `/resource/tile/pack_${tile}`);
+    assert.equal(tileResponse.response.statusCode, 200);
+    assert.deepEqual(await tileResponse.body, syntheticRasterTile(512));
+  }
+  const adjacent = await openHTTPS(fixture.origin, "/resource/tile/pack_8_219_99");
+  assert.equal(adjacent.response.statusCode, 404);
+  await adjacent.body;
+});
+
 test("style fits reservation at longest supported IPv4 HTTP/HTTPS origins with one zoom-zero raster source", () => {
   for (const scheme of ["http", "https"]) {
   for (const [blocked, multi] of [[false, false], [true, false], [false, true]]) {
