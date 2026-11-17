@@ -52,5 +52,16 @@ export async function loadSavedBackgroundMap({
     return null;
 
   const { regionId, bounds, minZoom, maxZoom } = readBackgroundMapPlan(saved.metadata.plan);
-  return { packId: status.packId, regionId, bounds, minZoom, maxZoom, style };
+  // The viewport can straddle a tile boundary even with a constrained camera center.
+  // Keep the verified resource URLs and restrict the renderer's tile coverage to the pack.
+  const tileBounds: [number, number, number, number] = [...bounds];
+  const sources = Object.fromEntries(
+    Object.entries(style.sources).map(([id, source]) => [
+      id,
+      source?.type === 'vector' || source?.type === 'raster'
+        ? { ...source, bounds: tileBounds }
+        : source,
+    ]),
+  );
+  return { packId: status.packId, regionId, bounds, minZoom, maxZoom, style: { ...style, sources } };
 }

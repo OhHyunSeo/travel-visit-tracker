@@ -47,6 +47,15 @@ describe('displaying a saved map', () => {
     expect(dependencies.styleForPack).toHaveBeenCalledExactlyOnceWith(packId);
   });
 
+  it('restricts the tile source coverage without changing the saved tile URL', async () => {
+    const tiles = ['https://fixture.invalid/{z}/{x}/{y}.png'];
+    const raster = { type: 'raster', tiles };
+    const { dependencies } = setup({ ...style, sources: { raster } });
+    const display = await loadSavedBackgroundMap(dependencies);
+    expect(display?.style.sources.raster).toEqual({ ...raster, bounds: plan.bounds });
+    expect(raster).toEqual({ type: 'raster', tiles });
+  });
+
   it('leaves the SDK untouched when the native app cannot confirm cache-only operation', async () => {
     const { dependencies } = setup();
     dependencies.isCacheOnly.mockReturnValue(false);
