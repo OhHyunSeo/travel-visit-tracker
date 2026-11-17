@@ -1,6 +1,14 @@
 # Android 개발·검증 기록
 
-마지막 갱신: 2026-11-16, Asia/Seoul.
+마지막 갱신: 2026-11-17, Asia/Seoul.
+
+## 11월 17일 P3-02 후속: React Native 팩 복구 시험 준비에서 중지
+
+Android 시작점 `afc22da`에서 공통 `02df384`의 제품 복구 코드와 SQLite 저장소를 Git에서 추출했습니다. 별도 패키지 `app.trippainting.maptransportqa.rn`에 실제 React Native MapLibre 모듈과 Expo SQLite를 연결하는 시험 앱을 준비했습니다. 합성 작업을 먼저 저장하고 SDK 팩의 ID를 기록하지 않은 상태에서 제품의 복구 함수가 그 ID를 찾아 저장하는지 확인하도록 구성했습니다. HTTPS 시험 주소와 요청 상한은 기존 합성 Android 전송 코드를 사용합니다.
+
+첫 빌드는 React Native Gradle 설정 플러그인을 찾지 못했습니다. 모듈 경로 지정 후 두 번째 빌드는 React Native와 Expo 설정 플러그인의 컴파일·JAR 생성까지 진행했고, 인터넷이 끊기기 전에 저장해 달라는 요청으로 종료했습니다. 시작·저장 기준 공유 300분 창 잔여는 각각 98%·81%였습니다. 서명 APK 생성·설치, 별도 에뮬레이터 실행, 합성 서버·ADB·앱 호출·요청 장부·SQLite 대조, 제품 화면·실제 공급원·실기기·Release 검증은 미실행입니다.
+
+Git 저장 지점은 이 항목의 로컬 체크포인트 커밋입니다. Git 제외 `qa/map-transport/android/.build/rn-recovery.G55xBKEt/`에 시험 빌드 준비 폴더, 로그, 재개용 Gradle 캐시 약 521MiB와 `guest-capture-draft.patch`를 보존했습니다. 다음은 같은 폴더에서 서명 APK 빌드와 별도 패키지·ABI·해시를 확인한 뒤, 고정된 에뮬레이터에서 합성 서버와 앱 보고서, 장부, 두 SQLite 사본을 대조하는 것입니다.
 
 ## 11월 16일 P3-02 후속: 갱신된 Android 팩을 오프라인으로 재실행
 
