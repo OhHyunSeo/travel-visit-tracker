@@ -51,6 +51,32 @@ afterEach(() => {
 });
 
 describe('saved background map operation', () => {
+  it('upgrades an older saved pack without clearing its metadata or requiring a style', async () => {
+    db.exec('DROP TABLE background_map_operation');
+    db.exec(
+      'CREATE TABLE background_map_operation(slot INTEGER PRIMARY KEY, metadata TEXT NOT NULL, pack_id TEXT)',
+    );
+    db.prepare('INSERT INTO background_map_operation VALUES (1, ?, ?)').run(
+      JSON.stringify(metadata),
+      packId,
+    );
+    await repository.initialize();
+    await repository.initialize();
+    expect(await repository.current()).toEqual({ metadata, packId });
+    expect(await repository.styleForPack(packId)).toBeNull();
+    expect(await repository.bindPack(metadata, packId)).toBe(true);
+  });
+
+  it('saves the style together with the winning operation and reads only the bound pack', async () => {
+    const styleJson = '{"version":8,"sources":{},"layers":[]}';
+    expect(await repository.prepare(metadata, styleJson)).toBe(true);
+    expect(await repository.prepare({ ...metadata, operationId: otherId }, '{}')).toBe(false);
+    expect(await repository.styleForPack(packId)).toBeNull();
+    expect(await repository.bindPack(metadata, packId)).toBe(true);
+    expect(await repository.styleForPack(otherId)).toBeNull();
+    expect(await repository.styleForPack(packId)).toEqual({ metadata, styleJson });
+  });
+
   it('preserves an unbound operation across reopen, then saves the matching SDK ID', async () => {
     expect(await repository.current()).toBeNull();
     expect(await repository.prepare(metadata)).toBe(true);

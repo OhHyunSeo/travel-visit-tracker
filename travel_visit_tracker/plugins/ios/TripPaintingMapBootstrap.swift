@@ -40,6 +40,14 @@ public final class TripPaintingMapBootstrap: NSObject {
   @objc public static func setOfflineMapRequestsBlocked(_ blocked: Bool) {
     OfflineMapRequestGuard.policy.setBlocked(blocked)
   }
+
+  @objc public static func isCacheOnly() -> Bool {
+    let config = MLNNetworkConfiguration.sharedManager.sessionConfiguration ?? .default
+    guard OfflineMapRequestGuard.policy.isBlocked,
+          let first = config.protocolClasses?.first
+    else { return false }
+    return ObjectIdentifier(first) == ObjectIdentifier(OfflineMapRequestGuard.self)
+  }
 }
 
 private final class OfflineMapRequestGuard: URLProtocol, @unchecked Sendable {

@@ -31,6 +31,7 @@ const config: ExpoConfig = {
     ['expo-secure-store', { configureAndroidBackup: true, faceIDPermission: false }],
     '@maplibre/maplibre-react-native',
     './plugins/with-ios-map-bootstrap.js',
+    './plugins/with-android-offline-maps.js',
     [
       'expo-location',
       {

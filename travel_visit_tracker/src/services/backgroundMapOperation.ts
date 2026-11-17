@@ -60,7 +60,7 @@ export async function prepareBackgroundMapOperation(
     tileJsonSha256: reviewed.tileJsonSha256,
     localStyleSha256: reviewed.localStyleSha256,
   });
-  return (await store.prepare(metadata))
+  return (await store.prepare(metadata, reviewed.styleJson))
     ? { kind: 'prepared' as const, metadata, styleJson: reviewed.styleJson }
     : { kind: 'busy' as const };
 }

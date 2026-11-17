@@ -71,7 +71,7 @@ describe('preparing a background map operation', () => {
     );
     expect(result.kind).toBe('prepared');
     if (result.kind !== 'prepared') throw new Error('Expected prepared style');
-    expect(prepare).toHaveBeenCalledExactlyOnceWith(result.metadata);
+    expect(prepare).toHaveBeenCalledExactlyOnceWith(result.metadata, result.styleJson);
     expect(result.metadata).toMatchObject({
       operationId,
       tileJsonSha256: reference.tileJsonSha256,

@@ -4,6 +4,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
 import { regions, regionById, regionPack } from '../../src/data/regions';
 import { collectionStats } from '../../src/domain/collection';
+import type { SavedBackgroundMap } from '../../src/services/backgroundMapDisplay';
+import { getSavedBackgroundMap } from '../../src/services/savedBackgroundMap';
 import { useAppStore } from '../../src/store/useAppStore';
 import { RegionMap } from '../../src/ui/RegionMap';
 import { Button } from '../../src/ui/Button';
@@ -15,6 +17,35 @@ export default function MapScreen() {
   const [selected, select] = useState<string | null>(null),
     [searching, search] = useState(false),
     [query, setQuery] = useState('');
+  const [savedMap, setSavedMap] = useState<SavedBackgroundMap | null>(null);
+  const [showSavedMap, setShowSavedMap] = useState(false);
+  const [savedMapFailed, setSavedMapFailed] = useState(false);
+  const background = showSavedMap ? (savedMap ?? undefined) : undefined;
+
+  useFocusEffect(
+    useCallback(() => {
+      let focused = true;
+      setSavedMapFailed(false);
+      void getSavedBackgroundMap().then(
+        (pack) => {
+          if (focused) setSavedMap(pack);
+        },
+        () => {
+          if (focused) setSavedMap(null);
+        },
+      );
+      return () => {
+        focused = false;
+        setSavedMap(null);
+        setShowSavedMap(false);
+      };
+    }, []),
+  );
+
+  const selectRegion = (id: string) => {
+    if (background && background.regionId !== id) setShowSavedMap(false);
+    select(id);
+  };
   useFocusEffect(
     useCallback(() => {
       if (Platform.OS !== 'android' || selected === null) return;
@@ -51,12 +82,33 @@ export default function MapScreen() {
         </View>
       </View>
       <View style={{ flex: 1, minHeight: 250 }}>
-        <RegionMap visited={stats.visited} selected={selected} onSelect={select} />
+        <RegionMap
+          visited={stats.visited}
+          selected={selected}
+          onSelect={selectRegion}
+          background={background}
+          onBackgroundError={() => {
+            setShowSavedMap(false);
+            setSavedMapFailed(true);
+          }}
+        />
       </View>
       <View style={{ padding: 16, gap: 8 }}>
         <Text style={[styles.body, { fontSize: 10 }]}>
           {regionPack.attribution} · {regionPack.year} 개발용 경계
         </Text>
+        {savedMap && (
+          <Button
+            title={background ? '경계 지도만 보기' : '저장 지도 보기'}
+            secondary
+            onPress={() => {
+              setSavedMapFailed(false);
+              if (!background && selected !== savedMap.regionId) select(null);
+              setShowSavedMap(!background);
+            }}
+          />
+        )}
+        {savedMapFailed && <Text style={styles.error}>저장 지도를 열지 못했습니다.</Text>}
         {region ? (
           <View style={styles.card}>
             <View style={styles.row}>
@@ -117,7 +169,7 @@ export default function MapScreen() {
                 title={`${stats.visited.has(r.id) ? '✓ ' : ''}${r.name}`}
                 secondary
                 onPress={() => {
-                  select(r.id);
+                  selectRegion(r.id);
                   search(false);
                 }}
               />
