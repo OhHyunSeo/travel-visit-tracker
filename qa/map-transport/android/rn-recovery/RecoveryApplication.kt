@@ -22,7 +22,7 @@ class RecoveryApplication : Application(), ReactApplication {
     val transportCalls = AtomicInteger()
     override val reactHost: ReactHost by lazy {
         val packages = PackageList(this).packages.apply { add(RecoveryReportPackage()) }
-        ExpoReactHostFactory.getDefaultReactHost(applicationContext, packages)
+        ExpoReactHostFactory.getDefaultReactHost(applicationContext, packages, useDevSupport = false)
     }
 
     override fun onCreate() {

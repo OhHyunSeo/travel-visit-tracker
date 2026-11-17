@@ -19,6 +19,8 @@ PACKET = struct.Struct('<4sIIIII')
 PAYLOAD_LIMIT = 4096
 FIXTURE_APK_SHA256 = '24dc68cfb9d213e2da83afbe297577f7d73bc408cf0484589b7711ab9334e60f'
 FIXTURE_APK_SIZE = 19_438_330
+RN_FIXTURE_PACKAGE = 'app.trippainting.maptransportqa.rn'
+RN_APK_LIMIT = 96 * 1024**2
 FIXTURE_RELAY_PATH = '/data/local/tmp/trip-map-transport-relay.jar'
 FIXTURE_RELAY_SHA256 = 'b01869854c2fdc4905c7b28af95af2da7f0c6ca39088e011d7ec4ece63516968'
 RASTER_RELAY_SHA256 = '9bf441df427e903309f459f917f802b8d31c612ccf33c789282fd3f941a02b94'
@@ -165,17 +167,19 @@ def query_boot_property(key_path):
         return stream_output(connection, remote, 32, time.monotonic() + 10).strip() == b'1'
 
 
-def install_fixture(key_path, apk, *, expected_hash=FIXTURE_APK_SHA256):
+def install_fixture(key_path, apk, *, expected_hash=FIXTURE_APK_SHA256, rn_recovery=False):
     # Reuse the smoke suite's checks for exact package identity and installed bytes.
     sys.path.append(str(Path(__file__).with_name('sdk-smoke')))
-    from capture_device import check_installed_apk
+    from capture_device import PACKAGE, check_installed_apk
     from device_preflight import check_fresh_device
 
-    if apk.is_symlink() or not apk.is_file() or not 0 < apk.stat().st_size <= 32 * 1024**2:
+    package = RN_FIXTURE_PACKAGE if rn_recovery else PACKAGE
+    limit = RN_APK_LIMIT if rn_recovery else 32 * 1024**2
+    if apk.is_symlink() or not apk.is_file() or not 0 < apk.stat().st_size <= limit:
         raise ValueError('Expected the pinned fixture APK size')
     with apk.open('rb') as stream:
-        data = stream.read(32 * 1024**2 + 1)
-    if len(data) > 32 * 1024**2 or (expected_hash == FIXTURE_APK_SHA256 and len(data) != FIXTURE_APK_SIZE) or sha256(data).hexdigest() != expected_hash:
+        data = stream.read(limit + 1)
+    if len(data) > limit or (expected_hash == FIXTURE_APK_SHA256 and len(data) != FIXTURE_APK_SIZE) or sha256(data).hexdigest() != expected_hash:
         raise ValueError('Fixture APK hash changed')
     key = load_key(key_path)
 
@@ -196,30 +200,32 @@ def install_fixture(key_path, apk, *, expected_hash=FIXTURE_APK_SHA256):
             except ValueError as error:
                 raise ValueError(f'Guest {args[0]} query failed: {error}') from error
 
-    device = check_fresh_device(command)
+    device = check_fresh_device(command, package)
     require_owned_listener(key_path)
     try:
         with socket.create_connection(('127.0.0.1', ADB_PORT), timeout=7) as connection:
             authenticate(connection, key)
             remote = open_stream(connection, f'exec:cmd package install -t -S {len(data)}'.encode('ascii'))
-            return_stream(connection, remote, data, time.monotonic() + 90)
+            return_stream(connection, remote, data, time.monotonic() + (120 if rn_recovery else 90))
             connection.settimeout(45)
             if stream_output(connection, remote, 4096, time.monotonic() + 45).strip() != b'Success':
                 raise ValueError('Guest package manager did not accept the fixture APK')
     except (EOFError, OSError, ValueError) as error:
         raise ValueError(f'Guest APK install stream failed: {error}') from error
-    check_installed_apk(command, expected_hash)
+    check_installed_apk(command, expected_hash, package)
     return {**device, 'installedApkSha256': expected_hash}
 
 
 @contextmanager
-def pack_server(java, identity, source, port, log_path, *, expire_pack, online_recovery=False):
+def pack_server(java, identity, source, port, log_path, *, expire_pack, online_recovery=False, rn_recovery=False):
     with log_path.open('xb') as log:
         arguments = [java, '-Djava.awt.headless=true', source, identity, str(port), '--raster-tile']
         if expire_pack:
             arguments.append('--expire-pack')
         if online_recovery:
             arguments.append('--online-recovery')
+        if rn_recovery:
+            arguments.append('--rn-recovery')
         process = subprocess.Popen(arguments, stdout=log, stderr=log)
         try:
             deadline = time.monotonic() + 15
@@ -408,6 +414,21 @@ def capture_online_recovery(command, online, port, pack_id, pid):
         raise ValueError('The online app process changed during capture')
 
 
+def stage_relay(key_path, relay, raster_tile):
+    if relay.is_symlink() or relay.stat().st_size > 16_384:
+        raise ValueError('Unexpected fixture relay')
+    with relay.open('rb') as stream:
+        relay_data = stream.read(16_385)
+    relay_hash = RASTER_RELAY_SHA256 if raster_tile else FIXTURE_RELAY_SHA256
+    if sha256(relay_data).hexdigest() != relay_hash:
+        raise ValueError('Fixture relay hash changed')
+    stage = (f'umask 077; head -c {len(relay_data)} > {FIXTURE_RELAY_PATH} && '
+             f'chmod 400 {FIXTURE_RELAY_PATH} && sha256sum {FIXTURE_RELAY_PATH}')
+    reply = guest_command(key_path, 512, 'exec-out', 'sh', '-c', stage, input_data=relay_data)
+    if reply.strip() != f'{relay_hash}  {FIXTURE_RELAY_PATH}'.encode('ascii'):
+        raise ValueError('Guest relay hash does not match the staged file')
+
+
 def render_fixture(key_path, apk, relay, server_log, destination, *, raster_tile=False,
                    offline_pack=False, expected_hash=FIXTURE_APK_SHA256):
     sys.path.append(str(Path(__file__).with_name('sdk-smoke')))
@@ -416,13 +437,8 @@ def render_fixture(key_path, apk, relay, server_log, destination, *, raster_tile
                                        check_pack_log, check_transport_logs, read_apk)
 
     port, apk_hash = read_apk(apk)
-    if apk_hash != expected_hash or relay.is_symlink() or relay.stat().st_size > 16_384:
-        raise ValueError('Unexpected fixture APK or relay')
-    with relay.open('rb') as stream:
-        relay_data = stream.read(16_385)
-    relay_hash = RASTER_RELAY_SHA256 if raster_tile else FIXTURE_RELAY_SHA256
-    if sha256(relay_data).hexdigest() != relay_hash:
-        raise ValueError('Fixture relay hash changed')
+    if apk_hash != expected_hash:
+        raise ValueError('Unexpected fixture APK')
     expected = f'STYLE_SERVER_READY port={port}\n'.encode('ascii')
     if server_log.is_symlink() or not server_log.is_file() or server_log.stat().st_size != len(expected) or server_log.read_bytes() != expected:
         raise ValueError('Expected a fresh synthetic server on the APK port')
@@ -430,12 +446,7 @@ def render_fixture(key_path, apk, relay, server_log, destination, *, raster_tile
     def command(limit, mode, *args):
         return guest_command(key_path, limit, mode, *args)
 
-    stage = (f'umask 077; head -c {len(relay_data)} > {FIXTURE_RELAY_PATH} && '
-             f'chmod 400 {FIXTURE_RELAY_PATH} && sha256sum {FIXTURE_RELAY_PATH}')
-    reply = guest_command(key_path, 512, 'exec-out', 'sh', '-c', stage, input_data=relay_data)
-    expected_relay = f'{relay_hash}  {FIXTURE_RELAY_PATH}'.encode('ascii')
-    if reply.strip() != expected_relay:
-        raise ValueError('Guest relay hash does not match the staged file')
+    stage_relay(key_path, relay, raster_tile)
 
     relay_arguments = [str(port), '--raster-tile'] if raster_tile else [str(port)]
     with ThreadPoolExecutor(max_workers=1) as executor:

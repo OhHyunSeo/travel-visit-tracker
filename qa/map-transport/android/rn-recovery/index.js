@@ -30,7 +30,7 @@ async function verifyRecovery(origin) {
       mapStyle: `${origin}/resource/style/sdk`, bounds: plan.bounds,
       minZoom: plan.minZoom, maxZoom: plan.maxZoom, metadata: JSON.stringify(metadata),
     });
-    if ((await store.current())?.packId != null) throw new Error('Pack ID was stored before recovery');
+    if ((await store.current())?.packId !== null) throw new Error('Expected a saved operation without a pack ID');
 
     for (let attempt = 0; attempt < 36; attempt++) {
       const status = await recoverInstalledBackgroundMapOperation();

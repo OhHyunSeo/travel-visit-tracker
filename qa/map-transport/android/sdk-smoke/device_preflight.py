@@ -21,7 +21,7 @@ def package_present(command, name):
     return False
 
 
-def check_fresh_device(command):
+def check_fresh_device(command, package=PACKAGE):
     """Check a caller-pinned device before installing the isolated smoke package."""
     if command(128, 'shell', 'getprop', 'sys.boot_completed').strip() != b'1':
         raise ValueError('Android has not completed boot')
@@ -33,7 +33,7 @@ def check_fresh_device(command):
         raise ValueError('Fixture requires the arm64-v8a ABI')
     if package_present(command, PRODUCT_PACKAGE):
         raise ValueError('Product app is present on this Android device')
-    if package_present(command, PACKAGE):
+    if package_present(command, package):
         raise ValueError('Fixture package already exists on this Android device')
     return {'apiLevel': int(version), 'fixtureAbi': 'arm64-v8a', 'productPackageAbsent': True,
             'fixturePackageAbsent': True}

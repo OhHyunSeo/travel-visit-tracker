@@ -2,6 +2,16 @@
 
 마지막 갱신: 2026-11-17, Asia/Seoul.
 
+## 11월 17일 P3-02 후속: Android React Native 팩 복구 실행
+
+로컬 `9ec6138`에서 재개했습니다. 공통 `02df384`의 복구 함수·저장소 원본을 별도 `app.trippainting.maptransportqa.rn` 앱에 포함했습니다. Node 24.21.0과 기존 Android 도구를 사용하여 JavaScript 번들이 포함된 arm64 Debug APK를 만들었고, 서명과 합성 HTTPS 인증서를 확인했습니다. 현재 시험 APK는 `5be4fd0439c4edb32bcdc098778e8371f326d6ab190e55777ae49d138a0556ef`입니다. Android 준비·대조 검사 134개와 SDK 수집 검사 43개가 통과했습니다.
+
+첫 기기 시도는 앱이 AppCompat 테마를 요구해 서버 요청 전에 종료됐습니다. 두 번째 시도는 스타일을 370바이트 받았고 제품 복구가 진행 중인 팩을 찾았습니다. 시험 서버의 스타일은 줌 0을 제공했고 합성 팩은 줌 8이어서 타일 0개로 남자 제품 검사가 완료 처리를 거절했습니다. 시험에 사용하는 지역 범위에 맞춰 줌 8의 `8/219/98` 타일 한 장을 제공하도록 HTTPS 서버와 시험 APK 허용 경로를 수정했습니다. Mac의 루프백 사전 검사에서도 해당 타일의 응답과 줌 0 요청 거절을 확인했습니다.
+
+최종 10GiB 전용 API 37 에뮬레이터에서 설치 APK 해시가 일치했습니다. 제품 코드가 임시 작업을 저장한 뒤 아직 기록하지 않은 SDK 팩 ID를 조회하고 Expo SQLite에 연결했습니다. 빈 상태, 팩 대기, 다운로드 진행, 완료 순서였습니다. 새 프로세스 PID 4088이 보고한 완료·필요 리소스는 각각 2개였고 타일은 1개였습니다. Expo SQLite의 ID·메타데이터가 MapLibre SQLite의 팩에 일치했습니다. 그 팩에 연결된 스타일 370바이트·타일 1,880바이트를 합성 서버의 응답에 대조했고, 앱 전송 진입과 장부 예약은 각각 2건이었습니다. 수집한 파일만으로 독립 재검증도 통과했습니다.
+
+Git 제외 원문은 `docs/test-results/android-map-transport-20261114-checkpoint/`의 `rn-recovery.YGJGBYTi`, `rn-recovery.PFkFDlkQ`, `rn-recovery.qfS0LNXl`에 있습니다. 공유 300분 창 잔여 99%에서 시작하고 42%에서 저장했습니다. 시험 서버와 전용 볼륨을 정리했고, 서명 APK를 보존하며 미완료 NDK 다운로드와 재생성 가능한 빌드 중복 파일을 정리했습니다. 다음은 서버를 닫은 상태로 같은 Android 시험 설치를 새 프로세스에서 열어 팩 ID와 완료 상태가 유지되는지 확인하는 것입니다. 제품 화면 연결, 실제 지도 공급원, Android 실기기와 Release는 미실행입니다.
+
 ## 11월 17일 P3-02 후속: React Native 팩 복구 시험 준비에서 중지
 
 Android 시작점 `afc22da`에서 공통 `02df384`의 제품 복구 코드와 SQLite 저장소를 Git에서 추출했습니다. 별도 패키지 `app.trippainting.maptransportqa.rn`에 실제 React Native MapLibre 모듈과 Expo SQLite를 연결하는 시험 앱을 준비했습니다. 합성 작업을 먼저 저장하고 SDK 팩의 ID를 기록하지 않은 상태에서 제품의 복구 함수가 그 ID를 찾아 저장하는지 확인하도록 구성했습니다. HTTPS 시험 주소와 요청 상한은 기존 합성 Android 전송 코드를 사용합니다.

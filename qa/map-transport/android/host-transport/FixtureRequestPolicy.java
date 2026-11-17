@@ -107,7 +107,7 @@ final class FixtureRequestPolicy {
     }
     String path = url.encodedPath();
     if (STYLES.contains(path)) return Kind.STYLE;
-    if ("/resource/tile/0_0_0".equals(path) || TILE.matcher(path).matches()) return Kind.TILE;
+    if ("/resource/tile/0_0_0".equals(path) || "/resource/tile/8_219_98".equals(path) || TILE.matcher(path).matches()) return Kind.TILE;
     if ("/resource/glyph/QA/0-255.pbf".equals(path)) return Kind.GLYPH;
     if (SPRITE.matcher(path).matches()) return Kind.SPRITE;
     throw new IOException("Resource is outside the fixture allowlist");

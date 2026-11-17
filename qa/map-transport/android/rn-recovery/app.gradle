@@ -17,6 +17,7 @@ react {
 android {
     namespace = 'app.trippainting.maptransportqa'
     compileSdk = 36
+    ndkVersion = rootProject.ext.ndkVersion
     defaultConfig {
         applicationId = 'app.trippainting.maptransportqa.rn'
         minSdk = 36

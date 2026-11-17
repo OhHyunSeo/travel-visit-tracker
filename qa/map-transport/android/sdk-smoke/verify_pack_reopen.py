@@ -32,19 +32,20 @@ def body_size(blob, compressed):
     return size
 
 
-def pack_database(directory, pack_id, port):
+def pack_database(directory, pack_id, port, *, metadata=METADATA, coordinates=(0, 0, 0)):
     with closing(sqlite3.connect((directory.resolve() / DATABASE).as_uri() + '?mode=ro', uri=True)) as connection:
         if connection.execute('PRAGMA quick_check').fetchall() != [('ok',)]:
             raise ValueError('Invalid SDK offline database')
         if connection.execute('PRAGMA foreign_key_check').fetchall():
             raise ValueError('Offline resource links have foreign key errors')
         regions = connection.execute('SELECT id, definition, description FROM regions').fetchall()
-        if len(regions) != 1 or regions[0][0] != pack_id or regions[0][2] != METADATA:
+        if len(regions) != 1 or regions[0][0] != pack_id or regions[0][2] != metadata:
             raise ValueError('Expected the original synthetic region and metadata')
         style_url = f'https://127.0.0.1:{port}/resource/style/sdk'
         template = f'https://127.0.0.1:{port}/resource/tile/{{z}}_{{x}}_{{y}}'
+        zoom = coordinates[0]
         definition = json.loads(regions[0][1])
-        if (definition.get('style_url'), definition.get('min_zoom'), definition.get('max_zoom')) != (style_url, 0, 0):
+        if (definition.get('style_url'), definition.get('min_zoom'), definition.get('max_zoom')) != (style_url, zoom, zoom):
             raise ValueError('SDK region definition has an unexpected style or zoom')
         styles = connection.execute('''
             SELECT r.url, r.kind, r.data, r.compressed, r.expires, r.must_revalidate
@@ -56,8 +57,8 @@ def pack_database(directory, pack_id, port):
         ''', (pack_id,)).fetchall()
     if len(styles) != 1 or styles[0][:2] != (style_url, 1) or not styles[0][2]:
         raise ValueError('Expected one stored style linked to the pack')
-    if len(tiles) != 1 or tiles[0][:4] != (template, 0, 0, 0) or not tiles[0][4]:
-        raise ValueError('Expected one stored zoom-zero tile linked to the pack')
+    if len(tiles) != 1 or tiles[0][:4] != (template, *coordinates) or not tiles[0][4]:
+        raise ValueError('Expected one stored fixture tile linked to the pack')
     style, tile = styles[0], tiles[0]
     return {
         'definition': definition,

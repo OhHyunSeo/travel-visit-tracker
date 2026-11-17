@@ -17,8 +17,8 @@ APK_PATH = re.compile(rb"package:(/data/app/(?:[A-Za-z0-9_.~+=-]+/){1,4}base\.ap
 APK_HASH_LINE = re.compile(rb"([a-f0-9]{64})[ \t]+([^\r\n]+)\r?\n?")
 
 
-def running_pid(command):
-    result = command(128, "shell", "pidof", PACKAGE).strip()
+def running_pid(command, package=PACKAGE):
+    result = command(128, "shell", "pidof", package).strip()
     if not re.fullmatch(rb"[1-9][0-9]{0,8}", result):
         raise ValueError("Expected exactly one running fixture process")
     return int(result)
@@ -31,14 +31,14 @@ def require_foreground(command):
         raise ValueError("Fixture must be the sole resumed activity before screen capture")
 
 
-def check_installed_apk(command, expected_hash):
-    path_output = command(1024, "shell", "pm", "path", PACKAGE)
+def check_installed_apk(command, expected_hash, package=PACKAGE):
+    path_output = command(1024, "shell", "pm", "path", package)
     match = APK_PATH.fullmatch(path_output)
     if not match:
         raise ValueError("Expected one installed fixture base APK path")
     path = match[1]
     segments = path.split(b"/")
-    if any(segment in (b".", b"..") for segment in segments) or not segments[-2].startswith(PACKAGE.encode() + b"-"):
+    if any(segment in (b".", b"..") for segment in segments) or not segments[-2].startswith(package.encode() + b"-"):
         raise ValueError("Installed APK is outside the fixture package path")
     result = command(1024, "shell", "sha256sum", path.decode("ascii"))
     checksum = APK_HASH_LINE.fullmatch(result)

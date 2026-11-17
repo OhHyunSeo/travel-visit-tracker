@@ -2,13 +2,17 @@
 set -euo pipefail
 umask 077
 
-if [[ $# != 4 || ! "$2" =~ ^[0-9a-f]{64}$ ]]; then
-  echo 'Usage: bash verify-runtime-inputs.sh <fixture.apk> <expected APK SHA-256> <fixture.p12> <Android build-tools directory>' >&2
+if [[ ( $# != 4 && $# != 5 ) || ! "$2" =~ ^[0-9a-f]{64}$ || ( $# == 5 && "$5" != --rn-recovery ) ]]; then
+  echo 'Usage: bash verify-runtime-inputs.sh <fixture.apk> <expected APK SHA-256> <fixture.p12> <Android build-tools directory> [--rn-recovery]' >&2
   exit 2
 fi
 
 qa_apk="$1"
 qa_tools="$4"
+qa_package='app\.trippainting\.maptransportqa\.sdk'
+if [[ $# == 5 ]]; then
+  qa_package='app\.trippainting\.maptransportqa\.rn'
+fi
 qa_actual=$(shasum -a 256 -- "$qa_apk" | cut -d ' ' -f 1)
 if [[ "$qa_actual" != "$2" ]]; then
   echo 'Fixture APK SHA-256 differs from the recorded build.' >&2
@@ -19,7 +23,7 @@ qa_temp=$(mktemp -d "${TMPDIR:-/tmp}/trip-map-runtime-inputs.XXXXXXXX")
 trap 'rm -rf -- "$qa_temp"' EXIT
 "$qa_tools/apksigner" verify --min-sdk-version 36 "$qa_apk"
 "$qa_tools/aapt2" dump badging "$qa_apk" >"$qa_temp/badging.txt"
-if ! rg -q "^package: name='app\.trippainting\.maptransportqa\.sdk' " "$qa_temp/badging.txt" ||
+if ! rg -q "^package: name='$qa_package' " "$qa_temp/badging.txt" ||
     ! rg -Fqx "minSdkVersion:'36'" "$qa_temp/badging.txt" ||
     ! rg -Fqx "native-code: 'arm64-v8a'" "$qa_temp/badging.txt"; then
   echo 'Fixture APK package, Android API level or ABI differs from the smoke configuration.' >&2

@@ -3,7 +3,7 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <application android:name=".RecoveryApplication" android:label="Map Pack Recovery QA"
         android:allowBackup="false" android:usesCleartextTraffic="false"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
         <activity android:name=".RecoveryActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

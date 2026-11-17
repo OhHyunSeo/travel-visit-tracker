@@ -37,8 +37,8 @@ def read_bounded(path, limit):
     return data
 
 
-def read_apk(path):
-    data = read_bounded(path, 32 * 1024 * 1024)
+def read_apk(path, limit=32 * 1024 * 1024):
+    data = read_bounded(path, limit)
     with ZipFile(io.BytesIO(data)) as apk:
         matches = [entry for entry in apk.infolist() if entry.filename == "assets/fixture-port"]
         if len(matches) != 1 or not 4 <= matches[0].file_size <= 5:
@@ -49,16 +49,17 @@ def read_apk(path):
     return int(value), hashlib.sha256(data).hexdigest()
 
 
-def check_transport_logs(capture, port, *, raster_tile=False, ordered=True):
+def check_transport_logs(capture, port, *, raster_tile=False, ordered=True, coordinates=(0, 0, 0)):
     server = read_bounded(capture / "server.log", LOG_LIMIT).decode().splitlines()
     if raster_tile:
         if len(server) != 3 or server[0] != f"STYLE_SERVER_READY port={port}":
             raise ValueError("Expected one style and one tile in the server log")
         style_line, tile_line = server[1:] if ordered else sorted(server[1:])
         style = re.fullmatch(r"SERVED_STYLE bytes=([1-9][0-9]{0,3})", style_line)
-        tile = re.fullmatch(r"SERVED_TILE path=/resource/tile/0_0_0 bytes=([1-9][0-9]{0,3})", tile_line)
+        tile_path = '_'.join(map(str, coordinates))
+        tile = re.fullmatch(rf"SERVED_TILE path=/resource/tile/{tile_path} bytes=([1-9][0-9]{{0,3}})", tile_line)
         if not style or not tile:
-            raise ValueError("Server did not record the expected zoom-zero tile after the style")
+            raise ValueError("Server did not record the expected raster tile after the style")
         style_bytes, tile_bytes = int(style[1]), int(tile[1])
         if max(style_bytes, tile_bytes) > RESERVATION:
             raise ValueError("A synthetic response exceeded its reservation")

@@ -71,13 +71,15 @@ def boot_marker_exists(marker):
 
 def boot(root, sdk, *, probe_adb=False, fixture_apk=None, render_inputs=None, raster_tile=False,
          offline_pack=False, expected_hash=FIXTURE_APK_SHA256, reopen_inputs=None, expire_pack=False,
-         sdk_offline=False, online_recovery=False, verify_refreshed_pack=False):
+         sdk_offline=False, online_recovery=False, verify_refreshed_pack=False, rn_recovery=None):
     launcher = pinned(sdk / 'emulator/emulator', EMULATOR_SHA256)
     headless = pinned(sdk / 'emulator/qemu/darwin-aarch64/qemu-system-aarch64-headless', HEADLESS_SHA256)
     name = 'TripPaintingMapTransportQA_' + uuid.uuid4().hex[:12]
     avd = prepare_config(root, sdk, name)
     with (avd / 'config.ini').open('a') as config:
         ram_mib = 4096 if online_recovery else 3072 if raster_tile else 2048
+        if rn_recovery:
+            ram_mib = 5120
         config.write(f'hw.cpu.ncore=2\nhw.ramSize={ram_mib}\nhw.lcd.width=720\nhw.lcd.height=1280\n'
                      'hw.lcd.density=320\nhw.gpu.enabled=yes\nPlayStore.enabled=true\n')
     for folder in ('android-user', 'android-config', 'tmp'):
@@ -165,7 +167,8 @@ def boot(root, sdk, *, probe_adb=False, fixture_apk=None, render_inputs=None, ra
                 time.sleep(2)
         if fixture_apk and result.get('adbBootPropertyConfirmed'):
             try:
-                result['fixtureInstall'] = install_fixture(adb_key, fixture_apk, expected_hash=expected_hash)
+                result['fixtureInstall'] = install_fixture(adb_key, fixture_apk, expected_hash=expected_hash,
+                                                           rn_recovery=bool(rn_recovery))
                 result['apkInstalled'] = True
             except (EOFError, OSError, ValueError, subprocess.TimeoutExpired) as error:
                 result['fixtureInstallError'] = str(error)
@@ -182,6 +185,13 @@ def boot(root, sdk, *, probe_adb=False, fixture_apk=None, render_inputs=None, ra
                     result['fixturePack' if offline_pack else 'fixtureRender'] = evidence
             except (EOFError, OSError, ValueError, sqlite3.Error, subprocess.TimeoutExpired) as error:
                 result['fixtureRenderError'] = str(error)
+        if rn_recovery and result['apkInstalled']:
+            from rn_recovery import capture_recovery
+
+            try:
+                result['rnRecovery'] = capture_recovery(adb_key, fixture_apk, *rn_recovery, expected_hash)
+            except (EOFError, OSError, ValueError, sqlite3.Error, subprocess.TimeoutExpired) as error:
+                result['rnRecoveryError'] = str(error)
         with log_path.open('rb') as stream:
             stream.seek(max(0, os.fstat(stream.fileno()).st_size - 4000))
             result['emulatorLogTail'] = stream.read().decode(errors='replace').replace(str(root), '<qa-volume>')
@@ -220,6 +230,8 @@ if __name__ == '__main__':
     parser.add_argument('--sdk-offline', action='store_true', help='Set MapLibre offline before reopening an expired pack')
     parser.add_argument('--online-recovery', action='store_true', help='Restore connectivity in the same MapLibre view')
     parser.add_argument('--verify-refreshed-pack', action='store_true', help='Restart offline with the refreshed content')
+    parser.add_argument('--rn-recovery', type=Path, nargs=4, metavar=('RELAY', 'JAVA', 'IDENTITY', 'CAPTURE'),
+                        help='Verify product pack recovery in the separate React Native fixture')
     parser.add_argument('--fixture-apk-sha256', help='Verified hash of a separately signed pack fixture APK')
     args = parser.parse_args()
     if args.fixture_apk and not args.probe_adb:
@@ -228,8 +240,10 @@ if __name__ == '__main__':
         parser.error('--render-fixture requires --fixture-apk')
     if args.raster_tile and not args.render_fixture:
         parser.error('--raster-tile requires --render-fixture')
-    if args.offline_pack != bool(args.fixture_apk_sha256) or (args.offline_pack and not args.raster_tile):
+    if (args.offline_pack or bool(args.rn_recovery)) != bool(args.fixture_apk_sha256) or (args.offline_pack and not args.raster_tile):
         parser.error('--offline-pack requires --raster-tile and --fixture-apk-sha256')
+    if args.rn_recovery and (not args.fixture_apk or args.render_fixture):
+        parser.error('--rn-recovery requires its signed --fixture-apk and is separate from --render-fixture')
     if args.reopen_pack and not args.offline_pack:
         parser.error('--reopen-pack requires --offline-pack')
     if args.expire_pack and not args.reopen_pack:
@@ -243,12 +257,20 @@ if __name__ == '__main__':
     if args.fixture_apk_sha256 and not re.fullmatch(r'[0-9a-f]{64}', args.fixture_apk_sha256):
         parser.error('Expected a lowercase SHA-256 digest')
     try:
+        sdk = args.sdk_root.resolve(strict=True)
+        if args.rn_recovery:
+            preflight = Path(__file__).with_name('sdk-smoke') / 'verify-runtime-inputs.sh'
+            check = subprocess.run(['/bin/bash', str(preflight), str(args.fixture_apk), args.fixture_apk_sha256,
+                                    str(args.rn_recovery[2]), str(sdk / 'build-tools/36.0.0'), '--rn-recovery'],
+                                   capture_output=True, text=True, check=False, timeout=40)
+            if check.returncode:
+                raise ValueError(f'React Native APK preflight failed: {check.stderr[:600]}')
         result = with_volume(size=BOOT_VOLUME, volume_check=lambda root: boot(
-            root, args.sdk_root.resolve(strict=True), probe_adb=args.probe_adb, fixture_apk=args.fixture_apk,
+            root, sdk, probe_adb=args.probe_adb, fixture_apk=args.fixture_apk,
             render_inputs=args.render_fixture, raster_tile=args.raster_tile, offline_pack=args.offline_pack,
             expected_hash=args.fixture_apk_sha256 or FIXTURE_APK_SHA256, reopen_inputs=args.reopen_pack,
             expire_pack=args.expire_pack, sdk_offline=args.sdk_offline, online_recovery=args.online_recovery,
-            verify_refreshed_pack=args.verify_refreshed_pack))
+            verify_refreshed_pack=args.verify_refreshed_pack, rn_recovery=args.rn_recovery))
         print(json.dumps(result, sort_keys=True))
         check = result['volumeCheck']
         passed = boot_completed(check)
@@ -259,6 +281,8 @@ if __name__ == '__main__':
         if args.render_fixture:
             expected = 'fixtureReopen' if args.reopen_pack else 'fixturePack' if args.offline_pack else 'fixtureRender'
             passed = passed and expected in check
+        if args.rn_recovery:
+            passed = passed and 'rnRecovery' in check
         sys.exit(0 if passed else 2)
-    except (ComponentError, OSError, ValueError, KeyError) as error:
+    except (ComponentError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
         sys.exit(f'Isolated Android boot attempt failed: {error}')
