@@ -1,10 +1,28 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AppRegistry, NativeModules, Text, TurboModuleRegistry } from 'react-native';
+import { CryptoDigestAlgorithm, digestStringAsync } from 'expo-crypto';
 import { regions } from './product-source/data/regions';
 import { createBackgroundMapPackMetadata } from './product-source/domain/backgroundMapPack';
 import { planBackgroundMap } from './product-source/domain/backgroundMapPlan';
 import { recoverInstalledBackgroundMapOperation } from './product-source/services/backgroundMapRecovery.native';
 import { getBackgroundMapOperationRepository } from './product-source/storage/database';
+import { ProductMapTrial } from './product-map-trial';
+
+function fixtureStyle(origin) {
+  return JSON.stringify({
+    version: 8,
+    center: [0, 0],
+    zoom: 0,
+    sources: { fixture: {
+      type: 'raster', tiles: [`${origin}/resource/tile/{z}_{x}_{y}`],
+      tileSize: 512, minzoom: 8, maxzoom: 8,
+    } },
+    layers: [
+      { id: 'fixture-background', type: 'background', paint: { 'background-color': '#177878' } },
+      { id: 'fixture-raster', type: 'raster', source: 'fixture', paint: { 'raster-fade-duration': 0 } },
+    ],
+  });
+}
 
 async function verifyRecovery(origin, reopening) {
   const states = [];
@@ -19,17 +37,17 @@ async function verifyRecovery(origin, reopening) {
       if (initial.kind !== 'complete' || previous?.packId !== initial.packId || saved?.packId !== initial.packId)
         throw new Error('The recovered pack did not survive restart');
       publish({ pass: true, status: initial, savedPackId: saved.packId });
-      return;
+      return saved.packId;
     }
     if (initial.kind !== 'idle') throw new Error('Expected an empty operation database');
-    const plan = planBackgroundMap(regions[0].id, {
-      styleSha256: 'a'.repeat(64), tileVersion: '20261028_120000_pt',
-    }, 8, 8);
+    const style = fixtureStyle(origin);
+    const styleSha256 = await digestStringAsync(CryptoDigestAlgorithm.SHA256, style);
+    const plan = planBackgroundMap(regions[0].id, { styleSha256, tileVersion: '20261028_120000_pt' }, 8, 8);
     const metadata = createBackgroundMapPackMetadata(plan, {
       operationId: '9729af8d-20ac-42db-ae59-3773944d5530',
-      tileJsonSha256: 'b'.repeat(64), localStyleSha256: 'c'.repeat(64),
+      tileJsonSha256: 'b'.repeat(64), localStyleSha256: styleSha256,
     });
-    if (!await store.prepare(metadata)) throw new Error('Could not save the synthetic operation');
+    if (!await store.prepare(metadata, style)) throw new Error('Could not save the synthetic operation');
     const waiting = await recoverInstalledBackgroundMapOperation();
     states.push(waiting.kind);
     if (waiting.kind !== 'awaiting-pack') throw new Error('Expected no matching SDK pack');
@@ -60,8 +78,16 @@ async function verifyRecovery(origin, reopening) {
   }
 }
 
-function RecoveryEntry({ origin, reopening }) {
-  useEffect(() => { void verifyRecovery(origin, reopening); }, [origin, reopening]);
+function RecoveryEntry({ origin, reopening, productMap }) {
+  const [packId, setPackId] = useState(null);
+  useEffect(() => {
+    let active = true;
+    void verifyRecovery(origin, reopening).then((pack) => {
+      if (active && productMap && pack) setPackId(pack);
+    });
+    return () => { active = false; };
+  }, [origin, reopening, productMap]);
+  if (packId) return <ProductMapTrial packId={packId} />;
   return <Text>저장 지도 팩 복구 시험</Text>;
 }
 

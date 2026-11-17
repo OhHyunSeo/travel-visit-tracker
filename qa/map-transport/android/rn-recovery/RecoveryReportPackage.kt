@@ -21,4 +21,10 @@ class RecoveryReport(private val context: ReactApplicationContext) : ReactContex
         val calls = (context.applicationContext as RecoveryApplication).transportCalls.get()
         Log.i("TripMapRnFixture", "RECOVERY_REPORT calls=$calls json=$report")
     }
+
+    @ReactMethod
+    fun publishMapPhase(phase: String) {
+        require(phase in listOf("saved", "disabled", "restored"))
+        Log.i("TripProductMapQa", "MAP_PHASE $phase")
+    }
 }

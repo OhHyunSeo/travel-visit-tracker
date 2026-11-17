@@ -24,10 +24,10 @@ def running_pid(command, package=PACKAGE):
     return int(result)
 
 
-def require_foreground(command):
+def require_foreground(command, activity=ACTIVITY):
     output = command(65_536, "shell", "dumpsys", "activity", "activities")
     resumed = {item for line in RESUMED.findall(output) for item in line.decode().split() if "/" in item}
-    if resumed != {ACTIVITY}:
+    if resumed != {activity}:
         raise ValueError("Fixture must be the sole resumed activity before screen capture")
 
 

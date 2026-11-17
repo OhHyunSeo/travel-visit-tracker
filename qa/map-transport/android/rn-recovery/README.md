@@ -9,7 +9,8 @@ zoom-eight tile for the selected fixture region.
 
 Use Node 24.21.0, JDK 17, Gradle 9.3.1 and the installed Android 36 build tools
 and Expo-selected NDK. Stage with `bash stage.sh PRODUCT_SHA CERT_DER PORT`
-from this directory. The output directory contains a copy of the locked
+from this directory. The product commit must contain `savedBackgroundMap.native.ts`
+and the Android offline maps package template. The output directory contains a copy of the locked
 dependencies, the archived product source, and its own Android user and Gradle
 directories. Build `:app:assembleDebug` with `--project-dir STAGE/android`,
 `--gradle-user-home STAGE/gradle-home`, `ANDROID_USER_HOME=STAGE/android-user`,
@@ -42,3 +43,11 @@ to the boot command. The runner stops the server, checks that its port refuses
 connections and restarts the same installation. It requires a new process, the
 same completed pack and SQLite content, and zero new transport calls or journal
 reservations. Add `--reopened-pid PID` when replaying that capture.
+
+Add `--rn-product-map` together with `--rn-reopen` to exercise the product
+`RegionMap` component. The fixture uses the product Android offline maps package
+and loads the stored style via `getSavedBackgroundMap`. The runner taps the QA
+background switch and captures saved, disabled and restored frames in the same
+app process. It compares tile and region samples, the style bytes, SQLite pack
+identity and the transport and reservation evidence. Add `--product-map` when
+replaying that capture.

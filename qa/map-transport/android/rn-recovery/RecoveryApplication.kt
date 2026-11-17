@@ -21,7 +21,10 @@ class RecoveryApplication : Application(), ReactApplication {
     val port by lazy { assets.open("fixture-port").bufferedReader().use { it.readText().toInt() } }
     val transportCalls = AtomicInteger()
     override val reactHost: ReactHost by lazy {
-        val packages = PackageList(this).packages.apply { add(RecoveryReportPackage()) }
+        val packages = PackageList(this).packages.apply {
+            add(RecoveryReportPackage())
+            add(TripPaintingOfflineMapsPackage())
+        }
         ExpoReactHostFactory.getDefaultReactHost(applicationContext, packages, useDevSupport = false)
     }
 
@@ -37,6 +40,7 @@ class RecoveryApplication : Application(), ReactApplication {
         val budget = FixtureBudget.open(journal, 16, 8, 4096, 65536)
         val http = FixtureHttpClient.https(port, { chain ->
             transportCalls.incrementAndGet()
+            Log.i("TripProductMapQa", "TRANSPORT_CALL")
             chain.proceed(chain.request())
         }, budget, certificate)
         FixtureModuleProvider.install(http)

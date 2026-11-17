@@ -1,0 +1,75 @@
+import tempfile
+from pathlib import Path
+import unittest
+from unittest.mock import patch
+
+from PIL import Image, ImageDraw
+
+from product_map_frames import BACKGROUND_RGB, RASTER_TILE_RGB, SELECTED_REGION_RGB, verify_product_map_frames
+from product_map_trial import TOGGLE_LABEL, toggle_center, verify_product_map
+
+
+def frame(path, tile=None, background=BACKGROUND_RGB):
+    image = Image.new('RGB', (320, 640), background)
+    draw = ImageDraw.Draw(image)
+    if tile:
+        draw.rectangle(tile, fill=RASTER_TILE_RGB)
+    # A fill covers the middle of the tile just as region polygons can.
+    draw.rectangle((132, 248, 185, 395), fill=SELECTED_REGION_RGB)
+    image.save(path)
+
+
+class ProductMapFramesTest(unittest.TestCase):
+    def test_switch_target_stays_in_the_fixture_and_capture_bounds(self):
+        node = f'<node package="qa.map" content-desc="{TOGGLE_LABEL}" clickable="true" enabled="true" bounds="[0,20][320,80]"/>'
+        layout = ('<hierarchy>' + node + '</hierarchy>').encode()
+        self.assertEqual(toggle_center(layout, 'qa.map', (320, 640)), (160, 50))
+        with self.assertRaisesRegex(ValueError, 'QA package'):
+            toggle_center(layout, 'other.map', (320, 640))
+        with self.assertRaisesRegex(ValueError, 'outside'):
+            toggle_center(layout, 'qa.map', (319, 640))
+
+    def test_offline_map_log_rejects_a_network_call(self):
+        with tempfile.TemporaryDirectory() as directory:
+            capture = Path(directory)
+            prefix = '11-17 22:50:00.000  2451  2455 I TripProductMapQa: '
+            rows = ['MAP_OFFLINE connected=false', 'MAP_PHASE saved', 'MAP_PHASE disabled', 'MAP_PHASE restored']
+            log = capture / 'map.log'
+            log.write_text(''.join(prefix + row + '\n' for row in rows))
+            with patch('product_map_trial.verify_product_map_frames', return_value={}):
+                self.assertEqual(verify_product_map(capture, 2451)['transportCalls'], 0)
+            log.write_text(log.read_text() + prefix + 'TRANSPORT_CALL\n')
+            with self.assertRaisesRegex(ValueError, 'transport count'):
+                verify_product_map(capture, 2451)
+
+    def test_saved_tile_disappears_and_returns_in_the_same_area(self):
+        with tempfile.TemporaryDirectory() as directory:
+            capture = Path(directory)
+            tile = (40, 150, 260, 515)
+            frame(capture / 'saved.png', tile)
+            frame(capture / 'disabled.png')
+            frame(capture / 'restored.png', tile)
+            checked = verify_product_map_frames(capture)
+            self.assertGreater(checked['tileSamples']['saved'], 40)
+            self.assertEqual(checked['tileSamples']['disabled'], 0)
+            self.assertEqual(checked['restoredOverlap'], checked['tileSamples']['saved'])
+
+            frame(capture / 'disabled.png', tile)
+            with self.assertRaisesRegex(ValueError, 'expected disabled background'):
+                verify_product_map_frames(capture)
+
+    def test_retains_camera_position_and_rejects_a_blank_disabled_frame(self):
+        with tempfile.TemporaryDirectory() as directory:
+            capture = Path(directory)
+            frame(capture / 'saved.png', (40, 150, 105, 515))
+            frame(capture / 'disabled.png')
+            frame(capture / 'restored.png', (205, 150, 270, 515))
+            with self.assertRaisesRegex(ValueError, 'same map area'):
+                verify_product_map_frames(capture)
+            frame(capture / 'disabled.png', background=(0, 0, 0))
+            with self.assertRaisesRegex(ValueError, 'expected disabled background'):
+                verify_product_map_frames(capture)
+
+
+if __name__ == '__main__':
+    unittest.main()

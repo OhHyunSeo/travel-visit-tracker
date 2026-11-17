@@ -12,6 +12,7 @@ repo=$(git -C "$qa" rev-parse --show-toplevel)
 product="$repo/travel_visit_tracker"
 keytool -printcert -file "$2" >/dev/null
 git -C "$repo" show "$1:travel_visit_tracker/package-lock.json" | cmp - "$product/package-lock.json"
+git -C "$repo" cat-file -e "$1:travel_visit_tracker/src/services/savedBackgroundMap.native.ts"
 
 mkdir -p "$qa/../.build"
 stage=$(mktemp -d "$qa/../.build/rn-recovery.XXXXXXXX")
@@ -25,7 +26,7 @@ node - "$product/package.json" "$stage/package.json" <<'JS'
 const fs = require('node:fs');
 const path = require('node:path');
 const { dependencies } = JSON.parse(fs.readFileSync(process.argv[2]));
-const modules = ['expo', 'expo-asset', 'expo-constants', 'expo-file-system', 'expo-sqlite',
+const modules = ['expo', 'expo-asset', 'expo-constants', 'expo-crypto', 'expo-file-system', 'expo-sqlite',
   'react', 'react-native', '@maplibre/maplibre-react-native'];
 const result = Object.fromEntries(modules.map((name) => {
   const version = dependencies[name] ?? require(path.join(path.dirname(process.argv[2]), 'node_modules', name, 'package.json')).version;
@@ -34,7 +35,7 @@ const result = Object.fromEntries(modules.map((name) => {
 fs.writeFileSync(process.argv[3], JSON.stringify({ name: 'trip-map-rn-recovery', version: '1.0.0',
   private: true, main: 'index.js', dependencies: result }));
 JS
-cp "$qa/index.js" "$stage/index.js"
+cp "$qa/index.js" "$qa/product-map-trial.js" "$stage/"
 printf '%s\n' 'module.exports = { presets: ["babel-preset-expo"] };' > "$stage/babel.config.js"
 printf '%s\n' 'module.exports = require("expo/metro-config").getDefaultConfig(__dirname);' > "$stage/metro.config.js"
 cp "$qa/settings.gradle" "$stage/android/settings.gradle"
@@ -51,6 +52,9 @@ hermesEnabled=true
 reactNativeArchitectures=arm64-v8a
 EOF
 cp "$qa"/*.kt "$sources/"
+bridge=TripPaintingOfflineMapsPackage.kt
+git -C "$repo" show "$1:travel_visit_tracker/plugins/android/$bridge" | \
+  sed 's/__APP_PACKAGE__/app.trippainting.maptransportqa/' > "$sources/$bridge"
 cp "$qa/../host-transport"/Fixture{Body,Budget,BudgetJournal,HttpClient,MapLibreRequest,RequestPolicy,Tls}.java \
   "$qa/../host-transport/sdk-binding/FixtureModuleProvider.java" "$sources/"
 cp -- "$2" "$assets/fixture.der"

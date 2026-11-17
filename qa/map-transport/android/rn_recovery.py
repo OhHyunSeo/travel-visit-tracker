@@ -4,6 +4,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 import errno
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -11,12 +12,13 @@ import socket
 import sqlite3
 import sys
 import time
+import zlib
 
 sys.path.append(str(Path(__file__).with_name('sdk-smoke')))
 
 from avd_guest_component import FIXTURE_RELAY_PATH, RN_APK_LIMIT, RN_FIXTURE_PACKAGE, guest_command, pack_server, stage_relay
 from capture_device import JOURNAL, check_installed_apk, running_pid, write_capture
-from verify_device_capture import JOURNAL_HEADER, JOURNAL_RECORD, LOG_LIMIT, check_journal, check_transport_logs, read_apk, read_bounded
+from verify_device_capture import JOURNAL_HEADER, JOURNAL_RECORD, LOG_LIMIT, RESERVATION, check_journal, check_transport_logs, read_apk, read_bounded
 from verify_pack_reopen import DATABASE, pack_database
 
 
@@ -118,8 +120,39 @@ def verify_reopened(directory, port, first_pid, pid):
             'transportCalls': 0, 'newReservations': 0, 'newServerResponses': 0}
 
 
-def capture_app_report(command, destination, *, reopening=False):
-    args = ('--ez', 'fixture-reopen', 'true') if reopening else ()
+def verify_saved_style(directory):
+    rows = sqlite_rows(directory / OPERATION_DB, 'SELECT style_json, metadata FROM background_map_operation')
+    if len(rows) != 1 or not isinstance(rows[0][0], str):
+        raise ValueError('Product map did not persist the saved style')
+    style, metadata = rows[0]
+    digest = hashlib.sha256(style.encode()).hexdigest()
+    saved_metadata = json.loads(metadata)
+    if not isinstance(saved_metadata, dict) or saved_metadata.get('localStyleSha256') != digest:
+        raise ValueError('Product map style differs from the saved style digest')
+    rows = sqlite_rows(directory / DATABASE, '''
+        SELECT r.data, r.compressed FROM resources r JOIN region_resources link ON link.resource_id=r.id
+        WHERE r.kind=1
+    ''')
+    if len(rows) != 1:
+        raise ValueError('Expected one style linked to the saved MapLibre pack')
+    body, compressed = rows[0]
+    if compressed:
+        decoder = zlib.decompressobj()
+        try:
+            body = decoder.decompress(body, RESERVATION + 1)
+        except zlib.error as error:
+            raise ValueError('Invalid compressed MapLibre style') from error
+        if not decoder.eof or decoder.unused_data:
+            raise ValueError('Invalid compressed MapLibre style')
+    if body != style.encode():
+        raise ValueError('Product map style bytes differ from the linked MapLibre style')
+    return digest
+
+
+def capture_app_report(command, destination, *, reopening=False, product_map=False):
+    args = ['--ez', 'fixture-reopen', 'true'] if reopening else []
+    if product_map:
+        args += ['--ez', 'fixture-product-map', 'true']
     launch = command(4096, 'shell', 'am', 'start', '-W', '-n', ACTIVITY, *args, timeout=22)
     write_capture(destination / 'launch.log', launch)
     if b'Status: ok' not in launch:
@@ -143,7 +176,8 @@ def require_server_closed(port):
             raise ValueError('Synthetic HTTPS port must refuse connections')
 
 
-def capture_recovery(key_path, apk, relay, java, identity, destination, expected_hash, *, reopening=False):
+def capture_recovery(key_path, apk, relay, java, identity, destination, expected_hash, *, reopening=False,
+                     product_map=False):
     port, apk_hash = read_apk(apk, RN_APK_LIMIT)
     if apk_hash != expected_hash:
         raise ValueError('React Native fixture APK hash changed')
@@ -184,11 +218,19 @@ def capture_recovery(key_path, apk, relay, java, identity, destination, expected
         require_server_closed(port)
         reopened = destination / 'reopen'
         reopened.mkdir(mode=0o700)
-        reopened_pid = capture_app_report(command, reopened, reopening=True)
+        reopened_pid = capture_app_report(command, reopened, reopening=True, product_map=product_map)
+        if product_map:
+            from product_map_trial import capture_product_map
+            result['productMap'] = capture_product_map(command, reopened, RN_FIXTURE_PACKAGE, ACTIVITY, reopened_pid)
         capture_saved_files(command, reopened, reopened_pid, expected_hash)
         require_server_closed(port)
         write_capture(reopened / 'server-closed.txt', b'before=refused\nafter=refused\n')
         result['reopened'] = verify_reopened(destination, port, pid, reopened_pid)
+        if product_map:
+            old_style = verify_saved_style(destination)
+            if old_style != verify_saved_style(reopened):
+                raise ValueError('The saved style changed during the product map switch')
+            result['productMap']['styleSha256'] = old_style
     return result
 
 
@@ -216,11 +258,21 @@ if __name__ == '__main__':
     parser.add_argument('--port', required=True, type=int)
     parser.add_argument('--pid', required=True, type=int)
     parser.add_argument('--reopened-pid', type=int)
+    parser.add_argument('--product-map', action='store_true')
     args = parser.parse_args()
+    if args.product_map and args.reopened_pid is None:
+        parser.error('--product-map requires --reopened-pid')
     try:
         result = verify_recovery(args.capture, args.port, args.pid)
         if args.reopened_pid is not None:
             result['reopened'] = verify_reopened(args.capture, args.port, args.pid, args.reopened_pid)
+        if args.product_map:
+            from product_map_trial import verify_product_map
+            result['productMap'] = verify_product_map(args.capture / 'reopen', args.reopened_pid)
+            old_style = verify_saved_style(args.capture)
+            if old_style != verify_saved_style(args.capture / 'reopen'):
+                raise ValueError('The saved style changed during the product map switch')
+            result['productMap']['styleSha256'] = old_style
         print(json.dumps(result, sort_keys=True))
     except (OSError, ValueError, sqlite3.Error) as error:
         parser.exit(1, f'React Native recovery capture failed: {error}\n')
