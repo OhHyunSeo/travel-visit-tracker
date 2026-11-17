@@ -5,6 +5,7 @@ import { useAppStore } from '../../src/store/useAppStore';
 import { regionPack } from '../../src/data/regions';
 import { dwellPolicy } from '../../src/domain/dwell';
 import type { TrackingDiagnostics } from '../../src/domain/types';
+import { BackgroundMapStatus } from '../../src/ui/BackgroundMapStatus';
 import { Button } from '../../src/ui/Button';
 import { styles } from '../../src/ui/theme';
 import { router } from 'expo-router';
@@ -209,6 +210,7 @@ export default function SettingsScreen() {
             }}
           />
         </View>
+        <BackgroundMapStatus />
       </ScrollView>
     </SafeAreaView>
   );
