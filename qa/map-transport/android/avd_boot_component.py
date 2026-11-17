@@ -72,7 +72,7 @@ def boot_marker_exists(marker):
 def boot(root, sdk, *, probe_adb=False, fixture_apk=None, render_inputs=None, raster_tile=False,
          offline_pack=False, expected_hash=FIXTURE_APK_SHA256, reopen_inputs=None, expire_pack=False,
          sdk_offline=False, online_recovery=False, verify_refreshed_pack=False, rn_recovery=None, rn_reopen=False,
-         rn_product_map=False):
+         rn_product_map=False, rn_product_tab=False):
     launcher = pinned(sdk / 'emulator/emulator', EMULATOR_SHA256)
     headless = pinned(sdk / 'emulator/qemu/darwin-aarch64/qemu-system-aarch64-headless', HEADLESS_SHA256)
     name = 'TripPaintingMapTransportQA_' + uuid.uuid4().hex[:12]
@@ -169,7 +169,7 @@ def boot(root, sdk, *, probe_adb=False, fixture_apk=None, render_inputs=None, ra
         if fixture_apk and result.get('adbBootPropertyConfirmed'):
             try:
                 result['fixtureInstall'] = install_fixture(adb_key, fixture_apk, expected_hash=expected_hash,
-                                                           rn_recovery=bool(rn_recovery))
+                                                           rn_recovery=bool(rn_recovery), rn_product_tab=rn_product_tab)
                 result['apkInstalled'] = True
             except (EOFError, OSError, ValueError, subprocess.TimeoutExpired) as error:
                 result['fixtureInstallError'] = str(error)
@@ -191,7 +191,8 @@ def boot(root, sdk, *, probe_adb=False, fixture_apk=None, render_inputs=None, ra
 
             try:
                 result['rnRecovery'] = capture_recovery(adb_key, fixture_apk, *rn_recovery, expected_hash,
-                                                       reopening=rn_reopen, product_map=rn_product_map)
+                                                       reopening=rn_reopen, product_map=rn_product_map,
+                                                       product_tab=rn_product_tab)
             except (EOFError, OSError, ValueError, sqlite3.Error, subprocess.TimeoutExpired) as error:
                 result['rnRecoveryError'] = str(error)
         with log_path.open('rb') as stream:
@@ -236,6 +237,7 @@ if __name__ == '__main__':
                         help='Verify product pack recovery in the separate React Native fixture')
     parser.add_argument('--rn-reopen', action='store_true', help='Reopen the recovered React Native pack with its server closed')
     parser.add_argument('--rn-product-map', action='store_true', help='Display and switch the saved background in the product React Native map')
+    parser.add_argument('--rn-product-tab', action='store_true', help='Use the real product map-tab route and buttons')
     parser.add_argument('--fixture-apk-sha256', help='Verified hash of a separately signed pack fixture APK')
     args = parser.parse_args()
     if args.fixture_apk and not args.probe_adb:
@@ -250,8 +252,10 @@ if __name__ == '__main__':
         parser.error('--rn-recovery requires its signed --fixture-apk and is separate from --render-fixture')
     if args.rn_reopen and not args.rn_recovery:
         parser.error('--rn-reopen requires --rn-recovery')
-    if args.rn_product_map and not args.rn_reopen:
-        parser.error('--rn-product-map requires --rn-reopen')
+    if (args.rn_product_map or args.rn_product_tab) and not args.rn_reopen:
+        parser.error('React Native screen verification requires --rn-reopen')
+    if args.rn_product_map and args.rn_product_tab:
+        parser.error('Choose one React Native screen verification mode')
     if args.reopen_pack and not args.offline_pack:
         parser.error('--reopen-pack requires --offline-pack')
     if args.expire_pack and not args.reopen_pack:
@@ -279,7 +283,7 @@ if __name__ == '__main__':
             expected_hash=args.fixture_apk_sha256 or FIXTURE_APK_SHA256, reopen_inputs=args.reopen_pack,
             expire_pack=args.expire_pack, sdk_offline=args.sdk_offline, online_recovery=args.online_recovery,
             verify_refreshed_pack=args.verify_refreshed_pack, rn_recovery=args.rn_recovery, rn_reopen=args.rn_reopen,
-            rn_product_map=args.rn_product_map))
+            rn_product_map=args.rn_product_map, rn_product_tab=args.rn_product_tab))
         print(json.dumps(result, sort_keys=True))
         check = result['volumeCheck']
         passed = boot_completed(check)
@@ -296,6 +300,8 @@ if __name__ == '__main__':
             passed = passed and 'reopened' in check.get('rnRecovery', {})
         if args.rn_product_map:
             passed = passed and 'productMap' in check.get('rnRecovery', {})
+        if args.rn_product_tab:
+            passed = passed and 'productTab' in check.get('rnRecovery', {})
         sys.exit(0 if passed else 2)
     except (ComponentError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
         sys.exit(f'Isolated Android boot attempt failed: {error}')

@@ -19,15 +19,19 @@ stage=$(mktemp -d "$qa/../.build/rn-recovery.XXXXXXXX")
 app="$stage/android/app"
 sources="$app/src/main/java/app/trippainting/maptransportqa"
 assets="$app/src/main/assets"
-mkdir -p "$sources" "$assets" "$stage/product-source" "$stage/android-user" "$stage/gradle-home"
-git -C "$repo" archive "$1:travel_visit_tracker/src" | tar -xf - -C "$stage/product-source"
+mkdir -p "$sources" "$assets" "$stage/src" "$stage/app/(tabs)" "$stage/android-user" "$stage/gradle-home"
+git -C "$repo" archive "$1:travel_visit_tracker/src" | tar -xf - -C "$stage/src"
+git -C "$repo" show "$1:travel_visit_tracker/app/(tabs)/index.tsx" > "$stage/app/(tabs)/index.tsx"
+cp "$qa/map-route-layout.js" "$stage/app/_layout.js"
 cp -cR -P "$product/node_modules" "$stage/node_modules"
 node - "$product/package.json" "$stage/package.json" <<'JS'
 const fs = require('node:fs');
 const path = require('node:path');
 const { dependencies } = JSON.parse(fs.readFileSync(process.argv[2]));
 const modules = ['expo', 'expo-asset', 'expo-constants', 'expo-crypto', 'expo-file-system', 'expo-sqlite',
-  'react', 'react-native', '@maplibre/maplibre-react-native'];
+  'expo-image-picker', 'expo-linking', 'expo-location', 'expo-router', 'expo-secure-store', 'expo-task-manager',
+  'react', 'react-native', 'react-native-safe-area-context', 'react-native-screens', 'zustand',
+  '@maplibre/maplibre-react-native'];
 const result = Object.fromEntries(modules.map((name) => {
   const version = dependencies[name] ?? require(path.join(path.dirname(process.argv[2]), 'node_modules', name, 'package.json')).version;
   return [name, version];
@@ -36,6 +40,7 @@ fs.writeFileSync(process.argv[3], JSON.stringify({ name: 'trip-map-rn-recovery',
   private: true, main: 'index.js', dependencies: result }));
 JS
 cp "$qa/index.js" "$qa/product-map-trial.js" "$stage/"
+printf '%s\n' '{"expo":{"name":"Trip Map QA","slug":"trip-map-qa","scheme":"tripmapqa","android":{"package":"app.trippainting.maptransportqa.rn"}}}' > "$stage/app.json"
 printf '%s\n' 'module.exports = { presets: ["babel-preset-expo"] };' > "$stage/babel.config.js"
 printf '%s\n' 'module.exports = require("expo/metro-config").getDefaultConfig(__dirname);' > "$stage/metro.config.js"
 cp "$qa/settings.gradle" "$stage/android/settings.gradle"

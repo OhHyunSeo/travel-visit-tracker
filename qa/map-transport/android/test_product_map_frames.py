@@ -5,21 +5,46 @@ from unittest.mock import patch
 
 from PIL import Image, ImageDraw
 
-from product_map_frames import BACKGROUND_RGB, RASTER_TILE_RGB, SELECTED_REGION_RGB, verify_product_map_frames
-from product_map_trial import TOGGLE_LABEL, toggle_center, verify_product_map
+from product_map_frames import BACKGROUND_RGB, RASTER_TILE_RGB, SELECTED_REGION_RGB, UNSELECTED_COLORS, verify_product_map_frames
+from product_map_trial import MAP_TITLE, TAB_BUTTONS, TOGGLE_LABEL, toggle_center, verify_product_map
 
 
-def frame(path, tile=None, background=BACKGROUND_RGB):
+def frame(path, tile=None, background=BACKGROUND_RGB, region=SELECTED_REGION_RGB):
     image = Image.new('RGB', (320, 640), background)
     draw = ImageDraw.Draw(image)
     if tile:
         draw.rectangle(tile, fill=RASTER_TILE_RGB)
     # A fill covers the middle of the tile just as region polygons can.
-    draw.rectangle((132, 248, 185, 395), fill=SELECTED_REGION_RGB)
+    draw.rectangle((132, 248, 185, 395), fill=region)
     image.save(path)
 
 
 class ProductMapFramesTest(unittest.TestCase):
+    def test_product_tab_requires_the_real_button_and_map_title(self):
+        label = TAB_BUTTONS['initial']
+        node = (f'<node package="qa.map" text="{MAP_TITLE}"/>'
+                '<node package="qa.map" clickable="true" enabled="true" bounds="[0,520][320,580]">'
+                f'<node package="qa.map" text="{label}"/></node>')
+        layout = ('<hierarchy>' + node + '</hierarchy>').encode()
+        self.assertEqual(toggle_center(layout, 'qa.map', (320, 640), title=label), (160, 550))
+        with self.assertRaisesRegex(ValueError, 'saved-background switch'):
+            toggle_center(layout, 'qa.map', (320, 640), title=TAB_BUTTONS['saved'])
+        with self.assertRaisesRegex(ValueError, 'map tab title'):
+            toggle_center(layout.replace(MAP_TITLE.encode(), b'other'), 'qa.map', (320, 640), title=label)
+
+    def test_product_tab_starts_on_default_boundaries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            capture = Path(directory)
+            area = (40, 150, 260, 515)
+            for phase in ('initial', 'disabled'):
+                frame(capture / f'{phase}.png', region=UNSELECTED_COLORS[0])
+            for phase in ('saved', 'restored'):
+                frame(capture / f'{phase}.png', area, region=UNSELECTED_COLORS[1])
+            self.assertEqual(verify_product_map_frames(capture, product_tab=True)['tileSamples']['initial'], 0)
+            frame(capture / 'initial.png', area, region=UNSELECTED_COLORS[1])
+            with self.assertRaisesRegex(ValueError, 'expected initial background'):
+                verify_product_map_frames(capture, product_tab=True)
+
     def test_switch_target_stays_in_the_fixture_and_capture_bounds(self):
         node = f'<node package="qa.map" content-desc="{TOGGLE_LABEL}" clickable="true" enabled="true" bounds="[0,20][320,80]"/>'
         layout = ('<hierarchy>' + node + '</hierarchy>').encode()

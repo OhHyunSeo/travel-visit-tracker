@@ -1,12 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { AppRegistry, NativeModules, Text, TurboModuleRegistry } from 'react-native';
 import { CryptoDigestAlgorithm, digestStringAsync } from 'expo-crypto';
-import { regions } from './product-source/data/regions';
-import { createBackgroundMapPackMetadata } from './product-source/domain/backgroundMapPack';
-import { planBackgroundMap } from './product-source/domain/backgroundMapPlan';
-import { recoverInstalledBackgroundMapOperation } from './product-source/services/backgroundMapRecovery.native';
-import { getBackgroundMapOperationRepository } from './product-source/storage/database';
+import { ExpoRoot } from 'expo-router';
+import { regions } from './src/data/regions';
+import { createBackgroundMapPackMetadata } from './src/domain/backgroundMapPack';
+import { planBackgroundMap } from './src/domain/backgroundMapPlan';
+import { recoverInstalledBackgroundMapOperation } from './src/services/backgroundMapRecovery.native';
+import { getBackgroundMapOperationRepository } from './src/storage/database';
 import { ProductMapTrial } from './product-map-trial';
+
+const mapRoutes = require.context('./app');
 
 function fixtureStyle(origin) {
   return JSON.stringify({
@@ -78,15 +81,16 @@ async function verifyRecovery(origin, reopening) {
   }
 }
 
-function RecoveryEntry({ origin, reopening, productMap }) {
+function RecoveryEntry({ origin, reopening, productMap, productTab }) {
   const [packId, setPackId] = useState(null);
   useEffect(() => {
     let active = true;
     void verifyRecovery(origin, reopening).then((pack) => {
-      if (active && productMap && pack) setPackId(pack);
+      if (active && (productMap || productTab) && pack) setPackId(pack);
     });
     return () => { active = false; };
-  }, [origin, reopening, productMap]);
+  }, [origin, reopening, productMap, productTab]);
+  if (packId && productTab) return <ExpoRoot context={mapRoutes} location="/" />;
   if (packId) return <ProductMapTrial packId={packId} />;
   return <Text>저장 지도 팩 복구 시험</Text>;
 }

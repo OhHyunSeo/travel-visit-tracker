@@ -21,6 +21,7 @@ FIXTURE_APK_SHA256 = '24dc68cfb9d213e2da83afbe297577f7d73bc408cf0484589b7711ab93
 FIXTURE_APK_SIZE = 19_438_330
 RN_FIXTURE_PACKAGE = 'app.trippainting.maptransportqa.rn'
 RN_APK_LIMIT = 96 * 1024**2
+RN_TAB_APK_LIMIT = 128 * 1024**2
 FIXTURE_RELAY_PATH = '/data/local/tmp/trip-map-transport-relay.jar'
 FIXTURE_RELAY_SHA256 = 'b01869854c2fdc4905c7b28af95af2da7f0c6ca39088e011d7ec4ece63516968'
 RASTER_RELAY_SHA256 = '9bf441df427e903309f459f917f802b8d31c612ccf33c789282fd3f941a02b94'
@@ -167,7 +168,7 @@ def query_boot_property(key_path):
         return stream_output(connection, remote, 32, time.monotonic() + 10).strip() == b'1'
 
 
-def install_fixture(key_path, apk, *, expected_hash=FIXTURE_APK_SHA256, rn_recovery=False):
+def install_fixture(key_path, apk, *, expected_hash=FIXTURE_APK_SHA256, rn_recovery=False, rn_product_tab=False):
     # Reuse the smoke suite's checks for exact package identity and installed bytes.
     sys.path.append(str(Path(__file__).with_name('sdk-smoke')))
     from capture_device import PACKAGE, check_installed_apk
@@ -175,6 +176,8 @@ def install_fixture(key_path, apk, *, expected_hash=FIXTURE_APK_SHA256, rn_recov
 
     package = RN_FIXTURE_PACKAGE if rn_recovery else PACKAGE
     limit = RN_APK_LIMIT if rn_recovery else 32 * 1024**2
+    if rn_product_tab:
+        limit = RN_TAB_APK_LIMIT
     if apk.is_symlink() or not apk.is_file() or not 0 < apk.stat().st_size <= limit:
         raise ValueError('Expected the pinned fixture APK size')
     with apk.open('rb') as stream:

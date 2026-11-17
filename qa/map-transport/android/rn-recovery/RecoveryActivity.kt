@@ -10,7 +10,8 @@ import org.maplibre.android.MapLibre
 
 class RecoveryActivity : ReactActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
-        if (intent.getBooleanExtra("fixture-product-map", false)) {
+        if (intent.getBooleanExtra("fixture-product-map", false) ||
+            intent.getBooleanExtra("fixture-product-tab", false)) {
             check(intent.getBooleanExtra("fixture-reopen", false))
             TripPaintingOfflineMapsPackage.configure(applicationContext)
             check(MapLibre.isConnected() == false)
@@ -29,6 +30,7 @@ class RecoveryActivity : ReactActivity() {
                 putString("origin", "https://127.0.0.1:${fixture.port}")
                 putBoolean("reopening", intent.getBooleanExtra("fixture-reopen", false))
                 putBoolean("productMap", intent.getBooleanExtra("fixture-product-map", false))
+                putBoolean("productTab", intent.getBooleanExtra("fixture-product-tab", false))
             }
         },
     )

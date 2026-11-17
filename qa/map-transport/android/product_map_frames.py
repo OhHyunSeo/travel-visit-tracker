@@ -11,13 +11,15 @@ from verify_device_capture import PNG_LIMIT, RASTER_TILE_RGB, read_bounded
 
 
 PHASES = ('saved', 'disabled', 'restored')
+TAB_PHASES = ('initial', *PHASES)
 BACKGROUND_RGB = (11, 25, 26)
 SELECTED_REGION_RGB = (48, 74, 74)
 SELECTED_REGION_WITH_RASTER_RGB = (141, 84, 59)
 SELECTED_BORDER_RGB = (255, 255, 255)
+UNSELECTED_COLORS = ((38, 60, 61), (203, 91, 49), (82, 113, 112))
 
 
-def map_frame(data):
+def map_frame(data, *, product_tab=False):
     if not data or len(data) > PNG_LIMIT:
         raise ValueError('Invalid product map screenshot size')
     with Image.open(io.BytesIO(data), formats=('PNG',)) as frame:
@@ -27,7 +29,10 @@ def map_frame(data):
         if frame.mode not in ('RGB', 'RGBA') or frame.n_frames != 1:
             raise ValueError('Product map screenshot must be one RGB or RGBA frame')
         frame.load()
-        colors = (RASTER_TILE_RGB, BACKGROUND_RGB, SELECTED_REGION_RGB, SELECTED_REGION_WITH_RASTER_RGB, SELECTED_BORDER_RGB)
+        region_colors = UNSELECTED_COLORS if product_tab else (
+            SELECTED_REGION_RGB, SELECTED_REGION_WITH_RASTER_RGB, SELECTED_BORDER_RGB,
+        )
+        colors = (RASTER_TILE_RGB, BACKGROUND_RGB, *region_colors)
         matches = {color: set() for color in colors}
         # Sample the central map area below the fixture controls. The selected
         # region's opaque fill can cover the middle of the saved raster tile.
@@ -39,19 +44,21 @@ def map_frame(data):
                 for color in colors:
                     if all(abs(component - expected) <= 3 for component, expected in zip(pixel, color)):
                         matches[color].add((x, y))
-    region = matches[SELECTED_REGION_RGB] | matches[SELECTED_REGION_WITH_RASTER_RGB] | matches[SELECTED_BORDER_RGB]
+    region = set.union(*(matches[color] for color in region_colors))
     return (width, height), matches[RASTER_TILE_RGB], len(matches[BACKGROUND_RGB]), region
 
 
 def frame_matches(phase, samples):
     _, raster, background, region = samples
-    if phase == 'disabled':
+    if phase in ('initial', 'disabled'):
         return not raster and background >= 40 and len(region) >= 40
     return len(raster) >= 40 and len(region) >= 40
 
 
-def verify_product_map_frames(directory):
-    frames = {phase: map_frame(read_bounded(directory / f'{phase}.png', PNG_LIMIT)) for phase in PHASES}
+def verify_product_map_frames(directory, *, product_tab=False):
+    phases = TAB_PHASES if product_tab else PHASES
+    frames = {phase: map_frame(read_bounded(directory / f'{phase}.png', PNG_LIMIT), product_tab=product_tab)
+              for phase in phases}
     if len({samples[0] for samples in frames.values()}) != 1:
         raise ValueError('Product map screenshot dimensions changed during the switch')
     for phase, samples in frames.items():
@@ -64,7 +71,7 @@ def verify_product_map_frames(directory):
     first_region, last_region = frames['saved'][3], frames['restored'][3]
     region_overlap = len(first_region & last_region)
     if region_overlap * 5 < max(len(first_region), len(last_region)) * 4:
-        raise ValueError('Selected region moved when restoring the saved background')
-    return {'dimensions': list(frames['saved'][0]), 'tileSamples': {phase: len(frames[phase][1]) for phase in PHASES},
+        raise ValueError('Region boundaries moved when restoring the saved background')
+    return {'dimensions': list(frames['saved'][0]), 'tileSamples': {phase: len(frames[phase][1]) for phase in phases},
             'defaultBackgroundSamples': frames['disabled'][2], 'restoredOverlap': overlap,
             'regionOverlap': region_overlap}

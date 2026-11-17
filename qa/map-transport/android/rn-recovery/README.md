@@ -51,3 +51,8 @@ background switch and captures saved, disabled and restored frames in the same
 app process. It compares tile and region samples, the style bytes, SQLite pack
 identity and the transport and reservation evidence. Add `--product-map` when
 replaying that capture.
+
+`--rn-product-tab` selects the actual product `app/(tabs)/index.tsx` route
+in a minimal Expo Router layout. The runner verifies the initial boundary map
+and presses the screen's own saved-map and boundary-map buttons. It retains
+the four frames and corresponding UI layouts. Use `--product-tab` for replay.

@@ -16,7 +16,7 @@ import zlib
 
 sys.path.append(str(Path(__file__).with_name('sdk-smoke')))
 
-from avd_guest_component import FIXTURE_RELAY_PATH, RN_APK_LIMIT, RN_FIXTURE_PACKAGE, guest_command, pack_server, stage_relay
+from avd_guest_component import FIXTURE_RELAY_PATH, RN_APK_LIMIT, RN_FIXTURE_PACKAGE, RN_TAB_APK_LIMIT, guest_command, pack_server, stage_relay
 from capture_device import JOURNAL, check_installed_apk, running_pid, write_capture
 from verify_device_capture import JOURNAL_HEADER, JOURNAL_RECORD, LOG_LIMIT, RESERVATION, check_journal, check_transport_logs, read_apk, read_bounded
 from verify_pack_reopen import DATABASE, pack_database
@@ -149,10 +149,12 @@ def verify_saved_style(directory):
     return digest
 
 
-def capture_app_report(command, destination, *, reopening=False, product_map=False):
+def capture_app_report(command, destination, *, reopening=False, product_map=False, product_tab=False):
     args = ['--ez', 'fixture-reopen', 'true'] if reopening else []
     if product_map:
         args += ['--ez', 'fixture-product-map', 'true']
+    if product_tab:
+        args += ['--ez', 'fixture-product-tab', 'true']
     launch = command(4096, 'shell', 'am', 'start', '-W', '-n', ACTIVITY, *args, timeout=22)
     write_capture(destination / 'launch.log', launch)
     if b'Status: ok' not in launch:
@@ -177,8 +179,8 @@ def require_server_closed(port):
 
 
 def capture_recovery(key_path, apk, relay, java, identity, destination, expected_hash, *, reopening=False,
-                     product_map=False):
-    port, apk_hash = read_apk(apk, RN_APK_LIMIT)
+                     product_map=False, product_tab=False):
+    port, apk_hash = read_apk(apk, RN_TAB_APK_LIMIT if product_tab else RN_APK_LIMIT)
     if apk_hash != expected_hash:
         raise ValueError('React Native fixture APK hash changed')
 
@@ -218,19 +220,22 @@ def capture_recovery(key_path, apk, relay, java, identity, destination, expected
         require_server_closed(port)
         reopened = destination / 'reopen'
         reopened.mkdir(mode=0o700)
-        reopened_pid = capture_app_report(command, reopened, reopening=True, product_map=product_map)
-        if product_map:
+        reopened_pid = capture_app_report(command, reopened, reopening=True, product_map=product_map,
+                                           product_tab=product_tab)
+        screen_key = 'productTab' if product_tab else 'productMap'
+        if product_map or product_tab:
             from product_map_trial import capture_product_map
-            result['productMap'] = capture_product_map(command, reopened, RN_FIXTURE_PACKAGE, ACTIVITY, reopened_pid)
+            result[screen_key] = capture_product_map(command, reopened, RN_FIXTURE_PACKAGE, ACTIVITY, reopened_pid,
+                                                     product_tab=product_tab)
         capture_saved_files(command, reopened, reopened_pid, expected_hash)
         require_server_closed(port)
         write_capture(reopened / 'server-closed.txt', b'before=refused\nafter=refused\n')
         result['reopened'] = verify_reopened(destination, port, pid, reopened_pid)
-        if product_map:
+        if product_map or product_tab:
             old_style = verify_saved_style(destination)
             if old_style != verify_saved_style(reopened):
                 raise ValueError('The saved style changed during the product map switch')
-            result['productMap']['styleSha256'] = old_style
+            result[screen_key]['styleSha256'] = old_style
     return result
 
 
@@ -259,20 +264,25 @@ if __name__ == '__main__':
     parser.add_argument('--pid', required=True, type=int)
     parser.add_argument('--reopened-pid', type=int)
     parser.add_argument('--product-map', action='store_true')
+    parser.add_argument('--product-tab', action='store_true')
     args = parser.parse_args()
-    if args.product_map and args.reopened_pid is None:
-        parser.error('--product-map requires --reopened-pid')
+    if (args.product_map or args.product_tab) and args.reopened_pid is None:
+        parser.error('Screen verification requires --reopened-pid')
+    if args.product_map and args.product_tab:
+        parser.error('Choose one screen verification mode')
     try:
         result = verify_recovery(args.capture, args.port, args.pid)
         if args.reopened_pid is not None:
             result['reopened'] = verify_reopened(args.capture, args.port, args.pid, args.reopened_pid)
-        if args.product_map:
+        if args.product_map or args.product_tab:
             from product_map_trial import verify_product_map
-            result['productMap'] = verify_product_map(args.capture / 'reopen', args.reopened_pid)
+            screen_key = 'productTab' if args.product_tab else 'productMap'
+            result[screen_key] = verify_product_map(args.capture / 'reopen', args.reopened_pid,
+                                                   product_tab=args.product_tab, package=RN_FIXTURE_PACKAGE)
             old_style = verify_saved_style(args.capture)
             if old_style != verify_saved_style(args.capture / 'reopen'):
                 raise ValueError('The saved style changed during the product map switch')
-            result['productMap']['styleSha256'] = old_style
+            result[screen_key]['styleSha256'] = old_style
         print(json.dumps(result, sort_keys=True))
     except (OSError, ValueError, sqlite3.Error) as error:
         parser.exit(1, f'React Native recovery capture failed: {error}\n')

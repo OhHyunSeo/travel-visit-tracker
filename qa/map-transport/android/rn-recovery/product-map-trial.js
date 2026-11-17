@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { NativeModules, Pressable, StyleSheet, Text, View } from 'react-native';
-import { regions } from './product-source/data/regions';
-import { getSavedBackgroundMap } from './product-source/services/savedBackgroundMap.native';
-import { RegionMap } from './product-source/ui/RegionMap.native';
+import { regions } from './src/data/regions';
+import { getSavedBackgroundMap } from './src/services/savedBackgroundMap.native';
+import { RegionMap } from './src/ui/RegionMap.native';
 
 const emptyVisits = new Set();
 const ignoreSelection = () => {};

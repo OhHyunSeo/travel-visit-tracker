@@ -27,4 +27,9 @@ class RecoveryReport(private val context: ReactApplicationContext) : ReactContex
         require(phase in listOf("saved", "disabled", "restored"))
         Log.i("TripProductMapQa", "MAP_PHASE $phase")
     }
+
+    @ReactMethod
+    fun publishMapRoute() {
+        Log.i("TripProductMapQa", "MAP_ROUTE /(tabs)/index")
+    }
 }
