@@ -3,9 +3,11 @@
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
+import errno
 import json
 from pathlib import Path
 import re
+import socket
 import sqlite3
 import sys
 import time
@@ -27,7 +29,7 @@ RN_LOG = re.compile(r'\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+\s+(\d+)\s+\d+\s+I\s+'
 UUID = re.compile(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}')
 
 
-def rn_report(log, pid):
+def rn_report(log, pid, *, reopening=False):
     messages = []
     for line in log.decode().splitlines():
         if TAG + ':' not in line:
@@ -47,13 +49,16 @@ def rn_report(log, pid):
     if report.get('pass') is not True:
         raise ValueError('React Native recovery failed: ' + str(report.get('error', 'unknown error'))[:384])
     expected = ['idle', 'awaiting-pack']
-    if report.get('states') not in (expected + ['complete'], expected + ['incomplete', 'complete']):
+    sequences = (['complete'],) if reopening else (expected + ['complete'], expected + ['incomplete', 'complete'])
+    if report.get('states') not in sequences:
         raise ValueError('Product recovery did not progress from a saved operation to the completed pack')
-    pack_id = report.get('createdPackId')
+    pack_id = report.get('savedPackId' if reopening else 'createdPackId')
     if not isinstance(pack_id, str) or not UUID.fullmatch(pack_id) or report.get('savedPackId') != pack_id:
         raise ValueError('Product saved pack identity differs from the SDK identity')
+    if reopening and 'createdPackId' in report:
+        raise ValueError('The reopened process created a pack')
     if report.get('status') != {'kind': 'complete', 'packId': pack_id, 'completedResourceCount': 2,
-                               'requiredResourceCount': 2, 'completedTileCount': 1} or int(match[1]) != 2:
+                               'requiredResourceCount': 2, 'completedTileCount': 1} or int(match[1]) != (0 if reopening else 2):
         raise ValueError('Product completion or fixture transport count differs')
     return pack_id, report['states']
 
@@ -66,10 +71,7 @@ def sqlite_rows(path, query):
         return connection.execute(query).fetchall()
 
 
-def verify_recovery(directory, port, pid):
-    pack_id, states = rn_report(read_bounded(directory / 'app.log', LOG_LIMIT), pid)
-    style_bytes, tile_bytes, forwarded = check_transport_logs(directory, port, raster_tile=True, coordinates=RECOVERY_TILE)
-    check_journal(directory / 'budget.journal', raster_tile=True)
+def saved_pack(directory, port, pack_id):
     rows = sqlite_rows(directory / OPERATION_DB, 'SELECT slot, metadata, pack_id FROM background_map_operation')
     if len(rows) != 1 or (rows[0][0], rows[0][2]) != (1, pack_id):
         raise ValueError('Expo SQLite does not contain the recovered pack ID')
@@ -84,7 +86,14 @@ def verify_recovery(directory, port, pid):
     if (not isinstance(sdk, dict) or sdk.get('id') != pack_id or not isinstance(sdk.get('metadata'), str)
             or json.loads(sdk['metadata']) != metadata):
         raise ValueError('MapLibre SQLite metadata or ID differs from the Expo SQLite operation')
-    pack = pack_database(directory, region_id, port, metadata=description, coordinates=RECOVERY_TILE)
+    return region_id, description, pack_database(directory, region_id, port, metadata=description, coordinates=RECOVERY_TILE)
+
+
+def verify_recovery(directory, port, pid):
+    pack_id, states = rn_report(read_bounded(directory / 'app.log', LOG_LIMIT), pid)
+    style_bytes, tile_bytes, forwarded = check_transport_logs(directory, port, raster_tile=True, coordinates=RECOVERY_TILE)
+    check_journal(directory / 'budget.journal', raster_tile=True)
+    region_id, _, pack = saved_pack(directory, port, pack_id)
     if (pack['styleBodyBytes'], pack['tileBodyBytes']) != (style_bytes, tile_bytes):
         raise ValueError('Linked MapLibre SQLite payload sizes differ from the synthetic responses')
     return {'pid': pid, 'states': states, 'regionId': region_id, 'styleBodyBytes': style_bytes, 'tileBodyBytes': tile_bytes,
@@ -92,7 +101,49 @@ def verify_recovery(directory, port, pid):
             'completedResources': 2, 'completedTiles': 1, 'tileSha256': pack['tileSha256']}
 
 
-def capture_recovery(key_path, apk, relay, java, identity, destination, expected_hash):
+def verify_reopened(directory, port, first_pid, pid):
+    if pid <= 0 or pid == first_pid:
+        raise ValueError('Pack reopen requires a new fixture process')
+    reopened = directory / 'reopen'
+    first_id, _ = rn_report(read_bounded(directory / 'app.log', LOG_LIMIT), first_pid)
+    restored_id, states = rn_report(read_bounded(reopened / 'app.log', LOG_LIMIT), pid, reopening=True)
+    if first_id != restored_id or saved_pack(directory, port, first_id) != saved_pack(reopened, port, restored_id):
+        raise ValueError('Pack ID or stored MapLibre content changed after restart')
+    size = JOURNAL_HEADER.size + 2 * JOURNAL_RECORD.size
+    if read_bounded(directory / 'budget.journal', size) != read_bounded(reopened / 'budget.journal', size):
+        raise ValueError('Reopening changed the request journal')
+    if read_bounded(reopened / 'server-closed.txt', 32) != b'before=refused\nafter=refused\n':
+        raise ValueError('Missing proof that the synthetic HTTPS port was closed')
+    return {'pid': pid, 'states': states, 'completedResources': 2, 'completedTiles': 1,
+            'transportCalls': 0, 'newReservations': 0, 'newServerResponses': 0}
+
+
+def capture_app_report(command, destination, *, reopening=False):
+    args = ('--ez', 'fixture-reopen', 'true') if reopening else ()
+    launch = command(4096, 'shell', 'am', 'start', '-W', '-n', ACTIVITY, *args, timeout=22)
+    write_capture(destination / 'launch.log', launch)
+    if b'Status: ok' not in launch:
+        raise ValueError('React Native fixture activity did not start')
+    pid = running_pid(command, RN_FIXTURE_PACKAGE)
+    deadline = time.monotonic() + 27
+    while time.monotonic() < deadline:
+        app = command(LOG_LIMIT, 'logcat', '-d', '--pid', str(pid), '-v', 'threadtime',
+                      '-s', TAG + ':V', 'AndroidRuntime:E', 'ReactNativeJS:E', '*:S')
+        if b'RECOVERY_REPORT ' in app or b'FATAL EXCEPTION' in app:
+            break
+        time.sleep(.25)
+    write_capture(destination / 'app.log', app)
+    return pid
+
+
+def require_server_closed(port):
+    with socket.socket() as probe:
+        probe.settimeout(2)
+        if probe.connect_ex(('127.0.0.1', port)) != errno.ECONNREFUSED:
+            raise ValueError('Synthetic HTTPS port must refuse connections')
+
+
+def capture_recovery(key_path, apk, relay, java, identity, destination, expected_hash, *, reopening=False):
     port, apk_hash = read_apk(apk, RN_APK_LIMIT)
     if apk_hash != expected_hash:
         raise ValueError('React Native fixture APK hash changed')
@@ -119,19 +170,7 @@ def capture_recovery(key_path, apk, relay, java, identity, destination, expected
                     time.sleep(.25)
                 else:
                     raise ValueError('React Native fixture relay did not become ready')
-                launch = command(4096, 'shell', 'am', 'start', '-W', '-n', ACTIVITY, timeout=22)
-                write_capture(destination / 'launch.log', launch)
-                if b'Status: ok' not in launch:
-                    raise ValueError('React Native fixture activity did not start')
-                pid = running_pid(command, RN_FIXTURE_PACKAGE)
-                deadline = time.monotonic() + 27
-                while time.monotonic() < deadline:
-                    app = command(LOG_LIMIT, 'logcat', '-d', '--pid', str(pid), '-v', 'threadtime',
-                                  '-s', TAG + ':V', 'AndroidRuntime:E', 'ReactNativeJS:E', '*:S')
-                    if b'RECOVERY_REPORT ' in app or b'FATAL EXCEPTION' in app:
-                        break
-                    time.sleep(.25)
-                write_capture(destination / 'app.log', app)
+                pid = capture_app_report(command, destination)
             except (OSError, ValueError):
                 crash = command(LOG_LIMIT * 2, 'logcat', '-d', '-t', '180', '-v', 'threadtime',
                                 '-s', TAG + ':V', 'AndroidRuntime:E', 'ReactNativeJS:E', '*:S')
@@ -139,6 +178,21 @@ def capture_recovery(key_path, apk, relay, java, identity, destination, expected
                 raise
             finally:
                 write_capture(destination / 'relay.log', relay_task.result())
+    capture_saved_files(command, destination, pid, expected_hash)
+    result = verify_recovery(destination, port, pid)
+    if reopening:
+        require_server_closed(port)
+        reopened = destination / 'reopen'
+        reopened.mkdir(mode=0o700)
+        reopened_pid = capture_app_report(command, reopened, reopening=True)
+        capture_saved_files(command, reopened, reopened_pid, expected_hash)
+        require_server_closed(port)
+        write_capture(reopened / 'server-closed.txt', b'before=refused\nafter=refused\n')
+        result['reopened'] = verify_reopened(destination, port, pid, reopened_pid)
+    return result
+
+
+def capture_saved_files(command, destination, pid, expected_hash):
     size = JOURNAL_HEADER.size + 2 * JOURNAL_RECORD.size
     write_capture(destination / 'budget.journal', command(size, 'exec-out', 'run-as', RN_FIXTURE_PACKAGE, 'cat', JOURNAL))
     if running_pid(command, RN_FIXTURE_PACKAGE) != pid:
@@ -154,7 +208,6 @@ def capture_recovery(key_path, apk, relay, java, identity, destination, expected
                              f'if [ -f {name} ]; then cat {name}; fi')
             if output or not suffix:
                 write_capture(destination / Path(name).name, output)
-    return verify_recovery(destination, port, pid)
 
 
 if __name__ == '__main__':
@@ -162,8 +215,12 @@ if __name__ == '__main__':
     parser.add_argument('capture', type=Path)
     parser.add_argument('--port', required=True, type=int)
     parser.add_argument('--pid', required=True, type=int)
+    parser.add_argument('--reopened-pid', type=int)
     args = parser.parse_args()
     try:
-        print(json.dumps(verify_recovery(args.capture, args.port, args.pid), sort_keys=True))
+        result = verify_recovery(args.capture, args.port, args.pid)
+        if args.reopened_pid is not None:
+            result['reopened'] = verify_reopened(args.capture, args.port, args.pid, args.reopened_pid)
+        print(json.dumps(result, sort_keys=True))
     except (OSError, ValueError, sqlite3.Error) as error:
         parser.exit(1, f'React Native recovery capture failed: {error}\n')

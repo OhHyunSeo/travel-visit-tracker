@@ -2,6 +2,14 @@
 
 마지막 갱신: 2026-11-17, Asia/Seoul.
 
+## 11월 17일 P3-02 후속: React Native 팩 재실행
+
+`db088a7`의 서명 APK는 빈 작업에서 복구만 실행할 수 있어 원본을 보존했습니다. 같은 시험 패키지·서명과 공통 제품 소스 `02df384`를 유지하고 앱에 재실행 조회 경로를 추가했습니다. 재실행 시험용 arm64 Debug APK의 SHA-256은 `d92ccf08ed18afd8d0b882dc4d16725afb7f35dd0d8d01d8b4135c3a40ff99bf`입니다. Android 준비·대조 135개와 SDK 수집 43개가 통과했고 앞선 복구 증거도 다시 읽었습니다.
+
+전용 API 37 에뮬레이터의 동일 설치에서 PID 4156이 합성 팩을 복구했습니다. 서버와 중계를 종료하고 앱을 닫은 뒤 PID 4354로 재실행했습니다. 서버 포트는 재실행 전후 모두 연결을 거절했습니다. 같은 SDK 팩 ID, Expo SQLite 작업, MapLibre SQLite 팩 메타데이터와 연결된 스타일·타일 해시를 확인했습니다. 완료·필요 리소스는 각각 2개였고 타일은 1개였습니다. 새 전송 호출·서버 응답·장부 예약은 각각 0건이었습니다. 수집본을 독립 재검증했고 전용 10GiB 볼륨을 제거했습니다.
+
+Git 제외 증거는 `docs/test-results/android-map-transport-20261114-checkpoint/rn-reopen.pMZ4g4iT/`입니다. 시작·기기 시험·저장 시점의 공유 300분 창 잔여는 각각 25%·18%·13%였습니다. 다음 제품 단계는 지도 화면 연결과 실제 다운로드 검증입니다. 실제 공급원, 제품 지도 화면, Android 실기기와 Release는 미실행입니다.
+
 ## 11월 17일 P3-02 후속: Android React Native 팩 복구 실행
 
 로컬 `9ec6138`에서 재개했습니다. 공통 `02df384`의 복구 함수·저장소 원본을 별도 `app.trippainting.maptransportqa.rn` 앱에 포함했습니다. Node 24.21.0과 기존 Android 도구를 사용하여 JavaScript 번들이 포함된 arm64 Debug APK를 만들었고, 서명과 합성 HTTPS 인증서를 확인했습니다. 현재 시험 APK는 `5be4fd0439c4edb32bcdc098778e8371f326d6ab190e55777ae49d138a0556ef`입니다. Android 준비·대조 검사 134개와 SDK 수집 검사 43개가 통과했습니다.

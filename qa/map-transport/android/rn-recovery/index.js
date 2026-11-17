@@ -6,14 +6,22 @@ import { planBackgroundMap } from './product-source/domain/backgroundMapPlan';
 import { recoverInstalledBackgroundMapOperation } from './product-source/services/backgroundMapRecovery.native';
 import { getBackgroundMapOperationRepository } from './product-source/storage/database';
 
-async function verifyRecovery(origin) {
+async function verifyRecovery(origin, reopening) {
   const states = [];
   const publish = (result) => NativeModules.TPRecoveryReport.publish(JSON.stringify({ states, ...result }));
   try {
+    const store = await getBackgroundMapOperationRepository();
+    const previous = reopening ? await store.current() : null;
     const initial = await recoverInstalledBackgroundMapOperation();
     states.push(initial.kind);
+    if (reopening) {
+      const saved = await store.current();
+      if (initial.kind !== 'complete' || previous?.packId !== initial.packId || saved?.packId !== initial.packId)
+        throw new Error('The recovered pack did not survive restart');
+      publish({ pass: true, status: initial, savedPackId: saved.packId });
+      return;
+    }
     if (initial.kind !== 'idle') throw new Error('Expected an empty operation database');
-    const store = await getBackgroundMapOperationRepository();
     const plan = planBackgroundMap(regions[0].id, {
       styleSha256: 'a'.repeat(64), tileVersion: '20261028_120000_pt',
     }, 8, 8);
@@ -52,8 +60,8 @@ async function verifyRecovery(origin) {
   }
 }
 
-function RecoveryEntry({ origin }) {
-  useEffect(() => { void verifyRecovery(origin); }, [origin]);
+function RecoveryEntry({ origin, reopening }) {
+  useEffect(() => { void verifyRecovery(origin, reopening); }, [origin, reopening]);
   return <Text>저장 지도 팩 복구 시험</Text>;
 }
 

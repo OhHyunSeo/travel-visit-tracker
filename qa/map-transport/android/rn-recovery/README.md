@@ -36,3 +36,9 @@ same SDK ID in the process log, Expo SQLite operation and MapLibre SQLite
 metadata. It also checks the linked style and tile rows, two synthetic server
 responses and the native request journal. Replay an existing capture using
 `python3 -B qa/map-transport/android/rn_recovery.py CAPTURE --port PORT --pid PID`.
+
+With an APK built from the fixture that supports the relaunch, add `--rn-reopen`
+to the boot command. The runner stops the server, checks that its port refuses
+connections and restarts the same installation. It requires a new process, the
+same completed pack and SQLite content, and zero new transport calls or journal
+reservations. Add `--reopened-pid PID` when replaying that capture.

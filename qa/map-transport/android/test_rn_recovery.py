@@ -12,13 +12,17 @@ PACK_ID = '9f67419a-924b-4ce1-bc84-ae7521972798'
 PID = 2451
 
 
-def capture_log(*, saved_pack_id=PACK_ID):
+def capture_log(*, saved_pack_id=PACK_ID, reopening=False):
     status = {'kind': 'complete', 'packId': PACK_ID, 'completedResourceCount': 2,
               'requiredResourceCount': 2, 'completedTileCount': 1}
     report = {'pass': True, 'states': ['idle', 'awaiting-pack', 'incomplete', 'complete'],
               'createdPackId': PACK_ID, 'savedPackId': saved_pack_id, 'status': status}
+    if reopening:
+        report['states'] = ['complete']
+        del report['createdPackId']
     prefix = f'11-17 12:00:00.000  {PID}  2455 I TripMapRnFixture: '
-    return f'{prefix}TRANSPORT_READY\n{prefix}RECOVERY_REPORT calls=2 json={json.dumps(report)}\n'.encode()
+    calls = 0 if reopening else 2
+    return f'{prefix}TRANSPORT_READY\n{prefix}RECOVERY_REPORT calls={calls} json={json.dumps(report)}\n'.encode()
 
 
 class ReactNativeRecoveryTest(unittest.TestCase):
@@ -40,6 +44,12 @@ class ReactNativeRecoveryTest(unittest.TestCase):
             rn_report(capture_log(saved_pack_id='other'), PID)
         with self.assertRaisesRegex(ValueError, 'log identity'):
             rn_report(capture_log(), PID + 1)
+
+    def test_reopen_reports_completion_without_transport(self):
+        output = capture_log(reopening=True)
+        self.assertEqual(rn_report(output, PID, reopening=True), (PACK_ID, ['complete']))
+        with self.assertRaisesRegex(ValueError, 'transport count'):
+            rn_report(output.replace(b'calls=0', b'calls=1'), PID, reopening=True)
 
     def test_report_pass_cannot_override_the_expo_and_sdk_databases(self):
         with tempfile.TemporaryDirectory() as temporary:

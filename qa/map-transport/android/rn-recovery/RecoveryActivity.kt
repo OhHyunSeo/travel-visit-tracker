@@ -15,6 +15,7 @@ class RecoveryActivity : ReactActivity() {
             override fun getLaunchOptions() = Bundle().apply {
                 val fixture = application as RecoveryApplication
                 putString("origin", "https://127.0.0.1:${fixture.port}")
+                putBoolean("reopening", intent.getBooleanExtra("fixture-reopen", false))
             }
         },
     )
