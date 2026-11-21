@@ -26,6 +26,7 @@ ACTIVITY = f'{RN_FIXTURE_PACKAGE}/app.trippainting.maptransportqa.RecoveryActivi
 OPERATION_DB = 'trip-painting-background-maps-v1.db'
 OPERATION_ID = '9729af8d-20ac-42db-ae59-3773944d5530'
 RECOVERY_TILE = (8, 219, 98)
+RECOVERY_TILES = {8: RECOVERY_TILE, 9: (9, 438, 197)}
 TAG = 'TripMapRnFixture'
 RN_LOG = re.compile(r'\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+\s+(\d+)\s+\d+\s+I\s+' + TAG + r':\s*(.*)')
 UUID = re.compile(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}')
@@ -73,7 +74,7 @@ def sqlite_rows(path, query):
         return connection.execute(query).fetchall()
 
 
-def saved_pack(directory, port, pack_id):
+def saved_pack(directory, port, pack_id, *, zoom=8):
     rows = sqlite_rows(directory / OPERATION_DB, 'SELECT slot, metadata, pack_id FROM background_map_operation')
     if len(rows) != 1 or (rows[0][0], rows[0][2]) != (1, pack_id):
         raise ValueError('Expo SQLite does not contain the recovered pack ID')
@@ -88,28 +89,28 @@ def saved_pack(directory, port, pack_id):
     if (not isinstance(sdk, dict) or sdk.get('id') != pack_id or not isinstance(sdk.get('metadata'), str)
             or json.loads(sdk['metadata']) != metadata):
         raise ValueError('MapLibre SQLite metadata or ID differs from the Expo SQLite operation')
-    return region_id, description, pack_database(directory, region_id, port, metadata=description, coordinates=RECOVERY_TILE)
+    return region_id, description, pack_database(directory, region_id, port, metadata=description, coordinates=RECOVERY_TILES[zoom])
 
 
-def verify_recovery(directory, port, pid):
+def verify_recovery(directory, port, pid, *, zoom=8):
     pack_id, states = rn_report(read_bounded(directory / 'app.log', LOG_LIMIT), pid)
-    style_bytes, tile_bytes, forwarded = check_transport_logs(directory, port, raster_tile=True, coordinates=RECOVERY_TILE)
+    style_bytes, tile_bytes, forwarded = check_transport_logs(directory, port, raster_tile=True, coordinates=RECOVERY_TILES[zoom])
     check_journal(directory / 'budget.journal', raster_tile=True)
-    region_id, _, pack = saved_pack(directory, port, pack_id)
+    region_id, _, pack = saved_pack(directory, port, pack_id, zoom=zoom)
     if (pack['styleBodyBytes'], pack['tileBodyBytes']) != (style_bytes, tile_bytes):
         raise ValueError('Linked MapLibre SQLite payload sizes differ from the synthetic responses')
-    return {'pid': pid, 'states': states, 'regionId': region_id, 'styleBodyBytes': style_bytes, 'tileBodyBytes': tile_bytes,
+    return {'pid': pid, 'zoom': zoom, 'states': states, 'regionId': region_id, 'styleBodyBytes': style_bytes, 'tileBodyBytes': tile_bytes,
             'forwardedBytes': forwarded, 'transportCalls': 2, 'serverResponses': 2, 'reservations': 2,
             'completedResources': 2, 'completedTiles': 1, 'tileSha256': pack['tileSha256']}
 
 
-def verify_reopened(directory, port, first_pid, pid):
+def verify_reopened(directory, port, first_pid, pid, *, zoom=8):
     if pid <= 0 or pid == first_pid:
         raise ValueError('Pack reopen requires a new fixture process')
     reopened = directory / 'reopen'
     first_id, _ = rn_report(read_bounded(directory / 'app.log', LOG_LIMIT), first_pid)
     restored_id, states = rn_report(read_bounded(reopened / 'app.log', LOG_LIMIT), pid, reopening=True)
-    if first_id != restored_id or saved_pack(directory, port, first_id) != saved_pack(reopened, port, restored_id):
+    if first_id != restored_id or saved_pack(directory, port, first_id, zoom=zoom) != saved_pack(reopened, port, restored_id, zoom=zoom):
         raise ValueError('Pack ID or stored MapLibre content changed after restart')
     size = JOURNAL_HEADER.size + 2 * JOURNAL_RECORD.size
     if read_bounded(directory / 'budget.journal', size) != read_bounded(reopened / 'budget.journal', size):
@@ -159,12 +160,13 @@ def verify_captured_bounds(directory, pid):
     return verify_source_bounds(directory, pid, json.loads(metadata), style)
 
 
-def capture_app_report(command, destination, *, reopening=False, product_map=False, product_tab=False):
+def capture_app_report(command, destination, *, reopening=False, product_map=False, product_tab=False, zoom=8):
     args = ['--ez', 'fixture-reopen', 'true'] if reopening else []
     if product_map:
         args += ['--ez', 'fixture-product-map', 'true']
     if product_tab:
         args += ['--ez', 'fixture-product-tab', 'true']
+    args += ['--ei', 'fixture-zoom', str(zoom)]
     launch = command(4096, 'shell', 'am', 'start', '-W', '-n', ACTIVITY, *args, timeout=22)
     write_capture(destination / 'launch.log', launch)
     if b'Status: ok' not in launch:
@@ -189,7 +191,7 @@ def require_server_closed(port):
 
 
 def capture_recovery(key_path, apk, relay, java, identity, destination, expected_hash, *, reopening=False,
-                     product_map=False, product_tab=False, source_bounds=False):
+                     product_map=False, product_tab=False, source_bounds=False, zoom=8):
     port, apk_hash = read_apk(apk, RN_TAB_APK_LIMIT if product_tab else RN_APK_LIMIT)
     if apk_hash != expected_hash:
         raise ValueError('React Native fixture APK hash changed')
@@ -203,7 +205,7 @@ def capture_recovery(key_path, apk, relay, java, identity, destination, expected
     relay_log = '/data/local/tmp/trip-rn-relay.log'
     relay_command = (f'CLASSPATH={FIXTURE_RELAY_PATH} app_process /system/bin FixtureLoopbackRelay {port} '
                      f'--raster-tile > {relay_log} 2>&1; cat {relay_log}')
-    with pack_server(java, identity, server_source, port, destination / 'server.log', expire_pack=False, rn_recovery=True):
+    with pack_server(java, identity, server_source, port, destination / 'server.log', expire_pack=False, rn_recovery=True, rn_zoom=zoom):
         with ThreadPoolExecutor(max_workers=1) as executor:
             relay_task = executor.submit(command, LOG_LIMIT, 'shell', 'sh', '-c', relay_command, timeout=40)
             try:
@@ -216,7 +218,7 @@ def capture_recovery(key_path, apk, relay, java, identity, destination, expected
                     time.sleep(.25)
                 else:
                     raise ValueError('React Native fixture relay did not become ready')
-                pid = capture_app_report(command, destination)
+                pid = capture_app_report(command, destination, zoom=zoom)
             except (OSError, ValueError):
                 crash = command(LOG_LIMIT * 2, 'logcat', '-d', '-t', '180', '-v', 'threadtime',
                                 '-s', TAG + ':V', 'AndroidRuntime:E', 'ReactNativeJS:E', '*:S')
@@ -225,22 +227,22 @@ def capture_recovery(key_path, apk, relay, java, identity, destination, expected
             finally:
                 write_capture(destination / 'relay.log', relay_task.result())
     capture_saved_files(command, destination, pid, expected_hash)
-    result = verify_recovery(destination, port, pid)
+    result = verify_recovery(destination, port, pid, zoom=zoom)
     if reopening:
         require_server_closed(port)
         reopened = destination / 'reopen'
         reopened.mkdir(mode=0o700)
         reopened_pid = capture_app_report(command, reopened, reopening=True, product_map=product_map,
-                                           product_tab=product_tab)
+                                           product_tab=product_tab, zoom=zoom)
         screen_key = 'productTab' if product_tab else 'productMap'
         if product_map or product_tab:
             from product_map_trial import capture_product_map
             result[screen_key] = capture_product_map(command, reopened, RN_FIXTURE_PACKAGE, ACTIVITY, reopened_pid,
-                                                     product_tab=product_tab, source_bounds=source_bounds)
+                                                     product_tab=product_tab, source_bounds=source_bounds, zoom=zoom)
         capture_saved_files(command, reopened, reopened_pid, expected_hash)
         require_server_closed(port)
         write_capture(reopened / 'server-closed.txt', b'before=refused\nafter=refused\n')
-        result['reopened'] = verify_reopened(destination, port, pid, reopened_pid)
+        result['reopened'] = verify_reopened(destination, port, pid, reopened_pid, zoom=zoom)
         if product_map or product_tab:
             old_style = verify_saved_style(destination)
             if old_style != verify_saved_style(reopened):
@@ -278,6 +280,7 @@ if __name__ == '__main__':
     parser.add_argument('--product-map', action='store_true')
     parser.add_argument('--product-tab', action='store_true')
     parser.add_argument('--source-bounds', action='store_true')
+    parser.add_argument('--zoom', type=int, choices=(8, 9), default=8)
     args = parser.parse_args()
     if (args.product_map or args.product_tab) and args.reopened_pid is None:
         parser.error('Screen verification requires --reopened-pid')
@@ -286,14 +289,14 @@ if __name__ == '__main__':
     if args.source_bounds and not args.product_tab:
         parser.error('--source-bounds requires --product-tab')
     try:
-        result = verify_recovery(args.capture, args.port, args.pid)
+        result = verify_recovery(args.capture, args.port, args.pid, zoom=args.zoom)
         if args.reopened_pid is not None:
-            result['reopened'] = verify_reopened(args.capture, args.port, args.pid, args.reopened_pid)
+            result['reopened'] = verify_reopened(args.capture, args.port, args.pid, args.reopened_pid, zoom=args.zoom)
         if args.product_map or args.product_tab:
             from product_map_trial import verify_product_map
             screen_key = 'productTab' if args.product_tab else 'productMap'
             result[screen_key] = verify_product_map(args.capture / 'reopen', args.reopened_pid,
-                                                   product_tab=args.product_tab, package=RN_FIXTURE_PACKAGE)
+                                                   product_tab=args.product_tab, package=RN_FIXTURE_PACKAGE, zoom=args.zoom)
             old_style = verify_saved_style(args.capture)
             if old_style != verify_saved_style(args.capture / 'reopen'):
                 raise ValueError('The saved style changed during the product map switch')

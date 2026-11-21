@@ -9,17 +9,28 @@ from product_map_frames import BACKGROUND_RGB, RASTER_TILE_RGB, SELECTED_REGION_
 from product_map_trial import MAP_TITLE, TAB_BUTTONS, TOGGLE_LABEL, toggle_center, verify_product_map
 
 
-def frame(path, tile=None, background=BACKGROUND_RGB, region=SELECTED_REGION_RGB):
+def frame(path, tile=None, background=BACKGROUND_RGB, region=SELECTED_REGION_RGB, raster=RASTER_TILE_RGB):
     image = Image.new('RGB', (320, 640), background)
     draw = ImageDraw.Draw(image)
     if tile:
-        draw.rectangle(tile, fill=RASTER_TILE_RGB)
+        draw.rectangle(tile, fill=raster)
     # A fill covers the middle of the tile just as region polygons can.
     draw.rectangle((132, 248, 185, 395), fill=region)
     image.save(path)
 
 
 class ProductMapFramesTest(unittest.TestCase):
+    def test_zoom_nine_uses_its_own_tile_color(self):
+        with tempfile.TemporaryDirectory() as directory:
+            capture = Path(directory)
+            for phase in ('initial', 'disabled'):
+                frame(capture / f'{phase}.png', region=UNSELECTED_COLORS[0])
+            for phase in ('saved', 'restored'):
+                frame(capture / f'{phase}.png', (40, 150, 260, 515), region=(52, 117, 195), raster=(52, 121, 206))
+            self.assertGreater(verify_product_map_frames(capture, product_tab=True, zoom=9)['tileSamples']['saved'], 40)
+            with self.assertRaisesRegex(ValueError, 'expected saved background'):
+                verify_product_map_frames(capture, product_tab=True, zoom=8)
+
     def test_product_tab_requires_the_real_button_and_map_title(self):
         label = TAB_BUTTONS['initial']
         node = (f'<node package="qa.map" text="{MAP_TITLE}"/>'

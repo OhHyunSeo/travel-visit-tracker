@@ -37,6 +37,9 @@ class RecoveryActivity : ReactActivity() {
                 putBoolean("reopening", intent.getBooleanExtra("fixture-reopen", false))
                 putBoolean("productMap", intent.getBooleanExtra("fixture-product-map", false))
                 putBoolean("productTab", intent.getBooleanExtra("fixture-product-tab", false))
+                val zoom = intent.getIntExtra("fixture-zoom", 8)
+                require(zoom in 8..9)
+                putInt("fixtureZoom", zoom)
             }
         },
     )

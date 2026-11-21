@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from rn_recovery import OPERATION_DB, OPERATION_ID, RECOVERY_TILE, rn_report, verify_recovery
+from rn_recovery import OPERATION_DB, OPERATION_ID, RECOVERY_TILE, RECOVERY_TILES, rn_report, verify_recovery
 from verify_device_capture import check_transport_logs
 
 
@@ -26,6 +26,18 @@ def capture_log(*, saved_pack_id=PACK_ID, reopening=False):
 
 
 class ReactNativeRecoveryTest(unittest.TestCase):
+    def test_zoom_nine_server_log_rejects_a_zoom_eight_tile(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)
+            (path / 'relay.log').write_text('RELAY_READY port=39443\nRELAY_COMPLETE connections=2 forwarded=6397\n')
+            prefix = 'STYLE_SERVER_READY port=39443\nSERVED_STYLE bytes=370\n'
+            server = path / 'server.log'
+            server.write_text(prefix + 'SERVED_TILE path=/resource/tile/8_219_98 bytes=1880\n')
+            with self.assertRaisesRegex(ValueError, 'expected raster tile'):
+                check_transport_logs(path, 39443, raster_tile=True, coordinates=RECOVERY_TILES[9])
+            server.write_text(prefix + 'SERVED_TILE path=/resource/tile/9_438_197 bytes=1880\n')
+            self.assertEqual(check_transport_logs(path, 39443, raster_tile=True, coordinates=RECOVERY_TILES[9]), (370, 1880, 6397))
+
     def test_rn_recovery_requires_the_matching_zoom_eight_tile(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary)

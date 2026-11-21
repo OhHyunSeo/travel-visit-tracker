@@ -2,6 +2,29 @@
 
 마지막 갱신: 2026-11-21, Asia/Seoul.
 
+## 11월 21일 P3-02 후속: 줌 8과 줌 9의 독립 팩 비교
+
+Android `db28f69`에서 합성 팩의 줌을 8 또는 9로 선택하도록 시험 앱과 수집기를 확장했습니다. 공통 제품 소스는 `a7b0dad`로 유지했습니다. 같은 합성 지역은 줌 8의 `8/219/98` 타일과 줌 9의 `9/438/197` 타일 각각 한 장에 들어갑니다. 줌 8은 주황색, 줌 9는 파란색으로 판독합니다. 이번 범위는 줌별 독립 팩입니다. 한 팩에 여러 줌을 넣는 경우는 남았습니다.
+
+Android 준비·대조 147개와 SDK 수집 43개를 통과했고, 새 판독기로 기존 줌 8 기기 수집본을 다시 확인했습니다. Mac 루프백 HTTPS에서 두 줌의 스타일 바이트·타일 색을 대조했고 서로 다른 줌의 요청은 거절됐습니다. 카메라 줌이 팩 범위를 벗어난 경우와 다른 줌의 색을 잘못 사용하는 경우를 회귀 검사에 포함했습니다.
+
+첫 줌 9 실행은 APK 크기 135,890,956바이트가 시험 한도 128MiB를 넘어 설치 전에 종료됐습니다. 이전 APK보다 압축 데이터는 288바이트만 증가했고 누적 ZIP 포장 여백이 용량 증가의 주원인이었습니다. 내부 파일별 SHA-256을 보존하며 다시 포장하고 원래 키로 서명했습니다. 서명 인증서와 native 정렬 검사도 통과했고 APK는 131,012,875바이트가 됐습니다. 최종 APK는 Git 제외 `qa/map-transport/android/.build/rn-recovery.G55xBKEt/zoom-select-normalized.apk`이며 SHA-256은 `f359529f3e4be0a58389699ca61c1018ff6ef984e8b2552edfb6eef3fa68424b`입니다.
+
+같은 최종 APK를 전용 API 37 에뮬레이터의 두 새 설치에서 실행했습니다. 줌 9는 PID 4231에서 팩을 복구하고 서버 종료 후 PID 4530으로 열었습니다. 제품 탭의 저장·경계 지도 전환과 복귀에서 파란 타일 표본은 0개 → 2,067개 → 0개 → 2,067개였습니다. 줌 8은 PID 4353에서 저장하고 PID 4571로 재실행했으며 주황 타일 표본은 0개 → 6,300개 → 0개 → 6,300개였습니다.
+
+각 팩의 완료·필요 리소스는 각각 2개, 타일은 1개였습니다. 두 줌의 타일 해시는 달랐고, 각 실행 안에서는 팩 ID와 저장 내용이 유지됐습니다. 네이티브 소스와 카메라 줌은 각각 8·9로 일치했고 지역 범위와 타일 주소도 유지됐습니다. 두 실행 모두 서버 종료 뒤 새 전송·서버 응답·요청 예약은 0건, 방문 DB 생성은 0건이었습니다. 저장된 기기 자료의 독립 재검증도 통과했습니다.
+
+Git 제외 원문은 `docs/test-results/android-map-transport-20261114-checkpoint/`의 `rn-zoom9.t1sMJKPt`(설치 전 중단), `rn-zoom9.7ORaMre9`와 `rn-zoom8.6EbwOZMl`입니다. 시작·정리한 APK의 줌 9 시험·줌 8 시험·검증 후 저장 시 공유 300분 잔여는 각각 48%·30%·25%·19%였습니다. 소유 서버·에뮬레이터와 두 전용 볼륨은 종료·제거됐고 중복 빌드 약 3.58GiB를 정리했습니다. 다음은 하나의 팩에 여러 줌을 저장하는 시나리오입니다. 실제 공급원, 다른 지역·타일 유형과 Android 실기기·Release는 남았습니다.
+
+다음 명령이 통과했습니다.
+
+```sh
+python3 -B -m unittest discover -s qa/map-transport/android -p 'test_*.py'
+python3 -B -m unittest discover -s qa/map-transport/android/sdk-smoke -p 'test_*.py'
+python3 -B qa/map-transport/android/rn_recovery.py docs/test-results/android-map-transport-20261114-checkpoint/rn-zoom9.7ORaMre9/capture --port 39443 --pid 4231 --reopened-pid 4530 --product-tab --source-bounds --zoom 9
+python3 -B qa/map-transport/android/rn_recovery.py docs/test-results/android-map-transport-20261114-checkpoint/rn-zoom8.6EbwOZMl/capture --port 39443 --pid 4353 --reopened-pid 4571 --product-tab --source-bounds --zoom 8
+```
+
 ## 11월 21일 P3-02 후속: 저장 지역 제한의 Android 렌더러 반영
 
 Android `88f514b`에서 공통 `a7b0dad`의 저장 지역 제한을 기존 격리 지도 탭 시험에 반영했습니다. 제품 소스와 `app/(tabs)/index.tsx`는 해당 Git 커밋에서 별도 시험 폴더에 추출했습니다. 기존 APK를 `product-tab-88f514b.apk`로 보존했고, 새 arm64 Debug 서명 APK는 `0338fa74d7d110488045327199a5c09edfcf724512a40ae987bc632c516aa61d`입니다.

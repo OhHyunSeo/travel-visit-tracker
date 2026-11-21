@@ -19,7 +19,7 @@ SELECTED_BORDER_RGB = (255, 255, 255)
 UNSELECTED_COLORS = ((38, 60, 61), (203, 91, 49), (82, 113, 112))
 
 
-def map_frame(data, *, product_tab=False):
+def map_frame(data, *, product_tab=False, zoom=8):
     if not data or len(data) > PNG_LIMIT:
         raise ValueError('Invalid product map screenshot size')
     with Image.open(io.BytesIO(data), formats=('PNG',)) as frame:
@@ -29,10 +29,13 @@ def map_frame(data, *, product_tab=False):
         if frame.mode not in ('RGB', 'RGBA') or frame.n_frames != 1:
             raise ValueError('Product map screenshot must be one RGB or RGBA frame')
         frame.load()
-        region_colors = UNSELECTED_COLORS if product_tab else (
-            SELECTED_REGION_RGB, SELECTED_REGION_WITH_RASTER_RGB, SELECTED_BORDER_RGB,
+        raster_rgb = (52, 121, 206) if zoom == 9 else RASTER_TILE_RGB
+        unselected = ((38, 60, 61), (52, 117, 195), (82, 113, 112)) if zoom == 9 else UNSELECTED_COLORS
+        selected_raster = (50, 100, 147) if zoom == 9 else SELECTED_REGION_WITH_RASTER_RGB
+        region_colors = unselected if product_tab else (
+            SELECTED_REGION_RGB, selected_raster, SELECTED_BORDER_RGB,
         )
-        colors = (RASTER_TILE_RGB, BACKGROUND_RGB, *region_colors)
+        colors = (raster_rgb, BACKGROUND_RGB, *region_colors)
         matches = {color: set() for color in colors}
         # Sample the central map area below the fixture controls. The selected
         # region's opaque fill can cover the middle of the saved raster tile.
@@ -45,7 +48,7 @@ def map_frame(data, *, product_tab=False):
                     if all(abs(component - expected) <= 3 for component, expected in zip(pixel, color)):
                         matches[color].add((x, y))
     region = set.union(*(matches[color] for color in region_colors))
-    return (width, height), matches[RASTER_TILE_RGB], len(matches[BACKGROUND_RGB]), region
+    return (width, height), matches[raster_rgb], len(matches[BACKGROUND_RGB]), region
 
 
 def frame_matches(phase, samples):
@@ -55,9 +58,9 @@ def frame_matches(phase, samples):
     return len(raster) >= 40 and len(region) >= 40
 
 
-def verify_product_map_frames(directory, *, product_tab=False):
+def verify_product_map_frames(directory, *, product_tab=False, zoom=8):
     phases = TAB_PHASES if product_tab else PHASES
-    frames = {phase: map_frame(read_bounded(directory / f'{phase}.png', PNG_LIMIT), product_tab=product_tab)
+    frames = {phase: map_frame(read_bounded(directory / f'{phase}.png', PNG_LIMIT), product_tab=product_tab, zoom=zoom)
               for phase in phases}
     if len({samples[0] for samples in frames.values()}) != 1:
         raise ValueError('Product map screenshot dimensions changed during the switch')

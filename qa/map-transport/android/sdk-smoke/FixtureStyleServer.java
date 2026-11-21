@@ -26,26 +26,27 @@ public final class FixtureStyleServer {
     boolean raster = args.length >= 3 && "--raster-tile".equals(args[2]);
     boolean expire = args.length == 4 && "--expire-pack".equals(args[3]);
     boolean recover = args.length == 4 && "--online-recovery".equals(args[3]);
-    boolean rn = args.length == 4 && "--rn-recovery".equals(args[3]);
+    boolean zoomNine = args.length == 4 && "--rn-recovery-zoom9".equals(args[3]);
+    boolean rn = args.length == 4 && ("--rn-recovery".equals(args[3]) || zoomNine);
     if (!(args.length == 2 || (raster && (args.length == 3 || expire || recover || rn))) || !args[1].matches("[1-9][0-9]{3,4}")) {
-      throw new IllegalArgumentException("Usage: FixtureStyleServer <fixture.p12> <port> [--raster-tile [--expire-pack | --online-recovery | --rn-recovery]]");
+      throw new IllegalArgumentException("Usage: FixtureStyleServer <fixture.p12> <port> [--raster-tile [--expire-pack | --online-recovery | --rn-recovery | --rn-recovery-zoom9]]");
     }
     int port = Integer.parseInt(args[1]);
     if (port < 1024 || port > 65535) throw new IllegalArgumentException("Invalid fixture port");
-    HttpsServer server = bind(Path.of(args[0]), port, raster, expire, recover, rn);
+    HttpsServer server = bind(Path.of(args[0]), port, raster, expire, recover, rn, zoomNine);
     Runtime.getRuntime().addShutdownHook(new Thread(() -> server.stop(0)));
     server.start();
     System.out.println("STYLE_SERVER_READY port=" + port);
   }
 
   static HttpsServer bind(Path keyStore, int port) throws Exception {
-    return bind(keyStore, port, false, false, false, false);
+    return bind(keyStore, port, false, false, false, false, false);
   }
 
-  private static HttpsServer bind(Path keyStore, int port, boolean raster, boolean expire, boolean recover, boolean rn) throws Exception {
-    String tilePath = rn ? "/resource/tile/8_219_98" : "/resource/tile/0_0_0";
-    byte[] style = raster ? rasterStyle(port, rn ? 8 : 0) : STYLE;
-    byte[] tile = raster ? rasterTile(recover ? new Color(52, 121, 206) : new Color(217, 93, 47)) : null;
+  private static HttpsServer bind(Path keyStore, int port, boolean raster, boolean expire, boolean recover, boolean rn, boolean zoomNine) throws Exception {
+    String tilePath = zoomNine ? "/resource/tile/9_438_197" : rn ? "/resource/tile/8_219_98" : "/resource/tile/0_0_0";
+    byte[] style = raster ? rasterStyle(port, zoomNine ? 9 : rn ? 8 : 0) : STYLE;
+    byte[] tile = raster ? rasterTile(recover || zoomNine ? new Color(52, 121, 206) : new Color(217, 93, 47)) : null;
     char[] password = "fixture-only-password".toCharArray();
     KeyStore keys = KeyStore.getInstance("PKCS12");
     try (InputStream input = Files.newInputStream(keyStore)) {

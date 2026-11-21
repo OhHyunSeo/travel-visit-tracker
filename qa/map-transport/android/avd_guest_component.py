@@ -220,7 +220,7 @@ def install_fixture(key_path, apk, *, expected_hash=FIXTURE_APK_SHA256, rn_recov
 
 
 @contextmanager
-def pack_server(java, identity, source, port, log_path, *, expire_pack, online_recovery=False, rn_recovery=False):
+def pack_server(java, identity, source, port, log_path, *, expire_pack, online_recovery=False, rn_recovery=False, rn_zoom=8):
     with log_path.open('xb') as log:
         arguments = [java, '-Djava.awt.headless=true', source, identity, str(port), '--raster-tile']
         if expire_pack:
@@ -228,7 +228,7 @@ def pack_server(java, identity, source, port, log_path, *, expire_pack, online_r
         if online_recovery:
             arguments.append('--online-recovery')
         if rn_recovery:
-            arguments.append('--rn-recovery')
+            arguments.append('--rn-recovery-zoom9' if rn_zoom == 9 else '--rn-recovery')
         process = subprocess.Popen(arguments, stdout=log, stderr=log)
         try:
             deadline = time.monotonic() + 15

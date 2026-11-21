@@ -57,7 +57,11 @@ def verify_source_bounds(directory, pid, metadata, style_json):
             raise ValueError('Renderer tile bounds differ from the downloaded pack')
         if (source.get('minzoom'), source.get('maxzoom')) != (plan['minZoom'], plan['maxZoom']):
             raise ValueError('Renderer source zoom differs from the downloaded pack')
+        camera_zoom = snapshot.get('zoom')
+        if type(camera_zoom) not in (int, float) or not plan['minZoom'] <= camera_zoom <= plan['maxZoom']:
+            raise ValueError('Renderer camera zoom is outside the downloaded pack')
         checked[phase] = bounds
     if checked['saved'] != checked['restored']:
         raise ValueError('Restoring the saved map changed its native tile bounds')
-    return {'bounds': checked['saved'], 'phases': list(TAB_PHASES), 'tileUrlsPreserved': True}
+    return {'bounds': checked['saved'], 'zoomRange': [plan['minZoom'], plan['maxZoom']],
+            'phases': list(TAB_PHASES), 'tileUrlsPreserved': True}

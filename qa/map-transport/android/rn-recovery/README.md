@@ -63,3 +63,8 @@ saved operation and checks that the original tile URLs and zoom range remain.
 Boundary-only frames must have no saved raster source. Bounds comparisons use
 an absolute tolerance of 0.00001 degrees for native coordinate serialization.
 Add `--source-bounds` to replay this evidence.
+
+`--rn-zoom 9` selects the independent zoom-nine synthetic pack. The default
+selects zoom eight. Both use the same region, one style and one tile per fresh
+installation, with a distinct tile color per zoom. Replay the zoom-nine capture
+with `--zoom 9`. These trials verify separate fixed-zoom packs.

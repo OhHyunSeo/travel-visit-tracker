@@ -17,11 +17,32 @@ STYLE = json.dumps({'sources': {'fixture': SOURCE}})
 def captures(directory):
     for phase in TAB_PHASES:
         source = {**SOURCE, 'bounds': BOUNDS} if phase in ('saved', 'restored') else None
-        snapshot = {'pid': 1234, 'phase': phase, 'connected': False, 'viewIdentity': 4567, 'source': source}
+        snapshot = {'pid': 1234, 'phase': phase, 'connected': False, 'viewIdentity': 4567, 'source': source, 'zoom': 8}
         (directory / f'{phase}-source.json').write_text(json.dumps(snapshot))
 
 
 class ProductSourceBoundsTest(unittest.TestCase):
+    def test_zoom_nine_must_reach_the_camera_and_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)
+            captures(path)
+            for phase in ('saved', 'restored'):
+                file = path / f'{phase}-source.json'
+                snapshot = json.loads(file.read_text())
+                snapshot['source'].update(minzoom=9, maxzoom=9)
+                snapshot['zoom'] = 9
+                file.write_text(json.dumps(snapshot))
+            metadata = {'plan': json.dumps({'bounds': BOUNDS, 'minZoom': 9, 'maxZoom': 9})}
+            source = {**SOURCE, 'minzoom': 9, 'maxzoom': 9}
+            style = json.dumps({'sources': {'fixture': source}})
+            self.assertEqual(verify_source_bounds(path, 1234, metadata, style)['zoomRange'], [9, 9])
+            file = path / 'restored-source.json'
+            snapshot = json.loads(file.read_text())
+            snapshot['zoom'] = 8
+            file.write_text(json.dumps(snapshot))
+            with self.assertRaisesRegex(ValueError, 'camera zoom'):
+                verify_source_bounds(path, 1234, metadata, style)
+
     def test_requires_the_saved_bounds_in_the_native_renderer(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary)
