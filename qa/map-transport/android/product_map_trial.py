@@ -92,7 +92,7 @@ def toggle_center(data, package, dimensions, *, title=None):
     return (left + right) // 2, (top + bottom) // 2
 
 
-def capture_product_map(command, destination, package, activity, pid, *, product_tab=False):
+def capture_product_map(command, destination, package, activity, pid, *, product_tab=False, source_bounds=False):
     # Capture the log even when a frame or UI query fails so the saved data can
     # distinguish a spinner, an unhandled toggle and a transport attempt.
     try:
@@ -115,6 +115,12 @@ def capture_product_map(command, destination, package, activity, pid, *, product
                         raise
             write_capture(destination / f'{phase}.xml', layout)
             require_foreground(command, activity)
+            if source_bounds:
+                from product_map_sources import capture_source
+                capture_source(command, destination, phase, package, activity)
+                require_foreground(command, activity)
+                if running_pid(command, package) != pid:
+                    raise ValueError('Source inspection replaced the product map process')
             if phase != phases[-1]:
                 command(512, 'shell', 'input', 'tap', str(x), str(y))
         if product_tab:

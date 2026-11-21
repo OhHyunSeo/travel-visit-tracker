@@ -1,5 +1,6 @@
 package app.trippainting.maptransportqa
 
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import com.facebook.react.ReactActivity
@@ -9,6 +10,11 @@ import expo.modules.ReactActivityDelegateWrapper
 import org.maplibre.android.MapLibre
 
 class RecoveryActivity : ReactActivity() {
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.getStringExtra("fixture-source-phase")?.let { FixtureSourceSnapshot.capture(this, it) }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         if (intent.getBooleanExtra("fixture-product-map", false) ||
             intent.getBooleanExtra("fixture-product-tab", false)) {

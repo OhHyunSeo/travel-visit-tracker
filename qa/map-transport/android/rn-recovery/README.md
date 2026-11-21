@@ -56,3 +56,10 @@ replaying that capture.
 in a minimal Expo Router layout. The runner verifies the initial boundary map
 and presses the screen's own saved-map and boundary-map buttons. It retains
 the four frames and corresponding UI layouts. Use `--product-tab` for replay.
+
+With `--rn-source-bounds`, the runner also reads the active native MapView's
+loaded source at all four tab phases. It compares the source bounds with the
+saved operation and checks that the original tile URLs and zoom range remain.
+Boundary-only frames must have no saved raster source. Bounds comparisons use
+an absolute tolerance of 0.00001 degrees for native coordinate serialization.
+Add `--source-bounds` to replay this evidence.

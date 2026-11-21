@@ -149,6 +149,16 @@ def verify_saved_style(directory):
     return digest
 
 
+def verify_captured_bounds(directory, pid):
+    from product_map_sources import verify_source_bounds
+
+    rows = sqlite_rows(directory / OPERATION_DB, 'SELECT style_json, metadata FROM background_map_operation')
+    if len(rows) != 1 or not isinstance(rows[0][0], str):
+        raise ValueError('Missing stored style for renderer bounds verification')
+    style, metadata = rows[0]
+    return verify_source_bounds(directory, pid, json.loads(metadata), style)
+
+
 def capture_app_report(command, destination, *, reopening=False, product_map=False, product_tab=False):
     args = ['--ez', 'fixture-reopen', 'true'] if reopening else []
     if product_map:
@@ -179,7 +189,7 @@ def require_server_closed(port):
 
 
 def capture_recovery(key_path, apk, relay, java, identity, destination, expected_hash, *, reopening=False,
-                     product_map=False, product_tab=False):
+                     product_map=False, product_tab=False, source_bounds=False):
     port, apk_hash = read_apk(apk, RN_TAB_APK_LIMIT if product_tab else RN_APK_LIMIT)
     if apk_hash != expected_hash:
         raise ValueError('React Native fixture APK hash changed')
@@ -226,7 +236,7 @@ def capture_recovery(key_path, apk, relay, java, identity, destination, expected
         if product_map or product_tab:
             from product_map_trial import capture_product_map
             result[screen_key] = capture_product_map(command, reopened, RN_FIXTURE_PACKAGE, ACTIVITY, reopened_pid,
-                                                     product_tab=product_tab)
+                                                     product_tab=product_tab, source_bounds=source_bounds)
         capture_saved_files(command, reopened, reopened_pid, expected_hash)
         require_server_closed(port)
         write_capture(reopened / 'server-closed.txt', b'before=refused\nafter=refused\n')
@@ -236,6 +246,8 @@ def capture_recovery(key_path, apk, relay, java, identity, destination, expected
             if old_style != verify_saved_style(reopened):
                 raise ValueError('The saved style changed during the product map switch')
             result[screen_key]['styleSha256'] = old_style
+        if source_bounds:
+            result[screen_key]['sourceCoverage'] = verify_captured_bounds(reopened, reopened_pid)
     return result
 
 
@@ -265,11 +277,14 @@ if __name__ == '__main__':
     parser.add_argument('--reopened-pid', type=int)
     parser.add_argument('--product-map', action='store_true')
     parser.add_argument('--product-tab', action='store_true')
+    parser.add_argument('--source-bounds', action='store_true')
     args = parser.parse_args()
     if (args.product_map or args.product_tab) and args.reopened_pid is None:
         parser.error('Screen verification requires --reopened-pid')
     if args.product_map and args.product_tab:
         parser.error('Choose one screen verification mode')
+    if args.source_bounds and not args.product_tab:
+        parser.error('--source-bounds requires --product-tab')
     try:
         result = verify_recovery(args.capture, args.port, args.pid)
         if args.reopened_pid is not None:
@@ -283,6 +298,8 @@ if __name__ == '__main__':
             if old_style != verify_saved_style(args.capture / 'reopen'):
                 raise ValueError('The saved style changed during the product map switch')
             result[screen_key]['styleSha256'] = old_style
+        if args.source_bounds:
+            result[screen_key]['sourceCoverage'] = verify_captured_bounds(args.capture / 'reopen', args.reopened_pid)
         print(json.dumps(result, sort_keys=True))
     except (OSError, ValueError, sqlite3.Error) as error:
         parser.exit(1, f'React Native recovery capture failed: {error}\n')

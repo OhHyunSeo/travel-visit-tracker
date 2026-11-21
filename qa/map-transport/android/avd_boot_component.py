@@ -72,7 +72,7 @@ def boot_marker_exists(marker):
 def boot(root, sdk, *, probe_adb=False, fixture_apk=None, render_inputs=None, raster_tile=False,
          offline_pack=False, expected_hash=FIXTURE_APK_SHA256, reopen_inputs=None, expire_pack=False,
          sdk_offline=False, online_recovery=False, verify_refreshed_pack=False, rn_recovery=None, rn_reopen=False,
-         rn_product_map=False, rn_product_tab=False):
+         rn_product_map=False, rn_product_tab=False, rn_source_bounds=False):
     launcher = pinned(sdk / 'emulator/emulator', EMULATOR_SHA256)
     headless = pinned(sdk / 'emulator/qemu/darwin-aarch64/qemu-system-aarch64-headless', HEADLESS_SHA256)
     name = 'TripPaintingMapTransportQA_' + uuid.uuid4().hex[:12]
@@ -192,7 +192,7 @@ def boot(root, sdk, *, probe_adb=False, fixture_apk=None, render_inputs=None, ra
             try:
                 result['rnRecovery'] = capture_recovery(adb_key, fixture_apk, *rn_recovery, expected_hash,
                                                        reopening=rn_reopen, product_map=rn_product_map,
-                                                       product_tab=rn_product_tab)
+                                                       product_tab=rn_product_tab, source_bounds=rn_source_bounds)
             except (EOFError, OSError, ValueError, sqlite3.Error, subprocess.TimeoutExpired) as error:
                 result['rnRecoveryError'] = str(error)
         with log_path.open('rb') as stream:
@@ -238,6 +238,7 @@ if __name__ == '__main__':
     parser.add_argument('--rn-reopen', action='store_true', help='Reopen the recovered React Native pack with its server closed')
     parser.add_argument('--rn-product-map', action='store_true', help='Display and switch the saved background in the product React Native map')
     parser.add_argument('--rn-product-tab', action='store_true', help='Use the real product map-tab route and buttons')
+    parser.add_argument('--rn-source-bounds', action='store_true', help='Read the active renderer source bounds during product tab switches')
     parser.add_argument('--fixture-apk-sha256', help='Verified hash of a separately signed pack fixture APK')
     args = parser.parse_args()
     if args.fixture_apk and not args.probe_adb:
@@ -256,6 +257,8 @@ if __name__ == '__main__':
         parser.error('React Native screen verification requires --rn-reopen')
     if args.rn_product_map and args.rn_product_tab:
         parser.error('Choose one React Native screen verification mode')
+    if args.rn_source_bounds and not args.rn_product_tab:
+        parser.error('--rn-source-bounds requires --rn-product-tab')
     if args.reopen_pack and not args.offline_pack:
         parser.error('--reopen-pack requires --offline-pack')
     if args.expire_pack and not args.reopen_pack:
@@ -283,7 +286,7 @@ if __name__ == '__main__':
             expected_hash=args.fixture_apk_sha256 or FIXTURE_APK_SHA256, reopen_inputs=args.reopen_pack,
             expire_pack=args.expire_pack, sdk_offline=args.sdk_offline, online_recovery=args.online_recovery,
             verify_refreshed_pack=args.verify_refreshed_pack, rn_recovery=args.rn_recovery, rn_reopen=args.rn_reopen,
-            rn_product_map=args.rn_product_map, rn_product_tab=args.rn_product_tab))
+            rn_product_map=args.rn_product_map, rn_product_tab=args.rn_product_tab, rn_source_bounds=args.rn_source_bounds))
         print(json.dumps(result, sort_keys=True))
         check = result['volumeCheck']
         passed = boot_completed(check)
@@ -302,6 +305,8 @@ if __name__ == '__main__':
             passed = passed and 'productMap' in check.get('rnRecovery', {})
         if args.rn_product_tab:
             passed = passed and 'productTab' in check.get('rnRecovery', {})
+        if args.rn_source_bounds:
+            passed = passed and 'sourceCoverage' in check.get('rnRecovery', {}).get('productTab', {})
         sys.exit(0 if passed else 2)
     except (ComponentError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
         sys.exit(f'Isolated Android boot attempt failed: {error}')
