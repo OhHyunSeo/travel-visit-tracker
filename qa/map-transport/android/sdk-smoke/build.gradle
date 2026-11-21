@@ -1,0 +1,64 @@
+import java.security.MessageDigest
+
+plugins {
+    id 'com.android.application' version '9.1.1'
+}
+
+android {
+    namespace = 'app.trippainting.maptransportqa'
+    compileSdk = 36
+    buildToolsVersion = '36.0.0'
+
+    defaultConfig {
+        applicationId = 'app.trippainting.maptransportqa.sdk'
+        minSdk = 36
+        targetSdk = 36
+        versionCode = 1
+        versionName = '1'
+        ndk.abiFilters.add('arm64-v8a')
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+
+    signingConfigs.debug {
+        storeFile = file('fixture-debug.keystore')
+        storePassword = 'android'
+        keyAlias = 'androiddebugkey'
+        keyPassword = 'android'
+    }
+
+    packaging.jniLibs.keepDebugSymbols.add('**/libmaplibre.so')
+}
+
+configurations {
+    mapLibreRelease {
+        canBeConsumed = false
+        transitive = false
+    }
+}
+
+dependencies {
+    implementation 'org.maplibre.gl:android-sdk-opengl:13.6.1'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    mapLibreRelease 'org.maplibre.gl:android-sdk-opengl:13.6.1@aar'
+}
+
+def verifyMapLibreRelease = tasks.register('verifyMapLibreRelease') {
+    inputs.files(configurations.mapLibreRelease)
+    doLast {
+        def digest = MessageDigest.getInstance('SHA-256')
+        configurations.mapLibreRelease.singleFile.eachByte(8192) { buffer, count ->
+            digest.update(buffer, 0, count)
+        }
+        if (digest.digest().encodeHex().toString() != '0a8ea4f5bfd268e050c72025d0f2952b60861863eba6caf84e19b8da583f3a42') {
+            throw new GradleException('Unexpected MapLibre OpenGL 13.6.1 artifact')
+        }
+    }
+}
+
+tasks.matching { it.name == 'preBuild' }.configureEach {
+    dependsOn verifyMapLibreRelease
+}

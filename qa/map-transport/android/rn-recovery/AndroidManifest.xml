@@ -1,0 +1,14 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <application android:name=".RecoveryApplication" android:label="Map Pack Recovery QA"
+        android:allowBackup="false" android:usesCleartextTraffic="false"
+        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+        <activity android:name=".RecoveryActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
