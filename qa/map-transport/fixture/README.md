@@ -1,0 +1,60 @@
+# 지도 요청 시험 서버
+
+## 2026-11-02 후속 iPhone 대조
+
+보류 서버를 실제 SDK 취소·수동 재로딩에 연결했습니다. 취소할 빈 지도는 로컬 JSON으로 적용해 전송 대기열 뒤에 서지 않게 했고, 옛 응답 종료 뒤 `/release-held`가 0개를 해제한 다음 같은 타일 경로의 새 요청을 받았습니다. 물리 두 사례와 별도 합성 보고서 검사를 구분하며 [iPhone 도구](../ios-maplibre/README.md)에서 확인할 수 있습니다. 전체 합성 서버 검사는 23개입니다.
+
+## 2026-11-02 취소·재시도용 준비 후 중단
+
+SDK 서버에 `/resource/style/held`와 `/resource/style/empty`, 보류하는 `h_2_*` 타일을 추가했습니다. 정확한 GET `/release-held`만 보류 본문을 풀며, 이는 SDK 리소스 집계에 포함하지 않는 QA 제어입니다. 취소돼 닫힌 응답은 다시 살리지 않으며 같은 경로의 새 요청은 해제 뒤 정상 본문을 받습니다. reset은 응답이 남아 있으면 거절하고 완전히 비운 뒤에만 보류 상태를 되돌립니다.
+
+추가 네 사례를 포함한 SDK 서버 집중 검사 12개가 통과했습니다. 실제 SDK 스타일 전환·취소·재요청과 새 전체 verifier는 아직 NOT RUN입니다. 사용자 요청으로 여기까지 로컬에 저장하고 중단하며 새 재개 전에는 추가 검사를 시작하지 않습니다.
+
+외부 지도 공급원에 연결하지 않고 요청 수명과 헤더, 본문 처리만 확인하는 작은 합성 서버입니다. 실제 지도 타일이나 사용자 자료는 읽지 않습니다. Node 24로 실행합니다.
+
+```sh
+node qa/map-transport/fixture/server.mjs --port 0
+node --test qa/map-transport/fixture/server.test.mjs
+```
+
+첫 출력의 `origin`이 서버 주소입니다. 기본은 `127.0.0.1`과 임의의 빈 포트입니다. 휴대폰 시험에서 LAN 사용이 명시적으로 허용된 경우에만 다음처럼 Mac의 실제 사설 IPv4 하나에 바인딩할 수 있습니다. `0.0.0.0`, 공개 주소와 DNS 이름은 LAN 옵션으로 허용하지 않습니다.
+
+```sh
+node qa/map-transport/fixture/server.mjs --host 192.168.1.10 --port 3091 --allow-lan
+```
+
+모듈에서는 `createMapFixture({ host, port, allowLan })`를 가져올 수 있습니다. 결과는 `origin`, `stats()`, `reset()`, `release()`, `close()`를 제공합니다. `allowLan`은 기본적으로 꺼져 있습니다.
+
+## 요청과 응답
+
+`GET /resource/{style|tile|glyph|sprite}/{id}`가 합성 본문을 돌려줍니다. ID는 영문, 숫자, 밑줄과 하이픈 1~64자입니다. 본문은 `0x61`을 반복한 바이트이며 실제 스타일이나 타일 형식은 아닙니다.
+
+| 쿼리 | 기본값과 범위 |
+| --- | --- |
+| `bytes` | 64, 0~65,536 |
+| `delayMs` | 100, 0~2,000. 헤더 전과 본문 두 조각 사이에 각각 적용 |
+| `status` | 200, 200~599. 본문이 없는 204, 205, 304는 거절 |
+| `chunked=1` | Content-Length를 생략해 chunked 전송 |
+| `gzip=1` | 합성 본문을 gzip으로 압축 |
+| `redirect=1` | 302와 `http://example.invalid/fixture-target` Location. 서버가 해당 주소를 요청하지 않음 |
+| `hold=1` | `/release`가 올 때까지 헤더도 보내지 않고 대기 |
+
+이름이 없는 옵션, 중복 옵션과 잘못된 값은 400입니다. 새 리소스 종류나 지원하지 않는 경로는 404입니다. 오류 응답에도 `bytes`만큼의 합성 본문을 보낼 수 있어 클라이언트의 오류 본문 처리를 확인할 수 있습니다.
+
+- `GET /stats`: 현재 계측 JSON. 제어 요청은 리소스 수에 포함하지 않습니다.
+- `GET /release`: 지금 대기 중인 hold 요청을 풀고 개수를 반환합니다. 이후 새 hold 요청까지 자동으로 풀지는 않습니다.
+- `GET /reset`: 활성 리소스가 없을 때만 통계를 초기화하며, 활성 요청이 있으면 409입니다.
+
+서버는 리소스 요청을 받은 시점부터 응답 `finish` 또는 `close`까지 활성으로 셉니다. 응답 헤더와 절반의 본문만 보낸 뒤에도 활성으로 남겨 클라이언트가 자리를 너무 일찍 반환하는지 관측할 수 있습니다. 취소된 연결은 `aborted`이며 정상 종료와 한 번만 구분해 셉니다.
+
+`nonControlRequestCount`는 제어 경로를 제외한 모든 HTTP 도착을 셉니다. 잘못된 경로는 `invalidRouteCount`, 잘못된 옵션은 `invalidQueryCount`에 따로 남기므로 클라이언트가 지원하지 않는 요청을 전송 전에 막았는지 확인할 수 있습니다. `rejectedCount`는 메서드와 경로, 옵션을 포함한 거절 수입니다.
+
+`requests`에는 순번 `id`, 경로의 `resourceId`, `kind`, 쿼리를 제외한 `path`, `ua`, 인증과 쿠키 헤더의 존재 여부, `bytesWritten`, `decodedBodyBytes`, `gzip`, `chunked`, `finished`, `aborted`가 있습니다. 인증과 쿠키의 실제 값은 기록하지 않습니다.
+
+`bytesWritten`과 `totalBytesWritten`은 Node 응답 쓰기에 넣은 **payload 바이트**입니다. gzip이면 압축된 본문 길이를 셉니다. HTTP chunk 프레임, 헤더와 TLS, OS가 실제 전달한 양이나 클라이언트가 받은 양은 포함하지 않습니다. 이 값만으로 공급원 수신량 상한이나 네이티브 다운로드 수용을 통과했다고 판단하지 않습니다.
+
+`close()`와 CLI의 SIGINT, SIGTERM은 이번 서버의 타이머와 대기 연결을 정리합니다. 개인용 서버나 다른 프로세스를 종료하지 않습니다.
+
+## 작은 SDK HTTPS 서버
+
+`sdk-server.mjs`는 명시적 `tls: {key: Buffer, cert: Buffer}` 또는 함께 지정한 `--tls-key`/`--tls-cert`로만 HTTPS를 엽니다. 각 입력은16KiB 이하이며 CLI는 연결 수1인 일반 파일만 제한 읽기합니다. TLS1.2 이상과 ALPN `http/1.1`을 요구하고, 두 값이 없으면 기존 HTTP 동작을 유지합니다. 실제 SDK 스타일의 타일 주소도 HTTPS로 생성합니다. 공개 공급원·프록시·개인 자료는 연결하지 않습니다. 전체 fixture29개가 통과했습니다.
