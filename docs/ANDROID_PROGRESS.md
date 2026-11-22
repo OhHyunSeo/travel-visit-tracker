@@ -2,6 +2,32 @@
 
 마지막 갱신: 2026-11-22, Asia/Seoul.
 
+## 11월 22일 P3-02 후속: 행 경계를 가로지르는 인접 두 타일
+
+Android `5ecea13`에서 위아래로 맞닿는 타일을 검증하는 `--rn-row-tiles` 시험 경로를 추가했습니다. 공통 제품 소스는 **`d7120dc162b67b4f6615691d574237f8218f3b4f`**로 유지했고 제품 원문·실제 탭 62개 파일을 다시 대조했습니다. 번들 2020 경계의 북쪽 Goseong 시험 지역(`gb:91817680B50485812736392`)은 줌 9의 `9/438/196`·`9/438/197`에 걸칩니다. 북쪽은 주황, 남쪽은 파랑입니다. 이전 양양 좌우 타일은 `adjacentTiles`, 이번 상하 타일은 `rowTiles`로 별도 판독·기록합니다. 실제 공급원과 개인 자료는 사용하지 않았고 제품 코드·의존성은 바꾸지 않았습니다.
+
+Android 준비·대조 155개와 SDK 수집 47개, 총 **202개**가 통과했습니다. 상하 반전·아래 타일 누락, 잘못된 행 좌표·응답과 혼합 모드 거절을 포함했습니다. 캐시된 SDK Java API의 전송 검사도 모두 통과했고 새 북쪽 주소만 허용하며 인접하지 않은 행/열을 거절했습니다. 새 판독기로 이전 좌우 타일 수집본을 다시 통과했습니다. Mac 합성 HTTPS 사전 검사도 두 행의 색·크기·줌 9–9·허용 밖 요청 거절을 확인했습니다. 사전 검사 자료는 Git 제외 `rn-row-preflight.fufvqm7g/`입니다.
+
+Node 24.21.0·JDK 17과 기존 Gradle 캐시를 쓴 오프라인 `:app:assembleDebug`가 3분 7초, 341개 작업(실행 29개)으로 통과했습니다. 원본 APK 135,892,036바이트의 포장 여백을 정리하고 같은 시험 키로 서명했습니다. 비서명 내부 파일 1,313개의 내용·압축 방식·인증서와 native 정렬이 일치했고 최종 APK는 131,012,875바이트입니다. SHA-256은 **`439a93d62b103753819c99f813fe03fd4af5cdea597403f0a5f7232ca5a6d7dd`**, Git 제외 파일은 기존 `rn-recovery.G55xBKEt/row-tiles-normalized.apk`입니다. 제품 SHA 자산 `d7120dc`도 확인했습니다. 이전 좌우 시험 APK와 원문·의존성·시험 입력은 보존했습니다.
+
+전용 API 37 새 QA 설치의 PID 4138에서 팩 `ad49b709-0735-4e06-abab-bbb6b7e0fa2f`를 저장했습니다. 제품이 미기록 SDK ID를 작업에 다시 연결했고 `idle → awaiting-pack → incomplete → complete`였습니다. 단일 region에 연결된 스타일·두 행 타일, 완료/필요 리소스 각 3개·타일 2개, 서버 응답·전송 진입·예약 각 3건을 대조했습니다. 본문 예약은 12,288바이트이고 스타일 370바이트·타일 각 1,880바이트가 저장 DB와 일치했습니다.
+
+서버와 중계를 종료한 뒤 같은 설치를 PID 4482로 다시 열었습니다. 실제 제품 탭의 기본 경계 → 저장 지도 → 경계 지도 → 저장 지도 복귀에서 위쪽 주황 표본은 **0 → 6,159 → 0 → 6,159개**, 아래쪽 파랑은 **0 → 73 → 0 → 73개**였습니다. 상하 순서와 각 복귀 위치가 같았고, 소스 bounds·원래 타일 URL·카메라/소스 줌 9·지역 경계를 확인했습니다. 기본/경계 전용 화면에는 저장 raster 소스가 없었습니다. 아래 타일은 기본 viewport 하단의 좁은 띠로 보이는 경우이며, 이번에는 지도 이동 없이 보이는 부분을 검증했습니다. 두 타일 전체 영역이나 팬 이동 검증으로 확대하지 않습니다.
+
+새 프로세스에서 동일 팩 ID·정의·메타데이터·스타일과 두 타일의 해시/저장 정보가 유지됐습니다. 서버 종료 뒤 새 전송 호출·서버 응답·요청 예약은 각각 **0건**, 방문 DB 생성도 0건이었습니다. 기기 수집과 독립 저장 자료 재검증이 모두 종료 코드 0으로 끝났습니다. Git 제외 원문은 `docs/test-results/android-map-transport-20261114-checkpoint/rn-row.tNKSyptX/`이며 `result.json`과 `replay-result.json`에 판정이 있습니다. 이전 좌우·줌별·좌표 충돌 증거와 합치지 않습니다.
+
+생성된 Gradle 변환·병합/기호 제거 native 중복 약 **3.58GiB**를 정리했습니다. 시작·전용 볼륨 생성 직전·최종 여유 관측은 약 23GiB였습니다. 서버·에뮬레이터·10GiB 소유 볼륨 제거와 시험 포트 닫힘을 확인했습니다. 새 대용량 다운로드는 없었고 삭제량은 순수 공간 증가량과 구분합니다. 공유 300분 창 잔여는 시작 57%, 빌드 시작 53%, 기기 시험 시작 46%, 독립 재검증 후 35%, 저장 직전 31%였습니다. Git 저장 지점은 이 항목의 커밋입니다. 다음 작은 범위는 같은 캐시를 행 경계에서 위아래로 이동하며 각 타일의 더 넓은 부분을 표시하는 시험입니다. 실제 공급원·다른 타일 유형·제품 전체 흐름·Android 실기기·Release와 기존 사용자 설치 업데이트는 미검증이며 P3-02·전체 수용 게이트는 미완료입니다.
+
+통과한 주요 명령(저장소 루트):
+
+```sh
+python3 -B -m unittest discover -s qa/map-transport/android -p 'test_*.py'
+python3 -B -m unittest discover -s qa/map-transport/android/sdk-smoke -p 'test_*.py'
+python3 -B qa/map-transport/android/rn_recovery.py docs/test-results/android-map-transport-20261114-checkpoint/rn-row.tNKSyptX/capture --port 39443 --pid 4138 --reopened-pid 4482 --product-tab --source-bounds --row-tiles
+```
+
+Java 검사는 캐시 JAR/AAR를 지정한 `host-transport/run-tests.sh`, 기기 수집은 기존 `avd_boot_component.py --rn-reopen --rn-product-tab --rn-source-bounds --rn-row-tiles`에 위 APK·해시·세 연결 중계·합성 인증서를 지정했습니다. 서명/API/ABI/TLS 사전 검사도 통과했습니다. 로컬 전체 앱 검사는 반복하지 않았습니다.
+
 ## 11월 22일 P3-02 후속: 공통 좌표 수정 후 인접 두 타일 재시험 통과
 
 Android `20944e6`에서 기존 입력·두 실패 APK·세 연결 중계의 해시와 보관 증거를 확인했습니다. 서명·TLS 인증서·Node 24.21.0·JDK 17·기존 의존성/Gradle 캐시와 시험 포트 닫힘도 확인했습니다. 준비 기록은 Git 제외 `rn-recovery.G55xBKEt/reuse-readiness.z02ro_c6/report.json`에 있습니다. 공통 SHA 수신 전에는 새 빌드나 기기 시험을 시작하지 않았습니다.

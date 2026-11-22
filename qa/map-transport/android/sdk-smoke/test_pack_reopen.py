@@ -70,6 +70,20 @@ class PackReopenTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'linked to the pack'):
             pack_database(self.root, 1, 39443, **kwargs)
 
+    def test_row_tiles_require_both_y_coordinates_in_one_region(self):
+        with sqlite3.connect(self.root / DATABASE) as connection:
+            connection.execute('UPDATE regions SET definition=?', (json.dumps({
+                'style_url': 'https://127.0.0.1:39443/resource/style/sdk', 'min_zoom': 9, 'max_zoom': 9}),))
+            connection.execute('UPDATE tiles SET z=9,x=438,y=196')
+            connection.execute('INSERT INTO tiles SELECT 2,url_template,9,438,197,?,0,10,0 FROM tiles WHERE id=1', (b'blue',))
+            connection.execute('INSERT INTO region_tiles VALUES (1,2)')
+        kwargs = dict(coordinates=(9,438,196), extra_coordinates=((9,438,197),))
+        self.assertEqual(len(pack_database(self.root, 1, 39443, **kwargs)['tiles']),2)
+        with sqlite3.connect(self.root / DATABASE) as connection:
+            connection.execute('UPDATE tiles SET y=198 WHERE id=2')
+        with self.assertRaisesRegex(ValueError, 'linked to the pack'):
+            pack_database(self.root, 1, 39443, **kwargs)
+
     def test_rejects_tile_not_linked_to_pack(self):
         with sqlite3.connect(self.root / DATABASE) as connection:
             connection.execute('DELETE FROM region_tiles')

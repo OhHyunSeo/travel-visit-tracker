@@ -90,3 +90,12 @@ the boundary-only map. The runner compares each tile's restored location and
 stored bytes after an offline app restart. Use `--adjacent-tiles` for replay
 with `--product-tab --source-bounds --reopened-pid PID`. This mode is separate
 from `--rn-multi-zoom` and `--rn-zoom 9`.
+
+`--rn-row-tiles --rn-reopen --rn-product-tab --rn-source-bounds` uses the
+pinned dataset's northern Goseong fixture region, crossing `9/438/196` and
+`9/438/197`. The northern tile is orange and the southern tile blue. It reuses
+the same three-connection relay and checks both linked tiles, both colors in
+one saved/restored frame, top-to-bottom order and unchanged restored locations.
+Replay with `--row-tiles --product-tab --source-bounds --reopened-pid PID`.
+The row mode excludes the other tile/zoom modes and reports its samples under
+`rowTiles`; the previous left/right trial remains under `adjacentTiles`.

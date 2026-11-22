@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from rn_recovery import ADJACENT_TILES, OPERATION_DB, OPERATION_ID, RECOVERY_TILE, RECOVERY_TILES, fixture_tiles, rn_report, verify_recovery
+from rn_recovery import ADJACENT_TILES, ROW_TILES, OPERATION_DB, OPERATION_ID, RECOVERY_TILE, RECOVERY_TILES, fixture_tiles, rn_report, verify_recovery
 from verify_device_capture import check_transport_logs
 
 
@@ -27,6 +27,25 @@ def capture_log(*, saved_pack_id=PACK_ID, reopening=False, multi_zoom=False):
 
 
 class ReactNativeRecoveryTest(unittest.TestCase):
+    def test_row_tiles_require_the_two_neighbors_and_three_resources(self):
+        self.assertEqual(fixture_tiles(8, False, False, True), ((9,438,196), (9,438,197)))
+        with self.assertRaisesRegex(ValueError, 'either multi-zoom'):
+            fixture_tiles(8, False, True, True)
+        self.assertEqual(rn_report(capture_log(multi_zoom=True), PID, row_tiles=True)[0], PACK_ID)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)
+            (path / 'relay.log').write_text('RELAY_READY port=39443\nRELAY_COMPLETE connections=3 forwarded=9000\n')
+            server = path / 'server.log'
+            content = ('STYLE_SERVER_READY port=39443\nSERVED_STYLE bytes=370\n'
+                       'SERVED_TILE path=/resource/tile/9_438_197 bytes=1880\n'
+                       'SERVED_TILE path=/resource/tile/9_438_196 bytes=1880\n')
+            server.write_text(content)
+            kwargs = dict(raster_tile=True, coordinates=ROW_TILES[0], extra_coordinates=ROW_TILES[1:])
+            self.assertEqual(check_transport_logs(path, 39443, **kwargs), (370,3760,9000))
+            server.write_text(content.replace('9_438_196', '9_438_195'))
+            with self.assertRaisesRegex(ValueError, 'expected raster tile'):
+                check_transport_logs(path, 39443, **kwargs)
+
     def test_adjacent_tiles_require_the_two_neighbors_and_three_resources(self):
         self.assertEqual(fixture_tiles(8, False, True), ((9,438,197), (9,439,197)))
         with self.assertRaisesRegex(ValueError, 'either multi-zoom'):

@@ -27,8 +27,8 @@ function fixtureStyle(origin, zoom, multiZoom) {
   });
 }
 
-async function verifyRecovery(origin, reopening, zoom, multiZoom, adjacentTiles) {
-  zoom = adjacentTiles ? 9 : zoom;
+async function verifyRecovery(origin, reopening, zoom, multiZoom, adjacentTiles, rowTiles) {
+  zoom = adjacentTiles || rowTiles ? 9 : zoom;
   const states = [];
   const publish = (result) => NativeModules.TPRecoveryReport.publish(JSON.stringify({ states, ...result }));
   try {
@@ -46,7 +46,7 @@ async function verifyRecovery(origin, reopening, zoom, multiZoom, adjacentTiles)
     if (initial.kind !== 'idle') throw new Error('Expected an empty operation database');
     const style = fixtureStyle(origin, zoom, multiZoom);
     const styleSha256 = await digestStringAsync(CryptoDigestAlgorithm.SHA256, style);
-    const plan = planBackgroundMap(regions[adjacentTiles ? 2 : 0].id, { styleSha256, tileVersion: '20261028_120000_pt' },
+    const plan = planBackgroundMap(regions[rowTiles ? 1 : adjacentTiles ? 2 : 0].id, { styleSha256, tileVersion: '20261028_120000_pt' },
       multiZoom ? 8 : zoom, multiZoom ? 9 : zoom);
     const metadata = createBackgroundMapPackMetadata(plan, {
       operationId: '9729af8d-20ac-42db-ae59-3773944d5530',
@@ -68,7 +68,7 @@ async function verifyRecovery(origin, reopening, zoom, multiZoom, adjacentTiles)
       if (states.at(-1) !== status.kind) states.push(status.kind);
       if (status.kind === 'complete') {
         const saved = await store.current();
-        const resources = multiZoom || adjacentTiles ? 3 : 2;
+        const resources = multiZoom || adjacentTiles || rowTiles ? 3 : 2;
         if (status.packId !== pack.id || saved?.packId !== pack.id || status.completedResourceCount !== resources ||
             status.requiredResourceCount !== resources || status.completedTileCount !== resources - 1)
           throw new Error('Recovered ID or resource counts differ');
@@ -92,15 +92,15 @@ async function verifyRecovery(origin, reopening, zoom, multiZoom, adjacentTiles)
   }
 }
 
-function RecoveryEntry({ origin, reopening, productMap, productTab, fixtureZoom = 8, fixtureMultiZoom = false, fixtureAdjacentTiles = false }) {
+function RecoveryEntry({ origin, reopening, productMap, productTab, fixtureZoom = 8, fixtureMultiZoom = false, fixtureAdjacentTiles = false, fixtureRowTiles = false }) {
   const [packId, setPackId] = useState(null);
   useEffect(() => {
     let active = true;
-    void verifyRecovery(origin, reopening, fixtureZoom, fixtureMultiZoom, fixtureAdjacentTiles).then((pack) => {
+    void verifyRecovery(origin, reopening, fixtureZoom, fixtureMultiZoom, fixtureAdjacentTiles, fixtureRowTiles).then((pack) => {
       if (active && (productMap || productTab) && pack) setPackId(pack);
     });
     return () => { active = false; };
-  }, [origin, reopening, productMap, productTab, fixtureZoom, fixtureMultiZoom, fixtureAdjacentTiles]);
+  }, [origin, reopening, productMap, productTab, fixtureZoom, fixtureMultiZoom, fixtureAdjacentTiles, fixtureRowTiles]);
   if (packId && productTab) return <ExpoRoot context={mapRoutes} location="/" />;
   if (packId) return <ProductMapTrial packId={packId} />;
   return <Text>저장 지도 팩 복구 시험</Text>;

@@ -21,7 +21,7 @@ UI_LIMIT = 128 * 1024
 MAP_LOG = re.compile(r'\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+\s+(\d+)\s+\d+\s+I\s+' + TAG + r':\s*(.*)')
 
 
-def verify_product_map(directory, pid, *, product_tab=False, package=None, zoom=8, multi_zoom=False, adjacent_tiles=False):
+def verify_product_map(directory, pid, *, product_tab=False, package=None, zoom=8, multi_zoom=False, adjacent_tiles=False, row_tiles=False):
     raw = read_bounded(directory / 'map.log', LOG_LIMIT).decode().splitlines()
     messages = []
     for line in raw:
@@ -38,7 +38,7 @@ def verify_product_map(directory, pid, *, product_tab=False, package=None, zoom=
         expected.extend(f'MAP_PHASE {phase}' for phase in PHASES)
     if messages != expected:
         raise ValueError('Product map phase order, SDK connectivity or transport count differs')
-    result = verify_product_map_frames(directory, product_tab=product_tab, zoom=zoom, multi_zoom=multi_zoom, adjacent_tiles=adjacent_tiles)
+    result = verify_product_map_frames(directory, product_tab=product_tab, zoom=zoom, multi_zoom=multi_zoom, adjacent_tiles=adjacent_tiles, row_tiles=row_tiles)
     if product_tab:
         for phase in phases:
             layout = read_bounded(directory / f'{phase}.xml', UI_LIMIT)
@@ -49,14 +49,14 @@ def verify_product_map(directory, pid, *, product_tab=False, package=None, zoom=
     return {'pid': pid, 'phases': list(phases), 'transportCalls': 0, **result}
 
 
-def wait_for_frame(command, destination, phase, package, activity, pid, *, product_tab=False, zoom=8, adjacent_tiles=False):
+def wait_for_frame(command, destination, phase, package, activity, pid, *, product_tab=False, zoom=8, adjacent_tiles=False, row_tiles=False):
     deadline = time.monotonic() + 18
     while time.monotonic() < deadline:
         require_foreground(command, activity)
         frame = command(PNG_LIMIT, 'exec-out', 'screencap', '-p')
         samples = map_frame(frame, product_tab=product_tab, zoom=zoom)
         matches = (adjacent_frame_matches(phase, map_frame(frame, product_tab=product_tab, zoom=8), samples)
-                   if adjacent_tiles else frame_matches(phase, samples))
+                   if adjacent_tiles or row_tiles else frame_matches(phase, samples))
         if matches:
             require_foreground(command, activity)
             if running_pid(command, package) != pid:
@@ -94,14 +94,14 @@ def toggle_center(data, package, dimensions, *, title=None):
     return (left + right) // 2, (top + bottom) // 2
 
 
-def capture_product_map(command, destination, package, activity, pid, *, product_tab=False, source_bounds=False, zoom=8, multi_zoom=False, adjacent_tiles=False):
-    display_zoom = 9 if multi_zoom or adjacent_tiles else zoom
+def capture_product_map(command, destination, package, activity, pid, *, product_tab=False, source_bounds=False, zoom=8, multi_zoom=False, adjacent_tiles=False, row_tiles=False):
+    display_zoom = 9 if multi_zoom or adjacent_tiles or row_tiles else zoom
     # Capture the log even when a frame or UI query fails so the saved data can
     # distinguish a spinner, an unhandled toggle and a transport attempt.
     try:
         phases = TAB_PHASES if product_tab else PHASES
         for phase in phases:
-            dimensions = wait_for_frame(command, destination, phase, package, activity, pid, product_tab=product_tab, zoom=display_zoom, adjacent_tiles=adjacent_tiles)
+            dimensions = wait_for_frame(command, destination, phase, package, activity, pid, product_tab=product_tab, zoom=display_zoom, adjacent_tiles=adjacent_tiles, row_tiles=row_tiles)
             if not product_tab and phase == phases[-1]:
                 continue
             location = f'/data/local/tmp/fixture-product-map-{phase}.xml'
@@ -141,4 +141,4 @@ def capture_product_map(command, destination, package, activity, pid, *, product
         log = command(LOG_LIMIT, 'logcat', '-d', '--pid', str(pid), '-v', 'threadtime', '-s',
                       TAG + ':V', 'ReactNativeJS:E', 'AndroidRuntime:E', '*:S')
         write_capture(destination / 'map.log', log)
-    return verify_product_map(destination, pid, product_tab=product_tab, package=package, zoom=zoom, multi_zoom=multi_zoom, adjacent_tiles=adjacent_tiles)
+    return verify_product_map(destination, pid, product_tab=product_tab, package=package, zoom=zoom, multi_zoom=multi_zoom, adjacent_tiles=adjacent_tiles, row_tiles=row_tiles)

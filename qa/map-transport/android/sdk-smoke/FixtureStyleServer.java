@@ -29,28 +29,29 @@ public final class FixtureStyleServer {
     boolean zoomNine = args.length == 4 && "--rn-recovery-zoom9".equals(args[3]);
     boolean multi = args.length == 4 && "--rn-multi-zoom".equals(args[3]);
     boolean adjacent = args.length == 4 && "--rn-adjacent-tiles".equals(args[3]);
-    boolean rn = args.length == 4 && ("--rn-recovery".equals(args[3]) || zoomNine || multi || adjacent);
+    boolean rows = args.length == 4 && "--rn-row-tiles".equals(args[3]);
+    boolean rn = args.length == 4 && ("--rn-recovery".equals(args[3]) || zoomNine || multi || adjacent || rows);
     if (!(args.length == 2 || (raster && (args.length == 3 || expire || recover || rn))) || !args[1].matches("[1-9][0-9]{3,4}")) {
-      throw new IllegalArgumentException("Usage: FixtureStyleServer <fixture.p12> <port> [--raster-tile [--expire-pack | --online-recovery | --rn-recovery | --rn-recovery-zoom9 | --rn-multi-zoom | --rn-adjacent-tiles]]");
+      throw new IllegalArgumentException("Usage: FixtureStyleServer <fixture.p12> <port> [--raster-tile [--expire-pack | --online-recovery | --rn-recovery | --rn-recovery-zoom9 | --rn-multi-zoom | --rn-adjacent-tiles | --rn-row-tiles]]");
     }
     int port = Integer.parseInt(args[1]);
     if (port < 1024 || port > 65535) throw new IllegalArgumentException("Invalid fixture port");
-    HttpsServer server = bind(Path.of(args[0]), port, raster, expire, recover, rn, zoomNine, multi, adjacent);
+    HttpsServer server = bind(Path.of(args[0]), port, raster, expire, recover, rn, zoomNine, multi, adjacent, rows);
     Runtime.getRuntime().addShutdownHook(new Thread(() -> server.stop(0)));
     server.start();
     System.out.println("STYLE_SERVER_READY port=" + port);
   }
 
   static HttpsServer bind(Path keyStore, int port) throws Exception {
-    return bind(keyStore, port, false, false, false, false, false, false, false);
+    return bind(keyStore, port, false, false, false, false, false, false, false, false);
   }
 
-  private static HttpsServer bind(Path keyStore, int port, boolean raster, boolean expire, boolean recover, boolean rn, boolean zoomNine, boolean multi, boolean adjacent) throws Exception {
-    String tilePath = zoomNine || adjacent ? "/resource/tile/9_438_197" : rn ? "/resource/tile/8_219_98" : "/resource/tile/0_0_0";
-    int minZoom = zoomNine || adjacent ? 9 : rn ? 8 : 0;
+  private static HttpsServer bind(Path keyStore, int port, boolean raster, boolean expire, boolean recover, boolean rn, boolean zoomNine, boolean multi, boolean adjacent, boolean rows) throws Exception {
+    String tilePath = rows ? "/resource/tile/9_438_196" : zoomNine || adjacent ? "/resource/tile/9_438_197" : rn ? "/resource/tile/8_219_98" : "/resource/tile/0_0_0";
+    int minZoom = zoomNine || adjacent || rows ? 9 : rn ? 8 : 0;
     byte[] style = raster ? rasterStyle(port, minZoom, multi ? 9 : minZoom) : STYLE;
     byte[] tile = raster ? rasterTile(recover || zoomNine ? new Color(52, 121, 206) : new Color(217, 93, 47)) : null;
-    byte[] secondTile = multi || adjacent ? rasterTile(new Color(52, 121, 206)) : null;
+    byte[] secondTile = multi || adjacent || rows ? rasterTile(new Color(52, 121, 206)) : null;
     char[] password = "fixture-only-password".toCharArray();
     KeyStore keys = KeyStore.getInstance("PKCS12");
     try (InputStream input = Files.newInputStream(keyStore)) {
@@ -67,7 +68,7 @@ public final class FixtureStyleServer {
       try {
         exchange.getResponseHeaders().set("Connection", "close");
         String path = exchange.getRequestURI().toASCIIString();
-        boolean second = (multi && "/resource/tile/9_438_197".equals(path))
+        boolean second = ((multi || rows) && "/resource/tile/9_438_197".equals(path))
             || (adjacent && "/resource/tile/9_439_197".equals(path));
         boolean tileRequest = raster && (tilePath.equals(path) || second);
         if (!"/resource/style/sdk".equals(path) && !tileRequest) {
