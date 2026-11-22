@@ -5,12 +5,18 @@ import {
   type BackgroundMapPackMetadata,
 } from '../domain/backgroundMapPack';
 import {
+  backgroundMapOrigin,
   planBackgroundMapFromMetadata,
   type BackgroundMapMetadataBytes,
+  type BackgroundMapResources,
   type BackgroundMapSha256,
   type ReviewedBackgroundMapMetadata,
 } from '../domain/backgroundMapMetadata';
-import { readBackgroundMapPlan } from '../domain/backgroundMapPlan';
+import {
+  backgroundMapPolicy,
+  readBackgroundMapPlan,
+  type BackgroundMapPlan,
+} from '../domain/backgroundMapPlan';
 import type { BackgroundMapOperationRepository } from '../storage/backgroundMapOperationRepository';
 
 type Pack = { id: string; bounds: unknown; metadata: unknown };
@@ -24,6 +30,23 @@ type BackgroundMapPreparation = {
   minZoom?: number;
   maxZoom?: number;
 };
+
+const downloadLimits = Object.freeze({
+  maxTileAttempts: backgroundMapPolicy.maxTileAttempts,
+  maxBodyBytes: backgroundMapPolicy.maxBodyBytes,
+  maxConcurrentRequests: backgroundMapPolicy.maxConcurrentRequests,
+});
+
+export type BackgroundMapRequestScope = Readonly<{
+  schemaVersion: 1;
+  origin: typeof backgroundMapOrigin;
+  operationId: string;
+  localStyleSha256: string;
+  tileJsonSha256: string;
+  plan: BackgroundMapPlan;
+  resources: BackgroundMapResources;
+  limits: typeof downloadLimits;
+}>;
 
 async function verifyBackgroundMapStyle(
   input: Omit<BackgroundMapPreparation, 'operationId'>,
@@ -42,6 +65,7 @@ async function verifyBackgroundMapStyle(
   const localStyleSha256 = await digestSha256(new TextEncoder().encode(styleJson));
   return {
     plan: reviewed.plan,
+    resources: reviewed.resources,
     tileJsonSha256: reviewed.tileJsonSha256,
     styleJson,
     localStyleSha256,
@@ -54,15 +78,27 @@ export async function prepareBackgroundMapOperation(
   input: BackgroundMapPreparation,
   digestSha256: BackgroundMapSha256,
 ) {
+  const { operationId } = input;
   const reviewed = await verifyBackgroundMapStyle(input, digestSha256);
   const metadata = createBackgroundMapPackMetadata(reviewed.plan, {
-    operationId: input.operationId,
+    operationId,
     tileJsonSha256: reviewed.tileJsonSha256,
     localStyleSha256: reviewed.localStyleSha256,
   });
-  return (await store.prepare(metadata, reviewed.styleJson))
-    ? { kind: 'prepared' as const, metadata, styleJson: reviewed.styleJson }
-    : { kind: 'busy' as const };
+  if (!(await store.prepare(metadata, reviewed.styleJson))) return { kind: 'busy' as const };
+
+  // Describe the stored operation. Native transport must validate and enforce this scope.
+  const requestScope: BackgroundMapRequestScope = Object.freeze({
+    schemaVersion: 1,
+    origin: backgroundMapOrigin,
+    operationId: metadata.operationId,
+    localStyleSha256: metadata.localStyleSha256,
+    tileJsonSha256: metadata.tileJsonSha256,
+    plan: reviewed.plan,
+    resources: reviewed.resources,
+    limits: downloadLimits,
+  });
+  return { kind: 'prepared' as const, metadata, styleJson: reviewed.styleJson, requestScope };
 }
 
 /** Regenerate only the bytes recorded for this operation, without updating its identity. */

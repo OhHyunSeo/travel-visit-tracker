@@ -79,6 +79,55 @@ describe('preparing a background map operation', () => {
     });
     expect(result.metadata.localStyleSha256).not.toBe(reference.styleSha256);
     expect(JSON.parse(result.metadata.plan)).toMatchObject({ regionId, minZoom: 10, maxZoom: 11 });
+    expect(result.requestScope).toEqual({
+      schemaVersion: 1,
+      origin,
+      operationId,
+      localStyleSha256: result.metadata.localStyleSha256,
+      tileJsonSha256: reference.tileJsonSha256,
+      plan: JSON.parse(result.metadata.plan),
+      resources: { vector, raster, glyphs, sprite, fontStacks: ['Noto Sans Regular'] },
+      limits: { maxTileAttempts: 2500, maxBodyBytes: 50_000_000, maxConcurrentRequests: 4 },
+    });
+    expect(Object.isFrozen(result.requestScope)).toBe(true);
+    expect(Object.isFrozen(result.requestScope.limits)).toBe(true);
+    expect(Object.isFrozen(result.requestScope.plan.tileRanges)).toBe(true);
+  });
+
+  it('hands off only the exact resources covered by the selected plan', async () => {
+    const result = await prepareBackgroundMapOperation(
+      { prepare: vi.fn().mockResolvedValue(true) },
+      { operationId, regionId, ...fixture(), minZoom: 10, maxZoom: 10 },
+      digest,
+    );
+    if (result.kind !== 'prepared') throw new Error('Expected prepared operation');
+    const scope = result.requestScope;
+    const range = scope.plan.tileRanges.find((item) => item.source === 'vector')!;
+    const selected = tileUrl(vector, 10, range.minX, range.minY);
+    expect(matchBackgroundMapTileRequest(scope, selected)).toEqual({
+      source: 'vector',
+      zoom: 10,
+      x: range.minX,
+      y: range.minY,
+    });
+    expect(
+      matchBackgroundMapTileRequest(scope, tileUrl(vector, 11, range.minX, range.minY)),
+    ).toBeUndefined();
+    expect(
+      matchBackgroundMapTileRequest(scope, tileUrl(vector, 10, range.maxX + 1, range.minY)),
+    ).toBeUndefined();
+    expect(matchBackgroundMapTileRequest(scope, `${selected}?extra=1`)).toBeUndefined();
+    expect(
+      matchBackgroundMapSymbolRequest(scope, `${origin}/fonts/Noto%20Sans%20Regular/0-255.pbf`),
+    ).toMatchObject({ kind: 'glyph' });
+    expect(
+      matchBackgroundMapSymbolRequest(scope, `${origin}/fonts/Noto%20Sans%20Bold/0-255.pbf`),
+    ).toBeUndefined();
+    expect(matchBackgroundMapSymbolRequest(scope, `${sprite}@2x.png`)).toMatchObject({
+      kind: 'sprite',
+      scale: 2,
+    });
+    expect(matchBackgroundMapSymbolRequest(scope, `${sprite}/other.png`)).toBeUndefined();
   });
 
   it('keeps an existing operation and withholds the next style', async () => {
@@ -91,6 +140,21 @@ describe('preparing a background map operation', () => {
       ),
     ).toEqual({ kind: 'busy' });
     expect(prepare).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the initial operation ID when the caller changes its input during verification', async () => {
+    const prepare = vi.fn().mockResolvedValue(true);
+    const input = { operationId, regionId, ...fixture() };
+    const pending = prepareBackgroundMapOperation({ prepare }, input, digest);
+    input.operationId = '9729af8d-20ac-42db-ae59-3773944d5531';
+    const result = await pending;
+
+    expect(result).toMatchObject({
+      kind: 'prepared',
+      metadata: { operationId },
+      requestScope: { operationId },
+    });
+    expect(prepare.mock.calls[0]?.[0].operationId).toBe(operationId);
   });
 
   it('does not write an operation if reviewed metadata fails verification', async () => {

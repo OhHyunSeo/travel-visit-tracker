@@ -9,17 +9,22 @@ export type ReviewedBackgroundMapMetadata = BackgroundMapRevision &
   Readonly<{ tileJsonSha256: string }>;
 export type BackgroundMapMetadataBytes = Readonly<{ style: Uint8Array; tileJson: Uint8Array }>;
 export type BackgroundMapSha256 = (bytes: Uint8Array) => Promise<string>;
+export type BackgroundMapResources = Readonly<{
+  vector: string;
+  raster: string;
+  glyphs: string;
+  fontStacks: readonly string[];
+  sprite: string;
+}>;
+type BackgroundMapRequestResources = Readonly<{
+  plan: Pick<BackgroundMapPlan, 'tileRanges'>;
+  resources: BackgroundMapResources;
+}>;
 type BackgroundMapMetadata = Readonly<{
   plan: BackgroundMapPlan;
   tileJsonSha256: string;
   offlineStyleJson: string;
-  resources: Readonly<{
-    vector: string;
-    raster: string;
-    glyphs: string;
-    fontStacks: readonly string[];
-    sprite: string;
-  }>;
+  resources: BackgroundMapResources;
 }>;
 type TileCoordinates = Readonly<{
   source: 'vector' | 'raster';
@@ -34,10 +39,10 @@ export class BackgroundMapMetadataError extends Error {
   }
 }
 
-const origin = 'https://tiles.openfreemap.org';
-const vectorMetadata = `${origin}/planet`;
-const raster = `${origin}/natural_earth/ne2sr/{z}/{x}/{y}.png`;
-const glyphs = `${origin}/fonts/{fontstack}/{range}.pbf`;
+export const backgroundMapOrigin = 'https://tiles.openfreemap.org';
+const vectorMetadata = `${backgroundMapOrigin}/planet`;
+const raster = `${backgroundMapOrigin}/natural_earth/ne2sr/{z}/{x}/{y}.png`;
+const glyphs = `${backgroundMapOrigin}/fonts/{fontstack}/{range}.pbf`;
 const spritePattern = /^https:\/\/tiles\.openfreemap\.org\/sprites\/[a-zA-Z0-9_-]{1,64}\/ofm$/;
 const sha256Pattern = /^[a-f0-9]{64}$/;
 const coordinatesPattern = /^(0|[1-9]\d?)\/(0|[1-9]\d{0,6})\/(0|[1-9]\d{0,6})$/;
@@ -105,7 +110,7 @@ function readStyleSources(style: Record<string, unknown>) {
 }
 
 function matchTile(
-  metadata: BackgroundMapMetadata,
+  metadata: BackgroundMapRequestResources,
   url: string,
   source: TileCoordinates['source'],
 ): TileCoordinates | undefined {
@@ -126,14 +131,17 @@ function matchTile(
 
 /** Classifies a literal tile URL against a plan produced from verified metadata. */
 export function matchBackgroundMapTileRequest(
-  metadata: BackgroundMapMetadata,
+  metadata: BackgroundMapRequestResources,
   url: string,
 ): TileCoordinates | undefined {
   return matchTile(metadata, url, 'vector') ?? matchTile(metadata, url, 'raster');
 }
 
 /** Recognizes only explicit Liberty font stacks and the reviewed sprite base. */
-export function matchBackgroundMapSymbolRequest(metadata: BackgroundMapMetadata, url: string) {
+export function matchBackgroundMapSymbolRequest(
+  metadata: BackgroundMapRequestResources,
+  url: string,
+) {
   const spriteBase = metadata.resources.sprite;
   if (url.startsWith(spriteBase)) {
     const sprite = /^(|@2x)\.(json|png)$/.exec(url.slice(spriteBase.length));
