@@ -74,6 +74,26 @@ export function readBackgroundMapPackMetadata(input: unknown): BackgroundMapPack
   return createBackgroundMapPackMetadata(readBackgroundMapPlan(value.plan), value);
 }
 
+function matchesPackBounds(bounds: unknown, expected: BackgroundMapPlan['bounds']): boolean {
+  return (
+    Array.isArray(bounds) &&
+    bounds.length === 4 &&
+    expected.every((coordinate, index) => {
+      const reported: unknown = bounds[index];
+      const limit = index % 2 === 0 ? 180 : 90;
+      // The native SDK can round the same stored edge by a few floating-point steps.
+      const tolerance = 2 * Number.EPSILON * Math.max(1, Math.abs(coordinate));
+      return (
+        typeof reported === 'number' &&
+        Math.abs(reported) <= limit &&
+        Math.abs(reported - coordinate) <= tolerance
+      );
+    }) &&
+    bounds[0] < bounds[2] &&
+    bounds[1] < bounds[3]
+  );
+}
+
 /** Find a single SDK pack for an operation, including after a restart before its ID was saved. */
 export function findBackgroundMapPack(
   packs: readonly { id: unknown; bounds: unknown; metadata: unknown }[],
@@ -91,7 +111,6 @@ export function findBackgroundMapPack(
     const usesRecordedId = recordedPackId !== undefined && pack.id === recordedPackId;
     if (!claimsOperation && !usesRecordedId) continue;
 
-    const bounds = pack.bounds;
     if (
       !claimsOperation ||
       !metadata ||
@@ -103,9 +122,7 @@ export function findBackgroundMapPack(
       typeof pack.id !== 'string' ||
       !backgroundMapUuid.test(pack.id) ||
       (recordedPackId !== undefined && !usesRecordedId) ||
-      !Array.isArray(bounds) ||
-      bounds.length !== 4 ||
-      !plan.bounds.every((coordinate, index) => coordinate === bounds[index])
+      !matchesPackBounds(pack.bounds, plan.bounds)
     ) {
       return { kind: 'conflict' };
     }

@@ -33,6 +33,37 @@ describe('background map SDK pack identity', () => {
     });
   });
 
+  it('recovers the Yangyang pack across the observed SDK coordinate round trip', () => {
+    const adjacentPlan = planBackgroundMap('gb:91817680B9940099959324', plan.revision, 9, 9);
+    const adjacentMetadata = createBackgroundMapPackMetadata(adjacentPlan, identity);
+    const reportedBounds = [...adjacentPlan.bounds];
+    expect(reportedBounds[2]).toBe(128.80241724400003);
+    reportedBounds[2] = 128.80241724400005;
+    const reported = { id: firstPack, bounds: reportedBounds, metadata: adjacentMetadata };
+
+    expect(findBackgroundMapPack([reported], adjacentMetadata)).toEqual({
+      kind: 'found',
+      packId: firstPack,
+    });
+    expect(findBackgroundMapPack([reported], adjacentMetadata, firstPack)).toEqual({
+      kind: 'found',
+      packId: firstPack,
+    });
+    expect(findBackgroundMapPack([reported], adjacentMetadata, secondPack)).toEqual({
+      kind: 'conflict',
+    });
+  });
+
+  it.each([plan.bounds[2] + 1e-9, plan.bounds[2].toString(), NaN, Infinity])(
+    'rejects a moved or invalid native edge (%s)',
+    (east) => {
+      const [west, south, , north] = plan.bounds;
+      expect(
+        findBackgroundMapPack([{ ...pack, bounds: [west, south, east, north] }], metadata, firstPack),
+      ).toEqual({ kind: 'conflict' });
+    },
+  );
+
   it('skips packs that belong to another operation or older map feature', () => {
     expect(
       findBackgroundMapPack(
