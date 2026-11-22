@@ -58,15 +58,25 @@ def frame_matches(phase, samples):
     return len(raster) >= 40 and len(region) >= 40
 
 
-def verify_product_map_frames(directory, *, product_tab=False, zoom=8, multi_zoom=False):
-    zoom = 9 if multi_zoom else zoom
+def adjacent_frame_matches(phase, left, right):
+    region = left[3] | right[3]
+    if phase in ('initial', 'disabled'):
+        return not left[1] and not right[1] and right[2] >= 40 and len(region) >= 40
+    return len(left[1]) >= 40 and len(right[1]) >= 40 and len(region) >= 40
+
+
+def verify_product_map_frames(directory, *, product_tab=False, zoom=8, multi_zoom=False, adjacent_tiles=False):
+    zoom = 9 if multi_zoom or adjacent_tiles else zoom
     phases = TAB_PHASES if product_tab else PHASES
     frames = {phase: map_frame(read_bounded(directory / f'{phase}.png', PNG_LIMIT), product_tab=product_tab, zoom=zoom)
               for phase in phases}
+    left_frames = {phase: map_frame(read_bounded(directory / f'{phase}.png', PNG_LIMIT), product_tab=product_tab, zoom=8)
+                   for phase in phases} if adjacent_tiles else {}
     if len({samples[0] for samples in frames.values()}) != 1:
         raise ValueError('Product map screenshot dimensions changed during the switch')
     for phase, samples in frames.items():
-        if not frame_matches(phase, samples):
+        matches = adjacent_frame_matches(phase, left_frames[phase], samples) if adjacent_tiles else frame_matches(phase, samples)
+        if not matches:
             raise ValueError(f'Product map screenshot does not show the expected {phase} background')
     first, last = frames['saved'][1], frames['restored'][1]
     overlap = len(first & last)
@@ -84,6 +94,19 @@ def verify_product_map_frames(directory, *, product_tab=False, zoom=8, multi_zoo
             if samples[0] != frames['saved'][0] or not frame_matches('saved', samples):
                 raise ValueError(f'Product map did not display the zoom {camera_zoom} cached tile')
             zoom_samples[str(camera_zoom)] = len(samples[1])
+    adjacent = {}
+    if adjacent_tiles:
+        first, last = left_frames['saved'][1], left_frames['restored'][1]
+        if len(first & last) * 5 < max(len(first), len(last)) * 4:
+            raise ValueError('Restored left tile moved')
+        for phase in ('saved', 'restored'):
+            left, right = left_frames[phase][1], frames[phase][1]
+            if sum(x for x, _ in left) / len(left) >= sum(x for x, _ in right) / len(right):
+                raise ValueError('Adjacent tile colors are not in left-to-right order')
+        adjacent = {'leftTileSamples': {phase: len(left_frames[phase][1]) for phase in phases},
+                    'rightTileSamples': {phase: len(frames[phase][1]) for phase in phases},
+                    'leftRestoredOverlap': len(first & last)}
     return {'dimensions': list(frames['saved'][0]), 'tileSamples': {phase: len(frames[phase][1]) for phase in phases},
             'defaultBackgroundSamples': frames['disabled'][2], 'restoredOverlap': overlap,
-            'regionOverlap': region_overlap, **({'zoomTileSamples': zoom_samples} if multi_zoom else {})}
+            'regionOverlap': region_overlap, **({'zoomTileSamples': zoom_samples} if multi_zoom else {}),
+            **({'adjacentTiles': adjacent} if adjacent_tiles else {})}

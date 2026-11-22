@@ -31,6 +31,7 @@ public final class FixtureRequestPolicyTest {
   public static void main(String[] args) throws Exception {
     check(POLICY.classify(request(ORIGIN + STYLE)) == FixtureRequestPolicy.Kind.STYLE, "style");
     check(POLICY.classify(request(ORIGIN + "/resource/tile/m_2_0_3")) == FixtureRequestPolicy.Kind.TILE, "tile");
+    check(POLICY.classify(request(ORIGIN + "/resource/tile/9_439_197")) == FixtureRequestPolicy.Kind.TILE, "adjacent fixture tile");
     check(POLICY.classify(request(ORIGIN + "/resource/glyph/QA/0-255.pbf")) == FixtureRequestPolicy.Kind.GLYPH, "glyph");
     check(POLICY.classify(request(ORIGIN + "/resource/sprite/mixed@2x.png")) == FixtureRequestPolicy.Kind.SPRITE, "sprite");
 
@@ -38,7 +39,8 @@ public final class FixtureRequestPolicyTest {
         "https://127.0.0.1:32800" + STYLE, "http://localhost:32800" + STYLE,
         "http://127.0.0.1:32801" + STYLE, "http://sample:secret@127.0.0.1:32800" + STYLE,
         ORIGIN + STYLE + "?", ORIGIN + STYLE + "#fragment", ORIGIN + "/resource/style/%6dixed",
-        ORIGIN + "/resource/tile/m_2_0_4", ORIGIN + "/resource/tile/denied_0_0_0", ORIGIN + "/stats")) {
+        ORIGIN + "/resource/tile/m_2_0_4", ORIGIN + "/resource/tile/9_440_197",
+        ORIGIN + "/resource/tile/9_439_198", ORIGIN + "/resource/tile/denied_0_0_0", ORIGIN + "/stats")) {
       refuse(request(url));
     }
     refuse(request(ORIGIN + STYLE).newBuilder().post(RequestBody.create(new byte[0], null)).build());

@@ -43,6 +43,7 @@ class RecoveryActivity : ReactActivity() {
                 require(zoom in 8..9)
                 putInt("fixtureZoom", zoom)
                 putBoolean("fixtureMultiZoom", intent.getBooleanExtra("fixture-multi-zoom", false))
+                putBoolean("fixtureAdjacentTiles", intent.getBooleanExtra("fixture-adjacent-tiles", false))
             }
         },
     )

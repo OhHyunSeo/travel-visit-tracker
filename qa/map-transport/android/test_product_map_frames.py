@@ -20,6 +20,30 @@ def frame(path, tile=None, background=BACKGROUND_RGB, region=SELECTED_REGION_RGB
 
 
 class ProductMapFramesTest(unittest.TestCase):
+    def test_adjacent_tiles_must_both_return_in_the_correct_spatial_order(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)
+            for phase in ('initial', 'disabled'):
+                frame(path / f'{phase}.png', region=UNSELECTED_COLORS[0])
+            def pair(phase, *, reverse=False, omit=False):
+                picture = Image.new('RGB', (320,640), BACKGROUND_RGB)
+                draw = ImageDraw.Draw(picture)
+                orange, blue = RASTER_TILE_RGB, (52,121,206)
+                draw.rectangle((40,150,150,515), fill=blue if reverse else orange)
+                draw.rectangle((161,150,260,515), fill=orange if reverse or omit else blue)
+                draw.rectangle((132,248,185,395), fill=UNSELECTED_COLORS[0])
+                picture.save(path / f'{phase}.png')
+            pair('saved'); pair('restored')
+            result = verify_product_map_frames(path, product_tab=True, adjacent_tiles=True)
+            self.assertGreater(result['adjacentTiles']['leftTileSamples']['saved'],40)
+            self.assertGreater(result['adjacentTiles']['rightTileSamples']['saved'],40)
+            pair('restored', omit=True)
+            with self.assertRaisesRegex(ValueError, 'expected restored'):
+                verify_product_map_frames(path, product_tab=True, adjacent_tiles=True)
+            pair('saved', reverse=True); pair('restored', reverse=True)
+            with self.assertRaisesRegex(ValueError, 'left-to-right'):
+                verify_product_map_frames(path, product_tab=True, adjacent_tiles=True)
+
     def test_multi_zoom_frames_require_each_zoom_color(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary)

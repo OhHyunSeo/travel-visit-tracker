@@ -79,3 +79,14 @@ restored native MapView camera to zoom eight and nine. It captures each color
 and requires the same view identity and source bounds, unchanged SQLite content
 and request journal, and zero new transport calls. Replay with `--multi-zoom`
 together with `--product-tab --source-bounds --reopened-pid PID`.
+
+`--rn-adjacent-tiles --rn-reopen --rn-product-tab --rn-source-bounds` selects
+the pinned boundary dataset's Yangyang fixture region. Its bounds cross tiles
+`9/438/197` and `9/439/197` at the fixed zoom nine. The left tile is orange and
+the right tile blue. This mode reuses the three-connection relay and requires
+both tiles in the same region, three resources/reservations, and both colors
+in saved/restored frames in left-to-right order. Both colors must disappear on
+the boundary-only map. The runner compares each tile's restored location and
+stored bytes after an offline app restart. Use `--adjacent-tiles` for replay
+with `--product-tab --source-bounds --reopened-pid PID`. This mode is separate
+from `--rn-multi-zoom` and `--rn-zoom 9`.
