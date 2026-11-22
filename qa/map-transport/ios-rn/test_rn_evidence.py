@@ -144,9 +144,9 @@ class PackRecoveryEvidenceTests(unittest.TestCase):
                                "completedTileCount": 1}}
         return result, recovery, ledger, server
 
-    def verify_case(self, values):
+    def verify_case(self, values, **options):
         return verify_pack_recovery(*values, ORIGIN, CERTIFICATE, "synthetic-run", 1234,
-                                    runtime="synthetic-host")
+                                    runtime="synthetic-host", **options)
 
     def test_requires_discovery_and_persistence_of_the_created_pack(self):
         self.assertTrue(self.verify_case(self.evidence())["samePackPersisted"])
@@ -162,6 +162,25 @@ class PackRecoveryEvidenceTests(unittest.TestCase):
         with self.assertRaises(EvidenceError):
             self.verify_case(values)
 
+    def test_guarded_pack_start_requires_both_denials_and_the_tight_ledger(self):
+        values = self.evidence()
+        with self.assertRaises(EvidenceError):
+            self.verify_case(values, require_pack_gate=True)
+        result, _, ledger, _ = values
+        result["packGate"] = {"authorized": True, "deniedWhileClosed": 1, "deniedOutsideScope": 1}
+        ledger.update(maxRequests=2, maxTiles=1, maxReservedBytes=512)
+        result["native"]["ledger"] = deepcopy(ledger)
+        self.assertEqual(self.verify_case(values, require_pack_gate=True)["packStartGate"], result["packGate"])
+        for key, changed in (("authorized", False), ("deniedWhileClosed", 0), ("deniedOutsideScope", 2)):
+            wrong = deepcopy(values)
+            wrong[0]["packGate"][key] = changed
+            with self.subTest(key=key), self.assertRaises(EvidenceError):
+                self.verify_case(wrong)
+        ledger["maxReservedBytes"] = 2048
+        result["native"]["ledger"] = deepcopy(ledger)
+        with self.assertRaises(EvidenceError):
+            self.verify_case(values, require_pack_gate=True)
+
     def test_reopen_requires_the_same_completion_in_a_new_process_without_requests(self):
         result, previous, ledger, _ = self.evidence()
         reopened = {"pass": True, "states": ["complete"], "savedPackId": previous["savedPackId"],
@@ -174,6 +193,12 @@ class PackRecoveryEvidenceTests(unittest.TestCase):
             return verify_pack_reopen(result, reopened, ledger, ORIGIN, CERTIFICATE,
                                       "synthetic-run", result["process"], 1234, previous)
         self.assertTrue(verify_reopen()["newProcess"])
+        result["packGate"] = {"authorized": False, "deniedWhileClosed": 0, "deniedOutsideScope": 0}
+        self.assertTrue(verify_reopen()["newProcess"])
+        result["packGate"]["authorized"] = True
+        with self.assertRaises(EvidenceError):
+            verify_reopen()
+        result["packGate"]["authorized"] = False
         for target, key, unrelated in ((result, "process", 1234), (reopened, "savedPackId", "other"),
                                        (result["native"], "started", 1), (ledger, "reservedBytes", 256)):
             before = target[key]

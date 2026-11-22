@@ -80,7 +80,8 @@ def verify(result, ledger, server, origin, certificate, run, pid, *, runtime, in
     return summary
 
 
-def verify_pack_recovery(result, recovery, ledger, server, origin, certificate, run, pid, *, runtime):
+def verify_pack_recovery(result, recovery, ledger, server, origin, certificate, run, pid, *,
+                         runtime, require_pack_gate=False):
     _need(result.get("complete") is True and result.get("pass") is True and
           result.get("delegatePreserved") is True and result.get("runID") == run and
           result.get("process") == pid, "native pack recovery evidence differs")
@@ -113,17 +114,28 @@ def verify_pack_recovery(result, recovery, ledger, server, origin, certificate, 
               item.get("cookieHeader") is False and item.get("alpn") == "http/1.1" and
               _same(item.get("bytes"), item.get("bytesWritten")) for item in requests) and
           _same(native.get("acceptedBodyBytes"), sum(item["bytes"] for item in requests)), "pack response evidence differs")
-    return {"validated": True, "runtime": runtime, "bundle": BUNDLE, "resources": paths,
-            "verifiedHTTPSExchanges": 2, "samePackPersisted": True, "operationStates": states}
+    summary = {"validated": True, "runtime": runtime, "bundle": BUNDLE, "resources": paths,
+               "verifiedHTTPSExchanges": 2, "samePackPersisted": True, "operationStates": states}
+    if require_pack_gate or "packGate" in result:
+        _need(_same(result.get("packGate"), {"authorized": True, "deniedWhileClosed": 1, "deniedOutsideScope": 1}) and
+              all(_same(ledger.get(key), value) for key, value in
+                  (("maxRequests", 2), ("maxTiles", 1), ("maxReservedBytes", 512))),
+              "fixture pack start gate or limits differ")
+        summary["packStartGate"] = result["packGate"]
+    return summary
 
 
-def verify_pack_reopen(result, recovery, ledger, origin, certificate, run, pid, previous_pid, previous_pack):
+def verify_pack_reopen(result, recovery, ledger, origin, certificate, run, pid, previous_pid, previous_pack,
+                       *, runtime="physical-iphone"):
     _need(result.get("complete") is True and result.get("pass") is True and
           result.get("delegatePreserved") is True and result.get("runID") == run and
           result.get("process") == pid and pid != previous_pid, "QA did not complete in a new process")
     _need(recovery.get("pass") is True and recovery.get("states") == ["complete"] and
           recovery.get("savedPackId") == previous_pack.get("savedPackId") and
           _same(recovery.get("status"), previous_pack.get("status")), "saved pack or completion changed")
+    if "packGate" in result:
+        _need(_same(result["packGate"], {"authorized": False, "deniedWhileClosed": 0, "deniedOutsideScope": 0}),
+              "the restarted pack transport did not stay closed")
     native = result["native"]
     _need(result.get("observedRequests") == [] and native.get("ledgerOK") is True and
           all(_same(native.get(k), 0) for k in ("started", "released", "httpRequestSendsSettled", "tlsVerifiedExchanges",
@@ -132,5 +144,5 @@ def verify_pack_reopen(result, recovery, ledger, origin, certificate, run, pid, 
           all(_same(ledger.get(k), 0) for k in ("requests", "tiles", "reservedBytes")) and
           ledger.get("unresolved") == [], "reopen reserved resources")
     _certificate(ledger.get("fixtureTLSLeafDER"), certificate)
-    return {"validated": True, "runtime": "physical-iphone", "bundle": BUNDLE,
+    return {"validated": True, "runtime": runtime, "bundle": BUNDLE,
             "samePackPersisted": True, "newProcess": True, "verifiedHTTPSExchanges": 0}

@@ -15,6 +15,13 @@ static NSURL *TPRNOriginalDefaultStyle;
 static NSString *TPRNInitialStyleMode;
 static BOOL TPRNLocalBootstrap, TPRNRenderConfirmed, TPRNRecoveryReported, TPRNRecoveryPassed;
 static NSString *TPRNTrial;
+static NSString *const TPRNPackStylePath = @"/resource/style/pack-recovery";
+static NSString *const TPRNPackTilePath = @"/resource/tile/pack_8_219_98";
+static NSString *const TPRNPackGateError = @"TripPaintingFixturePackGate";
+static BOOL TPRNPackPreflightStarted, TPRNPackAuthorized;
+static NSUInteger TPRNPackClosedDenials, TPRNPackScopeDenials;
+
+enum { TPRNPackClosed = 1, TPRNPackOutsideScope = 2 };
 
 static BOOL TPRNIsPackTrial(void) { return ![TPRNTrial isEqual:@"render"]; }
 
@@ -26,21 +33,65 @@ static BOOL TPRNIsPackTrial(void) { return ![TPRNTrial isEqual:@"render"]; }
     NSURLComponents *parts = [NSURLComponents componentsWithURL:self.request.URL resolvingAgainstBaseURL:NO];
     NSString *origin = [NSString stringWithFormat:@"%@://%@:%@", parts.scheme, parts.host, parts.port];
     NSString *path = parts.percentEncodedPath;
-    NSArray *fixturePaths = TPRNIsPackTrial() ? @[@"/resource/style/pack-recovery", @"/resource/tile/pack_8_219_98"] :
+    NSArray *fixturePaths = TPRNIsPackTrial() ? @[TPRNPackStylePath, TPRNPackTilePath] :
         @[@"/resource/style/rn-entry", @"/resource/style/sdk", @"/resource/tile/0_0_0", @"/resource/style/empty"];
     BOOL fixtureOrigin = [origin isEqual:TPRNOrigin];
-    NSString *resource = fixtureOrigin && [fixturePaths containsObject:path ?: @""] ? path : @"other";
+    BOOL fixturePath = fixtureOrigin && [fixturePaths containsObject:path ?: @""];
+    NSString *resource = fixturePath ? path : @"other";
+    NSInteger denial = 0;
     @synchronized (TPRNTransport.class) {
-        if (TPRNRequests.count < 12) {
+        if (TPRNIsPackTrial()) {
+            if (!fixturePath || parts.user || parts.password || parts.percentEncodedQuery || parts.fragment ||
+                ![self.request.HTTPMethod isEqual:@"GET"]) {
+                TPRNPackScopeDenials++;
+                denial = TPRNPackOutsideScope;
+            } else if (!TPRNPackAuthorized) {
+                TPRNPackClosedDenials++;
+                denial = TPRNPackClosed;
+            }
+        }
+        if (!denial && TPRNRequests.count < 12) {
             [TPRNRequests addObject:@{@"fixtureOrigin": @(fixtureOrigin), @"resource": resource,
                 @"sdkDefaultStyle": @([self.request.URL isEqual:TPRNOriginalDefaultStyle]),
                 @"query": @(parts.percentEncodedQuery != nil), @"fragment": @(parts.fragment != nil),
                 @"get": @([self.request.HTTPMethod isEqual:@"GET"])}];
         }
     }
+    if (denial) {
+        [self.client URLProtocol:self didFailWithError:[NSError errorWithDomain:TPRNPackGateError code:denial userInfo:nil]];
+        return;
+    }
     [super startLoading];
 }
 @end
+
+static NSDictionary *TPRNPackGateSnapshot(void) {
+    @synchronized (TPRNTransport.class) {
+        return @{@"authorized": @(TPRNPackAuthorized), @"deniedWhileClosed": @(TPRNPackClosedDenials),
+            @"deniedOutsideScope": @(TPRNPackScopeDenials)};
+    }
+}
+
+static BOOL TPRNHasEmptyPackBudget(void) {
+    NSDictionary *native = TPTransport.snapshot;
+    NSDictionary *ledger = native[@"ledger"];
+    return [native[@"ledgerOK"] isEqual:@YES] && [native[@"active"] isEqual:@0] &&
+        [native[@"pending"] isEqual:@0] && [native[@"started"] isEqual:@0] &&
+        [ledger[@"origin"] isEqual:TPRNOrigin] && [ledger[@"requests"] isEqual:@0] &&
+        [ledger[@"tiles"] isEqual:@0] && [ledger[@"reservedBytes"] isEqual:@0] &&
+        [ledger[@"maxRequests"] isEqual:@2] && [ledger[@"maxTiles"] isEqual:@1] &&
+        [ledger[@"maxReservedBytes"] isEqual:@512];
+}
+
+static void TPRNProbePackDenial(NSURLSession *session, NSString *path, NSInteger expected,
+                                void (^completion)(BOOL)) {
+    NSURL *url = [NSURL URLWithString:[TPRNOrigin stringByAppendingString:path]];
+    NSURLRequest *request = [NSURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
+                                        timeoutInterval:3];
+    [[session dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        completion(!response && !data.length && [error.domain isEqual:TPRNPackGateError] && error.code == expected);
+    }] resume];
+}
 
 @interface TPRNProbe : NSObject <RCTBridgeModule>
 @end
@@ -57,6 +108,33 @@ RCT_EXPORT_METHOD(confirmRendered:(RCTPromiseResolveBlock)resolve rejecter:(RCTP
     TPRNRenderConfirmed |= ready;
     resolve(@(ready));
 }
+RCT_EXPORT_METHOD(authorizeFixturePackStart:(NSString *)styleURL resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject) {
+    NSURLSessionConfiguration *config = MLNNetworkConfiguration.sharedManager.sessionConfiguration;
+    if (![TPRNTrial isEqual:@"pack-recovery"] ||
+        ![styleURL isEqual:[TPRNOrigin stringByAppendingString:TPRNPackStylePath]] ||
+        config.protocolClasses.firstObject != TPRNTransport.class || !TPRNHasEmptyPackBudget()) {
+        resolve(@NO);
+        return;
+    }
+    @synchronized (TPRNTransport.class) {
+        if (TPRNPackPreflightStarted) { resolve(@NO); return; }
+        TPRNPackPreflightStarted = YES;
+    }
+    NSURLSession *session = [NSURLSession sessionWithConfiguration:config];
+    TPRNProbePackDenial(session, TPRNPackStylePath, TPRNPackClosed, ^(BOOL closed) {
+        TPRNProbePackDenial(session, @"/resource/style/empty", TPRNPackOutsideScope, ^(BOOL outside) {
+            [session finishTasksAndInvalidate];
+            BOOL empty = TPRNHasEmptyPackBudget();
+            BOOL authorized;
+            @synchronized (TPRNTransport.class) {
+                authorized = closed && outside && empty && TPRNPackClosedDenials == 1 && TPRNPackScopeDenials == 1;
+                TPRNPackAuthorized = authorized;
+            }
+            resolve(@(authorized));
+        });
+    });
+}
 RCT_EXPORT_METHOD(reportPackRecovery:(NSDictionary *)report resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject) {
     if (!TPRNIsPackTrial() || TPRNRecoveryReported) { resolve(@NO); return; }
     NSData *data = [NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingSortedKeys error:nil];
@@ -70,12 +148,13 @@ RCT_EXPORT_METHOD(reportPackRecovery:(NSDictionary *)report resolver:(RCTPromise
 static void TPRNWrite(BOOL complete, BOOL pass, NSDictionary *native) {
     NSArray *requests;
     @synchronized (TPRNTransport.class) { requests = [TPRNRequests copy]; }
-    NSDictionary *result = @{@"complete": @(complete), @"pass": @(pass), @"runID": TPRNRunID,
+    NSMutableDictionary *result = [@{@"complete": @(complete), @"pass": @(pass), @"runID": TPRNRunID,
         @"process": @(NSProcessInfo.processInfo.processIdentifier), @"native": native,
         @"observedRequests": requests,
         @"rnSchema": @2, @"initialStyleMode": TPRNInitialStyleMode,
         @"localBootstrap": @(TPRNLocalBootstrap), @"renderConfirmedAfterTile": @(TPRNRenderConfirmed),
-        @"delegatePreserved": @((BOOL)(MLNNetworkConfiguration.sharedManager.delegate == TPRNDelegate))};
+        @"delegatePreserved": @((BOOL)(MLNNetworkConfiguration.sharedManager.delegate == TPRNDelegate))} mutableCopy];
+    if (TPRNIsPackTrial()) result[@"packGate"] = TPRNPackGateSnapshot();
     NSData *data = [NSJSONSerialization dataWithJSONObject:result options:NSJSONWritingSortedKeys error:nil];
     [data writeToURL:[TPRNDirectory URLByAppendingPathComponent:@"result.json"] options:NSDataWritingAtomic error:nil];
 }
@@ -98,8 +177,10 @@ static void TPRNWrite(BOOL complete, BOOL pass, NSDictionary *native) {
     NSURL *directory = [documents URLByAppendingPathComponent:run];
     MLNNetworkConfiguration *network = MLNNetworkConfiguration.sharedManager;
     if (network.delegate || [[NSFileManager defaultManager] fileExistsAtPath:directory.path]) return NO;
+    BOOL packTrial = ![trial isEqual:@"render"];
     if (![TPTransport configurePrivateFixtureTLSOrigin:origin ledgerURL:[directory URLByAppendingPathComponent:@"ledger.json"]
-                                            maxRequests:8 maxTiles:4 maxReservedBytes:2048 certificate:leaf]) return NO;
+                                            maxRequests:packTrial ? 2 : 8 maxTiles:packTrial ? 1 : 4
+                                        maxReservedBytes:packTrial ? 512 : 2048 certificate:leaf]) return NO;
 
     TPRNOriginalDefaultStyle = MLNStyle.defaultStyleURL;
     // SDK 6.31 exposes the default as an alias and normalizes it before HTTP dispatch.
@@ -153,10 +234,14 @@ static void TPRNWrite(BOOL complete, BOOL pass, NSDictionary *native) {
         BOOL idle = [native[@"active"] isEqual:@0] && [native[@"pending"] isEqual:@0];
         NSNumber *expectedBlocks = TPRNLocalBootstrap ? @0 : @1;
         BOOL reopening = [TPRNTrial isEqual:@"pack-reopen"];
+        NSDictionary *packGate = TPRNPackGateSnapshot();
+        BOOL packGateOK = !TPRNIsPackTrial() || ([packGate[@"authorized"] isEqual:@(!reopening)] &&
+            [packGate[@"deniedWhileClosed"] isEqual:@(reopening ? 0 : 1)] &&
+            [packGate[@"deniedOutsideScope"] isEqual:@(reopening ? 0 : 1)]);
         NSNumber *expectedStarts = reopening ? @0 : (TPRNIsPackTrial() ? @2 : @3);
         NSNumber *expectedTiles = reopening ? @0 : @1;
         BOOL confirmed = TPRNIsPackTrial() ? TPRNRecoveryPassed : TPRNRenderConfirmed;
-        BOOL pass = delegateOK && idle && confirmed && [native[@"ledgerOK"] isEqual:@YES] &&
+        BOOL pass = delegateOK && idle && confirmed && packGateOK && [native[@"ledgerOK"] isEqual:@YES] &&
             [native[@"blockedBeforeDispatch"] isEqual:expectedBlocks] && [native[@"started"] isEqual:expectedStarts] &&
             [native[@"tlsVerifiedExchanges"] isEqual:expectedStarts] && [native[@"ledger"][@"tiles"] isEqual:expectedTiles];
         BOOL blocked = [native[@"blockedBeforeDispatch"] unsignedIntegerValue] > 0;

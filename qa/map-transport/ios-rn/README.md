@@ -4,7 +4,9 @@
 
 기본 시험 `local-empty`는 제품 Expo 플러그인으로 등록한 Swift 코드와 번들의 빈 스타일 파일을 사용합니다. `--initial-style local-missing`은 같은 Swift 코드에 파일이 없는 시험 경로를 넘깁니다. 두 모드 모두 추가 외부 요청 없이 합성 HTTPS 세 건이 완료돼야 합니다. `--initial-style sdk-default`는 SDK 기본 스타일과 일치한 추가 요청 한 건이 전송 전에 차단되는지 확인하는 대조 시험입니다.
 
-`--case pack-recovery`는 별도 시험 앱의 빈 지도 저장소에서 Expo SQLite에 작업을 저장하고, MapLibre가 스타일과 타일을 받도록 합니다. SDK가 생성 후 반환한 팩 ID를 저장하지 않은 채 공통 복구를 호출합니다. 최신 SDK 목록에서 찾은 ID가 SQLite에 저장되고, 실제 완료 상태와 서버·전송 장부가 일치해야 통과합니다. Expo 시작에 필요한 에셋과 상수 모듈, 지도 작업을 위한 SQLite만 등록합니다.
+`--case pack-recovery`는 먼저 Expo SQLite에 저장 작업을 기록합니다. 네이티브 전송에 승인 전의 스타일 요청과 허용 범위 밖 요청을 한 번씩 넣습니다. 두 요청이 연결 전에 거절되고 장부가 비어 있어야 MapLibre에 팩 생성을 요청합니다. 승인 후에는 합성 서버의 스타일 하나와 타일 하나만 허용합니다. 전송 장부는 요청 2건, 타일 1개, 예약 512바이트로 제한합니다.
+
+SDK가 반환한 팩 ID를 저장하지 않은 채 공통 복구를 호출합니다. 최신 SDK 목록에서 찾은 ID가 SQLite에 저장되고 완료 상태가 서버와 장부에 맞아야 통과합니다. 시뮬레이터에서는 이어서 서버를 끄고 새 앱 프로세스로 같은 팩을 확인합니다. 이때 요청을 닫은 상태로 유지하고 새 전송이나 예약이 없어야 합니다. 이 경로는 합성 서버를 쓰는 시험 앱에서 실행합니다.
 
 MapLibre 6.31의 기본 스타일은 `maplibre://maps/style` 별칭입니다. SDK가 HTTP 요청으로 바꾸는 설정까지 대조해 기본 스타일 요청을 식별합니다. [지도 뷰 초기화](https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/platform/ios/src/MLNMapView.mm#L474), [기본 서버 설정](https://github.com/maplibre/maplibre-native/blob/ios-v6.31.0/src/mln/util/tile_server_options.cpp#L195)
 
@@ -21,7 +23,7 @@ python3 -B qa/map-transport/ios-rn/run-simulator.py \
 
 다른 Ruby 설치를 사용한다면 첫 명령에 `TP_RN_RUBY`와 해당 설치의 `GEM_HOME`을 지정할 수 있습니다. 각 실행은 새 이름을 사용하세요. 빌드는 분리된 폴더와 `app.trippainting.rnmapqa` 식별자를 씁니다. 실행 도구는 전용 시뮬레이터를 만들어 127.0.0.1 합성 서버로 요청을 보낸 뒤 자신이 만든 시뮬레이터와 서버를 정리합니다. 보관하는 인증서는 공개 부분입니다.
 
-이 검사는 React Native 초기화, URL 변환, 렌더 이벤트와 시험용 HTTPS 경로를 확인합니다. 실기기, 여행색칠 제품 앱, HTTP/2와 오프라인 지도 저장은 별도 검사입니다.
+기본 실행은 React Native 초기화, URL 변환, 렌더 이벤트와 시험용 HTTPS 경로를 확인합니다. 실제 공급원, 여행색칠 제품 앱과 HTTP/2는 별도 검사입니다.
 
 같은 시뮬레이터 도구에 `--case pack-recovery`를 붙여 합성 지도 팩을 저장하고 복구를 확인할 수 있습니다.
 

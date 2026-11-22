@@ -31,9 +31,12 @@ export async function verifyPackRecovery(origin, reopening) {
     states.push(waiting.kind);
     if (waiting.kind !== 'awaiting-pack') throw new Error('Expected no matching SDK pack');
 
+    const mapStyle = `${origin}/resource/style/pack-recovery`;
+    if (!await NativeModules.TPRNProbe.authorizeFixturePackStart(mapStyle))
+      throw new Error('The native fixture request gate was not ready');
     const native = TurboModuleRegistry.getEnforcing('MLRNOfflineModule');
     const pack = await native.createPack({
-      mapStyle: `${origin}/resource/style/pack-recovery`, bounds: plan.bounds,
+      mapStyle, bounds: plan.bounds,
       minZoom: plan.minZoom, maxZoom: plan.maxZoom, metadata: JSON.stringify(metadata),
     });
     // Leave the SDK's returned ID unsaved. Product recovery must discover it.

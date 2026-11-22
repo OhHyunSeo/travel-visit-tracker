@@ -9,11 +9,13 @@ import plistlib
 import re
 import secrets
 import select
+import socket
 import subprocess
 import sys
 import tempfile
 import time
 import uuid
+from urllib.parse import urlsplit
 
 
 HERE = Path(__file__).resolve().parent
@@ -26,7 +28,7 @@ sys.path.insert(0, str(QA / "ios"))
 sys.path.insert(0, str(QA / "ios-maplibre"))
 from test_tls_exchange import make_certificate
 from tls_cancel_capture import FixtureControl
-from rn_evidence import BUNDLE, CASES, save, verify, verify_pack_recovery
+from rn_evidence import BUNDLE, CASES, save, verify, verify_pack_recovery, verify_pack_reopen
 from tls_result import _need, _same
 
 
@@ -43,7 +45,7 @@ def run(app, output, directory, trial):
     device_id = str(uuid.UUID(command("create", run_id, DEVICE, RUNTIME)))
     try:
         command("boot", device_id, timeout=60)
-        command("bootstatus", device_id, "-b", timeout=120)
+        command("bootstatus", device_id, "-b", timeout=165)
         command("install", device_id, str(app), timeout=45)
         make_certificate(directory, "fixture", "IP:127.0.0.1")
         certificate = (directory / "fixture.der").read_bytes()
@@ -63,42 +65,65 @@ def run(app, output, directory, trial):
             initial = control.request("/stats", time.monotonic() + 3)
             _need(_same(initial, {"active": 0, "maxActive": 0, "heldActive": 0, "heldReleased": False,
                                   "resourceCount": 0, "requests": []}), "fixture was not fresh")
-            env = {key: value for key, value in os.environ.items() if not key.startswith("SIMCTL_CHILD_")}
-            env.update(SIMCTL_CHILD_QA_SERVER_ORIGIN=origin, SIMCTL_CHILD_QA_RUN_ID=run_id,
-                       SIMCTL_CHILD_QA_RN_CASE=trial,
-                       SIMCTL_CHILD_QA_TLS_LEAF_DER_BASE64=base64.b64encode(certificate).decode("ascii"))
-            launch = command("launch", device_id, BUNDLE, env=env)
-            process = re.fullmatch(re.escape(BUNDLE) + r": (\d+)", launch)
-            _need(process is not None, "unexpected simulator launch result")
-            pid = int(process.group(1))
-            save(output, "run", {"runID": run_id, "origin": origin, "process": pid})
             data = Path(command("get_app_container", device_id, BUNDLE, "data")).resolve()
             _need(data.is_relative_to(device_set), "app data is outside the private device set")
-            documents = data / "Documents" / run_id
-            result = {}
-            deadline = time.monotonic() + 35
-            while time.monotonic() < deadline:
-                try:
-                    result = json.loads((documents / "result.json").read_text())
-                except FileNotFoundError:
-                    pass
-                if result.get("complete") is True:
-                    break
-                time.sleep(0.2)
+            def launch_and_collect(case, identifier, prefix=""):
+                env = {key: value for key, value in os.environ.items() if not key.startswith("SIMCTL_CHILD_")}
+                env.update(SIMCTL_CHILD_QA_SERVER_ORIGIN=origin, SIMCTL_CHILD_QA_RUN_ID=identifier,
+                           SIMCTL_CHILD_QA_RN_CASE=case,
+                           SIMCTL_CHILD_QA_TLS_LEAF_DER_BASE64=base64.b64encode(certificate).decode("ascii"))
+                launch = command("launch", device_id, BUNDLE, env=env, timeout=100)
+                process = re.fullmatch(re.escape(BUNDLE) + r": (\d+)", launch)
+                _need(process is not None, "unexpected simulator launch result")
+                pid = int(process.group(1))
+                save(output, prefix + "run", {"runID": identifier, "origin": origin, "process": pid})
+                documents = data / "Documents" / identifier
+                result = {}
+                deadline = time.monotonic() + 40
+                while time.monotonic() < deadline:
+                    try:
+                        result = json.loads((documents / "result.json").read_text())
+                    except FileNotFoundError:
+                        pass
+                    if result.get("complete") is True:
+                        break
+                    time.sleep(0.2)
+                save(output, prefix + "result", result)
+                if result.get("pass") is not True:
+                    (output / (prefix + "runtime-private.log")).write_text(command(
+                        "spawn", device_id, "log", "show", "--last", "2m", "--style", "compact",
+                        "--predicate", 'process == "TripPainting"'))
+                ledger = json.loads((documents / "ledger.json").read_text())
+                save(output, prefix + "ledger", ledger)
+                return pid, result, ledger, documents
+
+            pid, result, ledger, documents = launch_and_collect(trial, run_id)
             server = control.request("/stats", time.monotonic() + 3)
             save(output, "server", server)
-            save(output, "result", result)
-            if result.get("pass") is not True:
-                (output / "runtime-private.log").write_text(command(
-                    "spawn", device_id, "log", "show", "--last", "2m", "--style", "compact",
-                    "--predicate", 'process == "TripPainting"'))
-            ledger = json.loads((documents / "ledger.json").read_text())
-            save(output, "ledger", ledger)
             if trial == "pack-recovery":
                 recovery = json.loads((documents / "pack-recovery.json").read_text())
                 save(output, "pack-recovery", recovery)
                 summary = verify_pack_recovery(result, recovery, ledger, server, origin, certificate,
-                                               run_id, pid, runtime=RUNTIME)
+                                               run_id, pid, runtime=RUNTIME, require_pack_gate=True)
+                save(output, "pack-start-summary", summary)
+                command("terminate", device_id, BUNDLE)
+                fixture.terminate()
+                fixture.wait(timeout=5)
+                endpoint = urlsplit(origin)
+                try:
+                    with socket.create_connection((endpoint.hostname, endpoint.port), timeout=2):
+                        raise ValueError("fixture still accepts connections")
+                except ConnectionRefusedError:
+                    pass
+                reopen_id = "rn-" + secrets.token_hex(12)
+                reopened_pid, reopened, reopen_ledger, reopen_documents = launch_and_collect(
+                    "pack-reopen", reopen_id, "reopen-")
+                reopened_pack = json.loads((reopen_documents / "pack-recovery.json").read_text())
+                save(output, "reopen-pack-recovery", reopened_pack)
+                _need("packGate" in reopened, "missing restarted pack gate evidence")
+                summary["reopen"] = verify_pack_reopen(reopened, reopened_pack, reopen_ledger, origin,
+                                                       certificate, reopen_id, reopened_pid, pid, recovery,
+                                                       runtime=RUNTIME)
                 save(output, "summary", summary)
                 return
             save(output, "summary", verify(result, ledger, server, origin, certificate, run_id, pid,
