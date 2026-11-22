@@ -217,7 +217,7 @@ def require_server_closed(port):
 
 
 def capture_recovery(key_path, apk, relay, java, identity, destination, expected_hash, *, reopening=False,
-                     product_map=False, product_tab=False, source_bounds=False, zoom=8, multi_zoom=False, adjacent_tiles=False, row_tiles=False):
+                     product_map=False, product_tab=False, source_bounds=False, zoom=8, multi_zoom=False, adjacent_tiles=False, row_tiles=False, row_pan=False):
     port, apk_hash = read_apk(apk, RN_TAB_APK_LIMIT if product_tab else RN_APK_LIMIT)
     if apk_hash != expected_hash:
         raise ValueError('React Native fixture APK hash changed')
@@ -265,7 +265,7 @@ def capture_recovery(key_path, apk, relay, java, identity, destination, expected
         if product_map or product_tab:
             from product_map_trial import capture_product_map
             result[screen_key] = capture_product_map(command, reopened, RN_FIXTURE_PACKAGE, ACTIVITY, reopened_pid,
-                                                     product_tab=product_tab, source_bounds=source_bounds, zoom=zoom, multi_zoom=multi_zoom, adjacent_tiles=adjacent_tiles, row_tiles=row_tiles)
+                                                     product_tab=product_tab, source_bounds=source_bounds, zoom=zoom, multi_zoom=multi_zoom, adjacent_tiles=adjacent_tiles, row_tiles=row_tiles, row_pan=row_pan)
         capture_saved_files(command, reopened, reopened_pid, expected_hash, multi_zoom=multi_zoom, adjacent_tiles=adjacent_tiles, row_tiles=row_tiles)
         require_server_closed(port)
         write_capture(reopened / 'server-closed.txt', b'before=refused\nafter=refused\n')
@@ -312,6 +312,7 @@ if __name__ == '__main__':
     parser.add_argument('--multi-zoom', action='store_true')
     parser.add_argument('--adjacent-tiles', action='store_true')
     parser.add_argument('--row-tiles', action='store_true')
+    parser.add_argument('--row-pan', action='store_true')
     args = parser.parse_args()
     if (args.product_map or args.product_tab) and args.reopened_pid is None:
         parser.error('Screen verification requires --reopened-pid')
@@ -325,6 +326,8 @@ if __name__ == '__main__':
         parser.error('--adjacent-tiles requires --source-bounds and excludes other zoom options')
     if args.row_tiles and (not args.source_bounds or args.multi_zoom or args.adjacent_tiles or args.zoom != 8):
         parser.error('--row-tiles requires --source-bounds and excludes other tile modes')
+    if args.row_pan and (not args.row_tiles or not args.source_bounds):
+        parser.error('--row-pan requires --row-tiles --source-bounds')
     try:
         result = verify_recovery(args.capture, args.port, args.pid, zoom=args.zoom, multi_zoom=args.multi_zoom, adjacent_tiles=args.adjacent_tiles, row_tiles=args.row_tiles)
         if args.reopened_pid is not None:
@@ -333,7 +336,7 @@ if __name__ == '__main__':
             from product_map_trial import verify_product_map
             screen_key = 'productTab' if args.product_tab else 'productMap'
             result[screen_key] = verify_product_map(args.capture / 'reopen', args.reopened_pid,
-                                                   product_tab=args.product_tab, package=RN_FIXTURE_PACKAGE, zoom=args.zoom, multi_zoom=args.multi_zoom, adjacent_tiles=args.adjacent_tiles, row_tiles=args.row_tiles)
+                                                   product_tab=args.product_tab, package=RN_FIXTURE_PACKAGE, zoom=args.zoom, multi_zoom=args.multi_zoom, adjacent_tiles=args.adjacent_tiles, row_tiles=args.row_tiles, row_pan=args.row_pan)
             old_style = verify_saved_style(args.capture)
             if old_style != verify_saved_style(args.capture / 'reopen'):
                 raise ValueError('The saved style changed during the product map switch')

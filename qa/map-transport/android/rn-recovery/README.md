@@ -99,3 +99,14 @@ one saved/restored frame, top-to-bottom order and unchanged restored locations.
 Replay with `--row-tiles --product-tab --source-bounds --reopened-pid PID`.
 The row mode excludes the other tile/zoom modes and reports its samples under
 `rowTiles`; the previous left/right trial remains under `adjacentTiles`.
+
+`--rn-row-pan` adds two bounded vertical gestures after the row-map buttons.
+It reuses the existing row APK and its `zoom9` source inspector; each generated
+inspector file is removed before collecting a fresh observation. The host keeps
+separate `pan-south`/`pan-north` screenshots and source snapshots. The observer
+requires the same process, MapView, source and zoom, opposite latitude changes,
+at least 300 southern raster samples and four times the baseline, then a northern
+view with fewer southern samples. Replay with `--row-pan --row-tiles` and the
+usual product-tab/source-bounds arguments. This observation is not accepted if
+only the camera moves or the wider-tile criterion fails. The first native attempt
+in the November 22 progress record did not meet that criterion.
