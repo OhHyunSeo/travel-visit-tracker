@@ -12,20 +12,43 @@ PACK_ID = '9f67419a-924b-4ce1-bc84-ae7521972798'
 PID = 2451
 
 
-def capture_log(*, saved_pack_id=PACK_ID, reopening=False):
-    status = {'kind': 'complete', 'packId': PACK_ID, 'completedResourceCount': 2,
-              'requiredResourceCount': 2, 'completedTileCount': 1}
+def capture_log(*, saved_pack_id=PACK_ID, reopening=False, multi_zoom=False):
+    resources = 3 if multi_zoom else 2
+    status = {'kind': 'complete', 'packId': PACK_ID, 'completedResourceCount': resources,
+              'requiredResourceCount': resources, 'completedTileCount': resources - 1}
     report = {'pass': True, 'states': ['idle', 'awaiting-pack', 'incomplete', 'complete'],
               'createdPackId': PACK_ID, 'savedPackId': saved_pack_id, 'status': status}
     if reopening:
         report['states'] = ['complete']
         del report['createdPackId']
     prefix = f'11-17 12:00:00.000  {PID}  2455 I TripMapRnFixture: '
-    calls = 0 if reopening else 2
+    calls = 0 if reopening else resources
     return f'{prefix}TRANSPORT_READY\n{prefix}RECOVERY_REPORT calls={calls} json={json.dumps(report)}\n'.encode()
 
 
 class ReactNativeRecoveryTest(unittest.TestCase):
+    def test_multi_zoom_requires_two_completed_tiles_and_three_requests(self):
+        self.assertEqual(rn_report(capture_log(multi_zoom=True), PID, multi_zoom=True)[0], PACK_ID)
+        self.assertEqual(rn_report(capture_log(multi_zoom=True, reopening=True), PID,
+                                   multi_zoom=True, reopening=True)[0], PACK_ID)
+        with self.assertRaisesRegex(ValueError, 'transport count'):
+            rn_report(capture_log(), PID, multi_zoom=True)
+
+    def test_multi_zoom_server_requires_both_distinct_paths_in_either_tile_order(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)
+            (path / 'relay.log').write_text('RELAY_READY port=39443\nRELAY_COMPLETE connections=3 forwarded=9000\n')
+            prefix = 'STYLE_SERVER_READY port=39443\nSERVED_STYLE bytes=370\n'
+            tiles = ['SERVED_TILE path=/resource/tile/9_438_197 bytes=1880\n',
+                     'SERVED_TILE path=/resource/tile/8_219_98 bytes=1880\n']
+            server = path / 'server.log'
+            kwargs = dict(raster_tile=True, coordinates=RECOVERY_TILE, extra_coordinates=(RECOVERY_TILES[9],))
+            server.write_text(prefix + ''.join(tiles))
+            self.assertEqual(check_transport_logs(path, 39443, **kwargs), (370, 3760, 9000))
+            server.write_text(prefix + tiles[0] * 2)
+            with self.assertRaisesRegex(ValueError, 'expected raster tile'):
+                check_transport_logs(path, 39443, **kwargs)
+
     def test_zoom_nine_server_log_rejects_a_zoom_eight_tile(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary)

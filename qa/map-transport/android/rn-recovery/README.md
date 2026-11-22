@@ -68,3 +68,14 @@ Add `--source-bounds` to replay this evidence.
 selects zoom eight. Both use the same region, one style and one tile per fresh
 installation, with a distinct tile color per zoom. Replay the zoom-nine capture
 with `--zoom 9`. These trials verify separate fixed-zoom packs.
+
+`--rn-multi-zoom --rn-reopen --rn-product-tab --rn-source-bounds` uses one
+pack with the zoom-eight and zoom-nine tiles. Use the pinned three-connection
+relay built from `sdk-smoke/FixtureLoopbackRelay.java`. The download must link
+both distinct tile coordinates to the same region and report three resources,
+two tiles and three request reservations. After stopping the server, the runner
+reopens the same installation, drives the product buttons, then moves the
+restored native MapView camera to zoom eight and nine. It captures each color
+and requires the same view identity and source bounds, unchanged SQLite content
+and request journal, and zero new transport calls. Replay with `--multi-zoom`
+together with `--product-tab --source-bounds --reopened-pid PID`.

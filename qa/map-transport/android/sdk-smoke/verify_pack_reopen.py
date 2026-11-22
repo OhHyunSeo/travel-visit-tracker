@@ -32,7 +32,8 @@ def body_size(blob, compressed):
     return size
 
 
-def pack_database(directory, pack_id, port, *, metadata=METADATA, coordinates=(0, 0, 0)):
+def pack_database(directory, pack_id, port, *, metadata=METADATA, coordinates=(0, 0, 0), extra_coordinates=()):
+    expected_tiles = sorted((coordinates, *extra_coordinates))
     with closing(sqlite3.connect((directory.resolve() / DATABASE).as_uri() + '?mode=ro', uri=True)) as connection:
         if connection.execute('PRAGMA quick_check').fetchall() != [('ok',)]:
             raise ValueError('Invalid SDK offline database')
@@ -43,9 +44,9 @@ def pack_database(directory, pack_id, port, *, metadata=METADATA, coordinates=(0
             raise ValueError('Expected the original synthetic region and metadata')
         style_url = f'https://127.0.0.1:{port}/resource/style/sdk'
         template = f'https://127.0.0.1:{port}/resource/tile/{{z}}_{{x}}_{{y}}'
-        zoom = coordinates[0]
         definition = json.loads(regions[0][1])
-        if (definition.get('style_url'), definition.get('min_zoom'), definition.get('max_zoom')) != (style_url, zoom, zoom):
+        if (definition.get('style_url'), definition.get('min_zoom'), definition.get('max_zoom')) != (
+                style_url, expected_tiles[0][0], expected_tiles[-1][0]):
             raise ValueError('SDK region definition has an unexpected style or zoom')
         styles = connection.execute('''
             SELECT r.url, r.kind, r.data, r.compressed, r.expires, r.must_revalidate
@@ -53,24 +54,29 @@ def pack_database(directory, pack_id, port, *, metadata=METADATA, coordinates=(0
         ''', (pack_id,)).fetchall()
         tiles = connection.execute('''
             SELECT t.url_template, t.z, t.x, t.y, t.data, t.compressed, t.expires, t.must_revalidate
-            FROM region_tiles p JOIN tiles t ON p.tile_id = t.id WHERE p.region_id = ?
+            FROM region_tiles p JOIN tiles t ON p.tile_id = t.id WHERE p.region_id = ? ORDER BY t.z, t.x, t.y
         ''', (pack_id,)).fetchall()
     if len(styles) != 1 or styles[0][:2] != (style_url, 1) or not styles[0][2]:
         raise ValueError('Expected one stored style linked to the pack')
-    if len(tiles) != 1 or tiles[0][:4] != (template, *coordinates) or not tiles[0][4]:
-        raise ValueError('Expected one stored fixture tile linked to the pack')
+    if ([row[:4] for row in tiles] != [(template, *tile) for tile in expected_tiles]
+            or any(not row[4] for row in tiles)):
+        raise ValueError('Expected all stored fixture tiles linked to the pack')
     style, tile = styles[0], tiles[0]
-    return {
+    result = {
         'definition': definition,
         'styleSha256': hashlib.sha256(style[2]).hexdigest(),
         'tileSha256': hashlib.sha256(tile[4]).hexdigest(),
         'styleStorage': style[3:],
         'tileStorage': tile[5:],
-        'storedResourceBytes': len(style[2]) + len(tile[4]),
-        'storedTileBytes': len(tile[4]),
+        'storedResourceBytes': len(style[2]) + sum(len(row[4]) for row in tiles),
+        'storedTileBytes': sum(len(row[4]) for row in tiles),
         'styleBodyBytes': body_size(style[2], style[3]),
-        'tileBodyBytes': body_size(tile[4], tile[5]),
+        'tileBodyBytes': sum(body_size(row[4], row[5]) for row in tiles),
     }
+    if extra_coordinates:
+        result['tiles'] = [{'coordinates': row[1:4], 'sha256': hashlib.sha256(row[4]).hexdigest(),
+                            'storage': row[5:], 'bodyBytes': body_size(row[4], row[5])} for row in tiles]
+    return result
 
 
 def verify_reopen(directory, pack, port, first_pid, second_pid, *, expire_pack=False, sdk_offline=False,

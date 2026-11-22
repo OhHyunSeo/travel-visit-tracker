@@ -58,7 +58,8 @@ def frame_matches(phase, samples):
     return len(raster) >= 40 and len(region) >= 40
 
 
-def verify_product_map_frames(directory, *, product_tab=False, zoom=8):
+def verify_product_map_frames(directory, *, product_tab=False, zoom=8, multi_zoom=False):
+    zoom = 9 if multi_zoom else zoom
     phases = TAB_PHASES if product_tab else PHASES
     frames = {phase: map_frame(read_bounded(directory / f'{phase}.png', PNG_LIMIT), product_tab=product_tab, zoom=zoom)
               for phase in phases}
@@ -75,6 +76,14 @@ def verify_product_map_frames(directory, *, product_tab=False, zoom=8):
     region_overlap = len(first_region & last_region)
     if region_overlap * 5 < max(len(first_region), len(last_region)) * 4:
         raise ValueError('Region boundaries moved when restoring the saved background')
+    zoom_samples = {}
+    if multi_zoom:
+        for camera_zoom in (8, 9):
+            samples = map_frame(read_bounded(directory / f'zoom{camera_zoom}.png', PNG_LIMIT),
+                                product_tab=product_tab, zoom=camera_zoom)
+            if samples[0] != frames['saved'][0] or not frame_matches('saved', samples):
+                raise ValueError(f'Product map did not display the zoom {camera_zoom} cached tile')
+            zoom_samples[str(camera_zoom)] = len(samples[1])
     return {'dimensions': list(frames['saved'][0]), 'tileSamples': {phase: len(frames[phase][1]) for phase in phases},
             'defaultBackgroundSamples': frames['disabled'][2], 'restoredOverlap': overlap,
-            'regionOverlap': region_overlap}
+            'regionOverlap': region_overlap, **({'zoomTileSamples': zoom_samples} if multi_zoom else {})}

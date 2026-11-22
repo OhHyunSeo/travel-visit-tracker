@@ -22,6 +22,29 @@ def captures(directory):
 
 
 class ProductSourceBoundsTest(unittest.TestCase):
+    def test_both_zooms_must_use_one_restored_renderer_and_pack_range(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)
+            captures(path)
+            for phase in ('saved', 'restored', 'zoom8', 'zoom9'):
+                data = json.loads((path / 'restored-source.json').read_text())
+                data.update(phase=phase, zoom=8 if phase == 'zoom8' else 9)
+                data['source']['maxzoom'] = 9
+                (path / f'{phase}-source.json').write_text(json.dumps(data))
+            metadata = {'plan': json.dumps({'bounds': BOUNDS, 'minZoom': 8, 'maxZoom': 9})}
+            style = json.dumps({'sources': {'fixture': {**SOURCE, 'maxzoom': 9}}})
+            self.assertEqual(verify_source_bounds(path, 1234, metadata, style, multi_zoom=True)['zoomRange'], [8, 9])
+            file = path / 'zoom8-source.json'
+            data = json.loads(file.read_text())
+            data['zoom'] = 9
+            file.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError, 'requested zoom'):
+                verify_source_bounds(path, 1234, metadata, style, multi_zoom=True)
+            data.update(zoom=8, viewIdentity=9999)
+            file.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError, 'same restored MapView'):
+                verify_source_bounds(path, 1234, metadata, style, multi_zoom=True)
+
     def test_zoom_nine_must_reach_the_camera_and_source(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary)

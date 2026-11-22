@@ -1,6 +1,34 @@
 # Android 개발·검증 기록
 
-마지막 갱신: 2026-11-21, Asia/Seoul.
+마지막 갱신: 2026-11-22, Asia/Seoul.
+
+## 11월 22일 P3-02 후속: 한 팩의 줌 8·9 저장과 오프라인 표시
+
+Android `4e91a1a`에서 한 합성 팩에 줌 8의 `8/219/98`과 줌 9의 `9/438/197`을 함께 넣는 시험을 추가했습니다. 제품 소스는 공통 `a7b0dad`로 유지했고, 실제 지도 탭·RegionMap·저장 스타일 조회 파일을 해당 Git 원본과 대조했습니다. 제품 코드와 개인 자료는 수정하지 않았습니다. 시험 앱만 카메라 줌을 바꾸는 네이티브 검사 경로를 추가했습니다. 이전 줌별 독립 팩 시험과 이번 단일 팩 시험은 별도 근거입니다.
+
+Android 준비·대조 151개와 SDK 수집 45개, 총 196개가 통과했습니다. 같은 팩에 연결되지 않은 두 번째 타일, 중복된 서버 타일 경로, 잘못된 완료·요청 수와 요청 장부, 다른 줌의 색, 줌 변경 중 MapView 교체를 거절하는 회귀를 포함했습니다. 수정한 판독기로 이전 줌 8·9 수집본도 각각 다시 통과했습니다. Mac 루프백 HTTPS에서는 스타일의 줌 범위 8–9, 타일 두 장의 크기·색·서로 다른 해시와 허용 밖 줌 0 요청 거절을 확인했습니다. 사전 검사 스크립트의 HTTP 연결 종료 방식 오류는 수정해 재실행했습니다.
+
+Node 24.21.0·JDK 17과 기존 전용 Gradle 캐시로 오프라인 `:app:assembleDebug`가 4분 42초, 341개 작업(실행 28개)으로 통과했습니다. 첫 실행은 제한된 환경에서 추가 실행 격리를 만들 수 없어 빌드 시작 전에 끝났고, 승인된 실행에서 SDK 쓰기 차단을 유지했습니다. 원본 APK 135,891,140바이트는 128MiB 시험 한도를 넘으므로 기존 방식으로 ZIP 여백을 정리하고 같은 시험 키로 다시 서명했습니다. 비서명 내부 파일 1,313개의 내용 SHA-256·압축 방식, 서명 인증서와 16KiB native 정렬이 일치했습니다. 최종 APK는 131,012,875바이트, SHA-256 `8aa1f6a53f6859587e455ddbc909415bf48fbfeeb0bda90fcee294d7eeb6cae3`입니다. Git 제외 `qa/map-transport/android/.build/rn-recovery.G55xBKEt/multi-zoom-normalized.apk`에 보존했습니다. 이전 줌 선택 APK도 보존했습니다.
+
+전용 10GiB API 37 에뮬레이터의 새 QA 설치에서 PID 4423이 팩 `e90d207c-ed32-4140-9225-42ea8c895c55`를 만들었습니다. Expo SQLite 작업·MapLibre SQLite의 단일 region·연결된 두 타일을 대조했습니다. 완료·필요 리소스는 각각 3개, 타일은 2개였습니다. 서버 응답과 전송 진입은 각각 3건이었고 장부도 스타일 1건·타일 2건, 총 12,288바이트 예약이었습니다. 스타일 본문 370바이트, 타일 본문 각 1,880바이트와 저장 DB의 길이가 일치했습니다.
+
+서버·중계를 종료한 뒤 같은 설치를 새 PID 4849로 열었습니다. 실제 제품 탭의 기본 경계 → 저장 지도 → 경계 지도 → 저장 지도 복귀에서 파란 타일 표본은 0 → 2,067 → 0 → 2,067개였습니다. 이어 복귀한 동일 MapView(검사 ID 171780705)의 실제 카메라를 줌 8·9로 바꿨고 주황 6,300개·파랑 2,067개 표본을 확인했습니다. 두 줌의 소스는 팩 bounds·원래 타일 URL·8–9 범위를 유지했습니다. 기본·경계 전용 화면에는 저장 raster 소스가 없었습니다. 이 bounds 검사는 요청 대상 소스 범위이며 타일 이미지 자체를 지역 경계 모양으로 잘라내는 검증은 아닙니다.
+
+재실행 전후 팩 ID·정의·메타데이터와 스타일·두 타일 해시·저장 정보가 같았습니다. 새 전송 호출·서버 응답·요청 예약은 각각 0건, 방문 DB 생성도 0건이었습니다. 기기 수집 명령과 독립 재검증이 모두 종료 코드 0으로 끝났습니다. Git 제외 원문은 `docs/test-results/android-map-transport-20261114-checkpoint/rn-multi.fYILpsmS/`이며 `result.json`과 `replay-result.json`에 판정이 있습니다. 합성 서버 사전 검사의 최종 자료는 같은 상위 폴더의 `rn-multi-preflight.m4j3qktr/`입니다.
+
+빌드 후 재생성 가능한 Gradle 변환 결과·앱의 병합/기호 제거 native 중복 파일 합계 약 3.57GiB를 정리했습니다. 시험 서버·에뮬레이터의 종료, 39443·5560·5561 포트 닫힘과 전용 볼륨·임시 폴더 제거를 확인했습니다. 최종 여유 공간은 약 23GiB였으며 다른 작업을 포함한 Mac 전체 여유 공간과 삭제한 파일 크기는 구분합니다. 재사용할 의존성·시험 빌드 입력·기존 APK·증거는 보존했습니다.
+
+공유 300분 창 잔여는 시작 97%, 빌드 시작 83%, 기기 시험 시작 74%, 독립 재검증 후 64%, 저장 직전 60%였습니다. Git 저장 지점은 이 항목의 커밋입니다. 다음 작은 범위는 같은 줌에서 두 인접 타일에 걸친 합성 팩의 저장·재실행·캐시 표시입니다. 실제 공급원 다운로드, vector/glyph/sprite, 더 넓은 범위·줌, 제품 앱 전체 흐름, Android 실기기와 Release는 미실행입니다. 공통/iOS의 다운로드 전 승인·요청 한도 연결은 이 고정 제품 버전 시험에 포함하지 않았습니다. P3-02와 G1~G4의 완료 상태는 올리지 않았습니다.
+
+통과한 주요 명령(저장소 루트):
+
+```sh
+python3 -B -m unittest discover -s qa/map-transport/android -p 'test_*.py'
+python3 -B -m unittest discover -s qa/map-transport/android/sdk-smoke -p 'test_*.py'
+python3 -B qa/map-transport/android/rn_recovery.py docs/test-results/android-map-transport-20261114-checkpoint/rn-multi.fYILpsmS/capture --port 39443 --pid 4423 --reopened-pid 4849 --product-tab --source-bounds --multi-zoom
+```
+
+기기 수집은 `avd_boot_component.py --probe-adb --rn-reopen --rn-product-tab --rn-source-bounds --rn-multi-zoom --rn-recovery RELAY JAVA IDENTITY CAPTURE`에 SDK 위치, 위 서명 APK와 해시를 전달했습니다. 전체 앱 `verify-cloud.sh`, 재설치된 개인 기기와 실제 공급원 검사는 실행하지 않았습니다. QA 전용 Kotlin 변경은 이 Debug APK에만 재빌드·검증했습니다.
 
 ## 11월 21일 P3-02 후속: 줌 8과 줌 9의 독립 팩 비교
 

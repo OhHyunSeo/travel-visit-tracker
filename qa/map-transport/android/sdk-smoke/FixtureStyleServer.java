@@ -27,26 +27,29 @@ public final class FixtureStyleServer {
     boolean expire = args.length == 4 && "--expire-pack".equals(args[3]);
     boolean recover = args.length == 4 && "--online-recovery".equals(args[3]);
     boolean zoomNine = args.length == 4 && "--rn-recovery-zoom9".equals(args[3]);
-    boolean rn = args.length == 4 && ("--rn-recovery".equals(args[3]) || zoomNine);
+    boolean multi = args.length == 4 && "--rn-multi-zoom".equals(args[3]);
+    boolean rn = args.length == 4 && ("--rn-recovery".equals(args[3]) || zoomNine || multi);
     if (!(args.length == 2 || (raster && (args.length == 3 || expire || recover || rn))) || !args[1].matches("[1-9][0-9]{3,4}")) {
-      throw new IllegalArgumentException("Usage: FixtureStyleServer <fixture.p12> <port> [--raster-tile [--expire-pack | --online-recovery | --rn-recovery | --rn-recovery-zoom9]]");
+      throw new IllegalArgumentException("Usage: FixtureStyleServer <fixture.p12> <port> [--raster-tile [--expire-pack | --online-recovery | --rn-recovery | --rn-recovery-zoom9 | --rn-multi-zoom]]");
     }
     int port = Integer.parseInt(args[1]);
     if (port < 1024 || port > 65535) throw new IllegalArgumentException("Invalid fixture port");
-    HttpsServer server = bind(Path.of(args[0]), port, raster, expire, recover, rn, zoomNine);
+    HttpsServer server = bind(Path.of(args[0]), port, raster, expire, recover, rn, zoomNine, multi);
     Runtime.getRuntime().addShutdownHook(new Thread(() -> server.stop(0)));
     server.start();
     System.out.println("STYLE_SERVER_READY port=" + port);
   }
 
   static HttpsServer bind(Path keyStore, int port) throws Exception {
-    return bind(keyStore, port, false, false, false, false, false);
+    return bind(keyStore, port, false, false, false, false, false, false);
   }
 
-  private static HttpsServer bind(Path keyStore, int port, boolean raster, boolean expire, boolean recover, boolean rn, boolean zoomNine) throws Exception {
+  private static HttpsServer bind(Path keyStore, int port, boolean raster, boolean expire, boolean recover, boolean rn, boolean zoomNine, boolean multi) throws Exception {
     String tilePath = zoomNine ? "/resource/tile/9_438_197" : rn ? "/resource/tile/8_219_98" : "/resource/tile/0_0_0";
-    byte[] style = raster ? rasterStyle(port, zoomNine ? 9 : rn ? 8 : 0) : STYLE;
+    int minZoom = zoomNine ? 9 : rn ? 8 : 0;
+    byte[] style = raster ? rasterStyle(port, minZoom, multi ? 9 : minZoom) : STYLE;
     byte[] tile = raster ? rasterTile(recover || zoomNine ? new Color(52, 121, 206) : new Color(217, 93, 47)) : null;
+    byte[] secondTile = multi ? rasterTile(new Color(52, 121, 206)) : null;
     char[] password = "fixture-only-password".toCharArray();
     KeyStore keys = KeyStore.getInstance("PKCS12");
     try (InputStream input = Files.newInputStream(keyStore)) {
@@ -63,7 +66,8 @@ public final class FixtureStyleServer {
       try {
         exchange.getResponseHeaders().set("Connection", "close");
         String path = exchange.getRequestURI().toASCIIString();
-        boolean tileRequest = raster && tilePath.equals(path);
+        boolean second = multi && "/resource/tile/9_438_197".equals(path);
+        boolean tileRequest = raster && (tilePath.equals(path) || second);
         if (!"/resource/style/sdk".equals(path) && !tileRequest) {
           System.out.println("REJECTED_STYLE reason=path");
           exchange.sendResponseHeaders(404, -1);
@@ -84,12 +88,12 @@ public final class FixtureStyleServer {
           exchange.sendResponseHeaders(400, -1);
           return;
         }
-        byte[] body = tileRequest ? tile : style;
+        byte[] body = tileRequest ? second ? secondTile : tile : style;
         exchange.getResponseHeaders().set("Content-Type", tileRequest ? "image/png" : "application/json");
         exchange.getResponseHeaders().set("Cache-Control", expire ? "max-age=1" : raster ? "max-age=300" : "no-store");
         exchange.sendResponseHeaders(200, body.length);
         exchange.getResponseBody().write(body);
-        String resource = tileRequest ? "TILE path=" + tilePath : "STYLE";
+        String resource = tileRequest ? "TILE path=" + path : "STYLE";
         System.out.println("SERVED_" + resource + " bytes=" + body.length);
       } finally {
         exchange.close();
@@ -98,10 +102,10 @@ public final class FixtureStyleServer {
     return server;
   }
 
-  private static byte[] rasterStyle(int port, int zoom) {
+  private static byte[] rasterStyle(int port, int minZoom, int maxZoom) {
     return ("{\"version\":8,\"center\":[0,0],\"zoom\":0,\"sources\":{\"fixture\":{\"type\":\"raster\","
         + "\"tiles\":[\"https://127.0.0.1:" + port + "/resource/tile/{z}_{x}_{y}\"],\"tileSize\":512,\"minzoom\":"
-        + zoom + ",\"maxzoom\":" + zoom + "}},"
+        + minZoom + ",\"maxzoom\":" + maxZoom + "}},"
         + "\"layers\":[{\"id\":\"fixture-background\",\"type\":\"background\",\"paint\":{\"background-color\":\"#177878\"}},"
         + "{\"id\":\"fixture-raster\",\"type\":\"raster\",\"source\":\"fixture\",\"paint\":{\"raster-fade-duration\":0}}]}")
         .getBytes(StandardCharsets.UTF_8);

@@ -1,4 +1,5 @@
 import hashlib
+import json
 from pathlib import Path
 import sqlite3
 import struct
@@ -38,6 +39,22 @@ class PackReopenTest(unittest.TestCase):
         content = pack_database(self.root, 1, 39443)
         self.assertEqual(content['styleSha256'], hashlib.sha256(b'\x11').hexdigest())
         self.assertEqual(content['tileSha256'], hashlib.sha256(b'\x22').hexdigest())
+
+    def test_two_zooms_must_be_linked_to_the_same_pack(self):
+        with sqlite3.connect(self.root / DATABASE) as connection:
+            connection.execute('UPDATE regions SET definition=?', (json.dumps({
+                'style_url': 'https://127.0.0.1:39443/resource/style/sdk', 'min_zoom': 8, 'max_zoom': 9}),))
+            connection.execute('UPDATE tiles SET z=8,x=219,y=98')
+            connection.execute('INSERT INTO tiles SELECT 2,url_template,9,438,197,?,0,10,0 FROM tiles WHERE id=1', (b'blue',))
+            connection.execute('INSERT INTO region_tiles VALUES (1,2)')
+        kwargs = dict(coordinates=(8,219,98), extra_coordinates=((9,438,197),))
+        result = pack_database(self.root, 1, 39443, **kwargs)
+        self.assertEqual([tile['coordinates'] for tile in result['tiles']], [(8,219,98), (9,438,197)])
+        self.assertEqual(result['tileBodyBytes'], 5)
+        with sqlite3.connect(self.root / DATABASE) as connection:
+            connection.execute('DELETE FROM region_tiles WHERE tile_id=2')
+        with self.assertRaisesRegex(ValueError, 'linked to the pack'):
+            pack_database(self.root, 1, 39443, **kwargs)
 
     def test_rejects_tile_not_linked_to_pack(self):
         with sqlite3.connect(self.root / DATABASE) as connection:

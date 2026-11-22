@@ -12,14 +12,14 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
-/** Relays up to two synthetic TLS connections without terminating TLS in the guest. */
+/** Relays up to three synthetic TLS connections without terminating TLS in the guest. */
 public final class FixtureLoopbackRelay {
   static final int DIRECTION_LIMIT = 65_536;
 
   public static void main(String[] args) throws IOException, InterruptedException {
-    if ((args.length != 1 && !(args.length == 2 && "--raster-tile".equals(args[1])))
+    if ((args.length != 1 && !(args.length == 2 && ("--raster-tile".equals(args[1]) || "--multi-zoom".equals(args[1]))))
         || !args[0].matches("[1-9][0-9]{3,4}")) {
-      throw new IllegalArgumentException("Usage: FixtureLoopbackRelay <fixture port> [--raster-tile]");
+      throw new IllegalArgumentException("Usage: FixtureLoopbackRelay <fixture port> [--raster-tile | --multi-zoom]");
     }
     int port = Integer.parseInt(args[0]);
     if (port < 1024 || port > 65535) throw new IllegalArgumentException("Invalid fixture port");
@@ -31,9 +31,10 @@ public final class FixtureLoopbackRelay {
         System.out.println("RELAY_COMPLETE forwarded=" + relayOnce(listener, upstream, 30_000));
       } else {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
-        int bytes = relayConnection(listener, upstream, deadline, false);
-        bytes += relayConnection(listener, upstream, deadline, true);
-        System.out.println("RELAY_COMPLETE connections=2 forwarded=" + bytes);
+        int connections = "--multi-zoom".equals(args[1]) ? 3 : 2;
+        int bytes = 0;
+        for (int i = 0; i < connections; i++) bytes += relayConnection(listener, upstream, deadline, i == connections - 1);
+        System.out.println("RELAY_COMPLETE connections=" + connections + " forwarded=" + bytes);
       }
     }
   }

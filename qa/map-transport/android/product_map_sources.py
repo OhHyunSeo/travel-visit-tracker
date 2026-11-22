@@ -11,11 +11,12 @@ from verify_device_capture import LOG_LIMIT, read_bounded
 from product_map_frames import TAB_PHASES
 
 
-def capture_source(command, destination, phase, package, activity):
+def capture_source(command, destination, phase, package, activity, *, camera_zoom=None):
     import time
 
+    args = [] if camera_zoom is None else ['--ei', 'fixture-camera-zoom', str(camera_zoom)]
     launch = command(4096, 'shell', 'am', 'start', '-W', '--activity-single-top', '-n', activity,
-                     '--es', 'fixture-source-phase', phase)
+                     '--es', 'fixture-source-phase', phase, *args)
     write_capture(destination / f'{phase}-source-launch.txt', launch)
     if b'Status: ok' not in launch:
         raise ValueError('Source inspection did not reach the active product map')
@@ -31,12 +32,14 @@ def capture_source(command, destination, phase, package, activity):
     raise ValueError('Active product map source snapshot was not written')
 
 
-def verify_source_bounds(directory, pid, metadata, style_json):
+def verify_source_bounds(directory, pid, metadata, style_json, *, multi_zoom=False):
     plan = json.loads(metadata['plan'])
     expected_bounds = plan['bounds']
     original = json.loads(style_json)['sources']['fixture']
     checked = {}
-    for phase in TAB_PHASES:
+    phases = (*TAB_PHASES, 'zoom8', 'zoom9') if multi_zoom else TAB_PHASES
+    views = {}
+    for phase in phases:
         snapshot = json.loads(read_bounded(directory / f'{phase}-source.json', LOG_LIMIT))
         if (not isinstance(snapshot, dict) or snapshot.get('pid') != pid or snapshot.get('phase') != phase
                 or snapshot.get('connected') is not False or not isinstance(snapshot.get('viewIdentity'), int)
@@ -60,8 +63,15 @@ def verify_source_bounds(directory, pid, metadata, style_json):
         camera_zoom = snapshot.get('zoom')
         if type(camera_zoom) not in (int, float) or not plan['minZoom'] <= camera_zoom <= plan['maxZoom']:
             raise ValueError('Renderer camera zoom is outside the downloaded pack')
+        if phase.startswith('zoom') and camera_zoom != int(phase[-1]):
+            raise ValueError('Renderer camera did not reach the requested zoom')
         checked[phase] = bounds
+        views[phase] = snapshot['viewIdentity']
     if checked['saved'] != checked['restored']:
         raise ValueError('Restoring the saved map changed its native tile bounds')
+    if multi_zoom and ((plan['minZoom'], plan['maxZoom']) != (8, 9) or
+                       any(views[phase] != views['restored'] for phase in ('zoom8', 'zoom9'))):
+        raise ValueError('Both zooms must use the same restored MapView and multi-zoom pack')
     return {'bounds': checked['saved'], 'zoomRange': [plan['minZoom'], plan['maxZoom']],
-            'phases': list(TAB_PHASES), 'tileUrlsPreserved': True}
+            'phases': list(phases), 'tileUrlsPreserved': True,
+            **({'zoomViewIdentity': views['restored']} if multi_zoom else {})}

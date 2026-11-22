@@ -12,7 +12,9 @@ import org.maplibre.android.MapLibre
 class RecoveryActivity : ReactActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        intent.getStringExtra("fixture-source-phase")?.let { FixtureSourceSnapshot.capture(this, it) }
+        intent.getStringExtra("fixture-source-phase")?.let {
+            FixtureSourceSnapshot.capture(this, it, intent.getIntExtra("fixture-camera-zoom", -1))
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -40,6 +42,7 @@ class RecoveryActivity : ReactActivity() {
                 val zoom = intent.getIntExtra("fixture-zoom", 8)
                 require(zoom in 8..9)
                 putInt("fixtureZoom", zoom)
+                putBoolean("fixtureMultiZoom", intent.getBooleanExtra("fixture-multi-zoom", false))
             }
         },
     )

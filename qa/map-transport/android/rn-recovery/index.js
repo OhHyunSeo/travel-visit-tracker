@@ -11,14 +11,14 @@ import { ProductMapTrial } from './product-map-trial';
 
 const mapRoutes = require.context('./app');
 
-function fixtureStyle(origin, zoom) {
+function fixtureStyle(origin, zoom, multiZoom) {
   return JSON.stringify({
     version: 8,
     center: [0, 0],
     zoom: 0,
     sources: { fixture: {
       type: 'raster', tiles: [`${origin}/resource/tile/{z}_{x}_{y}`],
-      tileSize: 512, minzoom: zoom, maxzoom: zoom,
+      tileSize: 512, minzoom: multiZoom ? 8 : zoom, maxzoom: multiZoom ? 9 : zoom,
     } },
     layers: [
       { id: 'fixture-background', type: 'background', paint: { 'background-color': '#177878' } },
@@ -27,7 +27,7 @@ function fixtureStyle(origin, zoom) {
   });
 }
 
-async function verifyRecovery(origin, reopening, zoom) {
+async function verifyRecovery(origin, reopening, zoom, multiZoom) {
   const states = [];
   const publish = (result) => NativeModules.TPRecoveryReport.publish(JSON.stringify({ states, ...result }));
   try {
@@ -43,9 +43,10 @@ async function verifyRecovery(origin, reopening, zoom) {
       return saved.packId;
     }
     if (initial.kind !== 'idle') throw new Error('Expected an empty operation database');
-    const style = fixtureStyle(origin, zoom);
+    const style = fixtureStyle(origin, zoom, multiZoom);
     const styleSha256 = await digestStringAsync(CryptoDigestAlgorithm.SHA256, style);
-    const plan = planBackgroundMap(regions[0].id, { styleSha256, tileVersion: '20261028_120000_pt' }, zoom, zoom);
+    const plan = planBackgroundMap(regions[0].id, { styleSha256, tileVersion: '20261028_120000_pt' },
+      multiZoom ? 8 : zoom, multiZoom ? 9 : zoom);
     const metadata = createBackgroundMapPackMetadata(plan, {
       operationId: '9729af8d-20ac-42db-ae59-3773944d5530',
       tileJsonSha256: 'b'.repeat(64), localStyleSha256: styleSha256,
@@ -66,8 +67,9 @@ async function verifyRecovery(origin, reopening, zoom) {
       if (states.at(-1) !== status.kind) states.push(status.kind);
       if (status.kind === 'complete') {
         const saved = await store.current();
-        if (status.packId !== pack.id || saved?.packId !== pack.id || status.completedResourceCount !== 2 ||
-            status.requiredResourceCount !== 2 || status.completedTileCount !== 1)
+        const resources = multiZoom ? 3 : 2;
+        if (status.packId !== pack.id || saved?.packId !== pack.id || status.completedResourceCount !== resources ||
+            status.requiredResourceCount !== resources || status.completedTileCount !== resources - 1)
           throw new Error('Recovered ID or resource counts differ');
         publish({ pass: true, status, createdPackId: pack.id, savedPackId: saved.packId });
         return;
@@ -81,15 +83,15 @@ async function verifyRecovery(origin, reopening, zoom) {
   }
 }
 
-function RecoveryEntry({ origin, reopening, productMap, productTab, fixtureZoom = 8 }) {
+function RecoveryEntry({ origin, reopening, productMap, productTab, fixtureZoom = 8, fixtureMultiZoom = false }) {
   const [packId, setPackId] = useState(null);
   useEffect(() => {
     let active = true;
-    void verifyRecovery(origin, reopening, fixtureZoom).then((pack) => {
+    void verifyRecovery(origin, reopening, fixtureZoom, fixtureMultiZoom).then((pack) => {
       if (active && (productMap || productTab) && pack) setPackId(pack);
     });
     return () => { active = false; };
-  }, [origin, reopening, productMap, productTab, fixtureZoom]);
+  }, [origin, reopening, productMap, productTab, fixtureZoom, fixtureMultiZoom]);
   if (packId && productTab) return <ExpoRoot context={mapRoutes} location="/" />;
   if (packId) return <ProductMapTrial packId={packId} />;
   return <Text>저장 지도 팩 복구 시험</Text>;

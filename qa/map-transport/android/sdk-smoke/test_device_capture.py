@@ -8,7 +8,7 @@ from zipfile import ZipFile
 
 from PIL import Image
 
-from verify_device_capture import JOURNAL_RECORD, verify
+from verify_device_capture import JOURNAL_RECORD, check_journal, verify
 
 
 PORT = 39443
@@ -128,6 +128,16 @@ class CaptureTest(unittest.TestCase):
         self.assertEqual((result["tilePath"], result["tileAttempts"], result["tileBodyBytes"]),
                          ("/resource/tile/0_0_0", 1, 1880))
         self.assertEqual(result["reservedBodyBytes"], 8192)
+
+    def test_multi_zoom_journal_requires_three_sequential_reservations(self):
+        self.prepare_raster_capture()
+        with self.journal.open('ab') as journal:
+            journal.write(checked(struct.pack('>IIQI', 3, 1, 12288, 2)))
+        check_journal(self.journal, raster_tile=True, tile_count=2)
+        data = self.journal.read_bytes()
+        self.journal.write_bytes(data[:-JOURNAL_RECORD.size] + checked(struct.pack('>IIQI', 3, 1, 8192, 1)))
+        with self.assertRaisesRegex(ValueError, 'expected tile reservations'):
+            check_journal(self.journal, raster_tile=True, tile_count=2)
 
     def test_rejects_background_frame_after_tile_response(self):
         self.prepare_raster_capture()

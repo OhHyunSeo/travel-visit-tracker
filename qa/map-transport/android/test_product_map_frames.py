@@ -20,6 +20,20 @@ def frame(path, tile=None, background=BACKGROUND_RGB, region=SELECTED_REGION_RGB
 
 
 class ProductMapFramesTest(unittest.TestCase):
+    def test_multi_zoom_frames_require_each_zoom_color(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)
+            for phase in ('initial', 'disabled'):
+                frame(path / f'{phase}.png', region=UNSELECTED_COLORS[0])
+            for phase in ('saved', 'restored', 'zoom9'):
+                frame(path / f'{phase}.png', (40, 150, 260, 515), region=(52, 117, 195), raster=(52, 121, 206))
+            frame(path / 'zoom8.png', (40, 150, 260, 515), region=UNSELECTED_COLORS[1])
+            result = verify_product_map_frames(path, product_tab=True, multi_zoom=True)
+            self.assertEqual(set(result['zoomTileSamples']), {'8', '9'})
+            frame(path / 'zoom8.png', (40, 150, 260, 515), region=(52, 117, 195), raster=(52, 121, 206))
+            with self.assertRaisesRegex(ValueError, 'zoom 8 cached tile'):
+                verify_product_map_frames(path, product_tab=True, multi_zoom=True)
+
     def test_zoom_nine_uses_its_own_tile_color(self):
         with tempfile.TemporaryDirectory() as directory:
             capture = Path(directory)

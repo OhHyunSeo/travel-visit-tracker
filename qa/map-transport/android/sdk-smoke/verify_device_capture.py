@@ -49,19 +49,19 @@ def read_apk(path, limit=32 * 1024 * 1024):
     return int(value), hashlib.sha256(data).hexdigest()
 
 
-def check_transport_logs(capture, port, *, raster_tile=False, ordered=True, coordinates=(0, 0, 0)):
+def check_transport_logs(capture, port, *, raster_tile=False, ordered=True, coordinates=(0, 0, 0), extra_coordinates=()):
     server = read_bounded(capture / "server.log", LOG_LIMIT).decode().splitlines()
     if raster_tile:
-        if len(server) != 3 or server[0] != f"STYLE_SERVER_READY port={port}":
-            raise ValueError("Expected one style and one tile in the server log")
-        style_line, tile_line = server[1:] if ordered else sorted(server[1:])
+        if len(server) != 3 + len(extra_coordinates) or server[0] != f"STYLE_SERVER_READY port={port}":
+            raise ValueError("Expected one style and all tiles in the server log")
+        style_line, *tile_lines = server[1:] if ordered else sorted(server[1:])
         style = re.fullmatch(r"SERVED_STYLE bytes=([1-9][0-9]{0,3})", style_line)
-        tile_path = '_'.join(map(str, coordinates))
-        tile = re.fullmatch(rf"SERVED_TILE path=/resource/tile/{tile_path} bytes=([1-9][0-9]{{0,3}})", tile_line)
-        if not style or not tile:
+        tiles = [re.fullmatch(r"SERVED_TILE path=/resource/tile/([0-9_]+) bytes=([1-9][0-9]{0,3})", line) for line in tile_lines]
+        paths = sorted('_'.join(map(str, tile)) for tile in (coordinates, *extra_coordinates))
+        if not style or any(not tile for tile in tiles) or sorted(tile[1] for tile in tiles) != paths:
             raise ValueError("Server did not record the expected raster tile after the style")
-        style_bytes, tile_bytes = int(style[1]), int(tile[1])
-        if max(style_bytes, tile_bytes) > RESERVATION:
+        style_bytes, tile_bytes = int(style[1]), sum(int(tile[2]) for tile in tiles)
+        if max(style_bytes, *(int(tile[2]) for tile in tiles)) > RESERVATION:
             raise ValueError("A synthetic response exceeded its reservation")
     elif server == [f"STYLE_SERVER_READY port={port}", f"SERVED_STYLE bytes={STYLE_BYTES}"]:
         style_bytes, tile_bytes = STYLE_BYTES, 0
@@ -71,9 +71,9 @@ def check_transport_logs(capture, port, *, raster_tile=False, ordered=True, coor
     relay = read_bounded(capture / "relay.log", LOG_LIMIT).decode().splitlines()
     if len(relay) != 2 or relay[0] != f"RELAY_READY port={port}":
         raise ValueError("Relay must record one ready and completed connection")
-    pattern = r"RELAY_COMPLETE connections=2 forwarded=([0-9]{1,6})" if raster_tile else r"RELAY_COMPLETE forwarded=([0-9]{1,6})"
+    connections = 2 + len(extra_coordinates) if raster_tile else 1
+    pattern = rf"RELAY_COMPLETE connections={connections} forwarded=([0-9]{{1,6}})" if raster_tile else r"RELAY_COMPLETE forwarded=([0-9]{1,6})"
     forwarded = re.fullmatch(pattern, relay[1])
-    connections = 2 if raster_tile else 1
     if not forwarded or not style_bytes + tile_bytes < int(forwarded[1]) <= connections * 2 * 65_536:
         raise ValueError("Invalid completed relay byte count")
     return style_bytes, tile_bytes, int(forwarded[1])
@@ -124,8 +124,8 @@ def check_app_log(log, pid, require_render_event, *, raster_tile=False):
     return rendered
 
 
-def check_journal(path, *, raster_tile=False):
-    expected_size = JOURNAL_HEADER.size + JOURNAL_RECORD.size * (2 if raster_tile else 1)
+def check_journal(path, *, raster_tile=False, tile_count=1):
+    expected_size = JOURNAL_HEADER.size + JOURNAL_RECORD.size * (1 + tile_count if raster_tile else 1)
     data = read_bounded(path, expected_size)
     if len(data) != expected_size:
         raise ValueError("Journal must contain exactly one complete reservation")
@@ -136,9 +136,11 @@ def check_journal(path, *, raster_tile=False):
     if JOURNAL_RECORD.unpack(record) != (1, 0, RESERVATION, 0, zlib.crc32(record[:-4])):
         raise ValueError("Journal does not contain one style reservation")
     if raster_tile:
-        tile = data[-JOURNAL_RECORD.size:]
-        if JOURNAL_RECORD.unpack(tile) != (2, 1, 2 * RESERVATION, 1, zlib.crc32(tile[:-4])):
-            raise ValueError("Journal does not contain one tile reservation after the style")
+        for number in range(1, tile_count + 1):
+            offset = JOURNAL_HEADER.size + number * JOURNAL_RECORD.size
+            tile = data[offset:offset + JOURNAL_RECORD.size]
+            if JOURNAL_RECORD.unpack(tile) != (number + 1, 1, (number + 1) * RESERVATION, number, zlib.crc32(tile[:-4])):
+                raise ValueError("Journal does not contain the expected tile reservations after the style")
 
 
 def check_render(path, *, raster_tile=False, expected_rgb=None):

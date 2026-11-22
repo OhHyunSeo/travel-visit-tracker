@@ -25,6 +25,7 @@ RN_TAB_APK_LIMIT = 128 * 1024**2
 FIXTURE_RELAY_PATH = '/data/local/tmp/trip-map-transport-relay.jar'
 FIXTURE_RELAY_SHA256 = 'b01869854c2fdc4905c7b28af95af2da7f0c6ca39088e011d7ec4ece63516968'
 RASTER_RELAY_SHA256 = '9bf441df427e903309f459f917f802b8d31c612ccf33c789282fd3f941a02b94'
+MULTI_RELAY_SHA256 = 'aa12987057d53277ad6bb319d4d953cde199e34ef2a76b1414dcd20737fca74f'
 
 
 def receive_exact(connection, length):
@@ -220,7 +221,7 @@ def install_fixture(key_path, apk, *, expected_hash=FIXTURE_APK_SHA256, rn_recov
 
 
 @contextmanager
-def pack_server(java, identity, source, port, log_path, *, expire_pack, online_recovery=False, rn_recovery=False, rn_zoom=8):
+def pack_server(java, identity, source, port, log_path, *, expire_pack, online_recovery=False, rn_recovery=False, rn_zoom=8, multi_zoom=False):
     with log_path.open('xb') as log:
         arguments = [java, '-Djava.awt.headless=true', source, identity, str(port), '--raster-tile']
         if expire_pack:
@@ -228,7 +229,7 @@ def pack_server(java, identity, source, port, log_path, *, expire_pack, online_r
         if online_recovery:
             arguments.append('--online-recovery')
         if rn_recovery:
-            arguments.append('--rn-recovery-zoom9' if rn_zoom == 9 else '--rn-recovery')
+            arguments.append('--rn-multi-zoom' if multi_zoom else '--rn-recovery-zoom9' if rn_zoom == 9 else '--rn-recovery')
         process = subprocess.Popen(arguments, stdout=log, stderr=log)
         try:
             deadline = time.monotonic() + 15
@@ -417,12 +418,12 @@ def capture_online_recovery(command, online, port, pack_id, pid):
         raise ValueError('The online app process changed during capture')
 
 
-def stage_relay(key_path, relay, raster_tile):
+def stage_relay(key_path, relay, raster_tile, *, multi_zoom=False):
     if relay.is_symlink() or relay.stat().st_size > 16_384:
         raise ValueError('Unexpected fixture relay')
     with relay.open('rb') as stream:
         relay_data = stream.read(16_385)
-    relay_hash = RASTER_RELAY_SHA256 if raster_tile else FIXTURE_RELAY_SHA256
+    relay_hash = MULTI_RELAY_SHA256 if multi_zoom else RASTER_RELAY_SHA256 if raster_tile else FIXTURE_RELAY_SHA256
     if sha256(relay_data).hexdigest() != relay_hash:
         raise ValueError('Fixture relay hash changed')
     stage = (f'umask 077; head -c {len(relay_data)} > {FIXTURE_RELAY_PATH} && '

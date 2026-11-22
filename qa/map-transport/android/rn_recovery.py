@@ -32,7 +32,8 @@ RN_LOG = re.compile(r'\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+\s+(\d+)\s+\d+\s+I\s+'
 UUID = re.compile(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}')
 
 
-def rn_report(log, pid, *, reopening=False):
+def rn_report(log, pid, *, reopening=False, multi_zoom=False):
+    resources = 3 if multi_zoom else 2
     messages = []
     for line in log.decode().splitlines():
         if TAG + ':' not in line:
@@ -60,8 +61,8 @@ def rn_report(log, pid, *, reopening=False):
         raise ValueError('Product saved pack identity differs from the SDK identity')
     if reopening and 'createdPackId' in report:
         raise ValueError('The reopened process created a pack')
-    if report.get('status') != {'kind': 'complete', 'packId': pack_id, 'completedResourceCount': 2,
-                               'requiredResourceCount': 2, 'completedTileCount': 1} or int(match[1]) != (0 if reopening else 2):
+    if report.get('status') != {'kind': 'complete', 'packId': pack_id, 'completedResourceCount': resources,
+                               'requiredResourceCount': resources, 'completedTileCount': resources - 1} or int(match[1]) != (0 if reopening else resources):
         raise ValueError('Product completion or fixture transport count differs')
     return pack_id, report['states']
 
@@ -74,7 +75,7 @@ def sqlite_rows(path, query):
         return connection.execute(query).fetchall()
 
 
-def saved_pack(directory, port, pack_id, *, zoom=8):
+def saved_pack(directory, port, pack_id, *, zoom=8, multi_zoom=False):
     rows = sqlite_rows(directory / OPERATION_DB, 'SELECT slot, metadata, pack_id FROM background_map_operation')
     if len(rows) != 1 or (rows[0][0], rows[0][2]) != (1, pack_id):
         raise ValueError('Expo SQLite does not contain the recovered pack ID')
@@ -89,35 +90,41 @@ def saved_pack(directory, port, pack_id, *, zoom=8):
     if (not isinstance(sdk, dict) or sdk.get('id') != pack_id or not isinstance(sdk.get('metadata'), str)
             or json.loads(sdk['metadata']) != metadata):
         raise ValueError('MapLibre SQLite metadata or ID differs from the Expo SQLite operation')
-    return region_id, description, pack_database(directory, region_id, port, metadata=description, coordinates=RECOVERY_TILES[zoom])
+    return region_id, description, pack_database(directory, region_id, port, metadata=description, coordinates=RECOVERY_TILE if multi_zoom else RECOVERY_TILES[zoom],
+                                                    extra_coordinates=(RECOVERY_TILES[9],) if multi_zoom else ())
 
 
-def verify_recovery(directory, port, pid, *, zoom=8):
-    pack_id, states = rn_report(read_bounded(directory / 'app.log', LOG_LIMIT), pid)
-    style_bytes, tile_bytes, forwarded = check_transport_logs(directory, port, raster_tile=True, coordinates=RECOVERY_TILES[zoom])
-    check_journal(directory / 'budget.journal', raster_tile=True)
-    region_id, _, pack = saved_pack(directory, port, pack_id, zoom=zoom)
+def verify_recovery(directory, port, pid, *, zoom=8, multi_zoom=False):
+    resources = 3 if multi_zoom else 2
+    pack_id, states = rn_report(read_bounded(directory / 'app.log', LOG_LIMIT), pid, multi_zoom=multi_zoom)
+    style_bytes, tile_bytes, forwarded = check_transport_logs(directory, port, raster_tile=True,
+        coordinates=RECOVERY_TILE if multi_zoom else RECOVERY_TILES[zoom],
+        extra_coordinates=(RECOVERY_TILES[9],) if multi_zoom else ())
+    check_journal(directory / 'budget.journal', raster_tile=True, tile_count=resources - 1)
+    region_id, _, pack = saved_pack(directory, port, pack_id, zoom=zoom, multi_zoom=multi_zoom)
     if (pack['styleBodyBytes'], pack['tileBodyBytes']) != (style_bytes, tile_bytes):
         raise ValueError('Linked MapLibre SQLite payload sizes differ from the synthetic responses')
     return {'pid': pid, 'zoom': zoom, 'states': states, 'regionId': region_id, 'styleBodyBytes': style_bytes, 'tileBodyBytes': tile_bytes,
-            'forwardedBytes': forwarded, 'transportCalls': 2, 'serverResponses': 2, 'reservations': 2,
-            'completedResources': 2, 'completedTiles': 1, 'tileSha256': pack['tileSha256']}
+            'forwardedBytes': forwarded, 'transportCalls': resources, 'serverResponses': resources, 'reservations': resources,
+            'completedResources': resources, 'completedTiles': resources - 1, 'tileSha256': pack['tileSha256'],
+            **({'zoomRange': [8, 9], 'tiles': pack['tiles']} if multi_zoom else {})}
 
 
-def verify_reopened(directory, port, first_pid, pid, *, zoom=8):
+def verify_reopened(directory, port, first_pid, pid, *, zoom=8, multi_zoom=False):
+    resources = 3 if multi_zoom else 2
     if pid <= 0 or pid == first_pid:
         raise ValueError('Pack reopen requires a new fixture process')
     reopened = directory / 'reopen'
-    first_id, _ = rn_report(read_bounded(directory / 'app.log', LOG_LIMIT), first_pid)
-    restored_id, states = rn_report(read_bounded(reopened / 'app.log', LOG_LIMIT), pid, reopening=True)
-    if first_id != restored_id or saved_pack(directory, port, first_id, zoom=zoom) != saved_pack(reopened, port, restored_id, zoom=zoom):
+    first_id, _ = rn_report(read_bounded(directory / 'app.log', LOG_LIMIT), first_pid, multi_zoom=multi_zoom)
+    restored_id, states = rn_report(read_bounded(reopened / 'app.log', LOG_LIMIT), pid, reopening=True, multi_zoom=multi_zoom)
+    if first_id != restored_id or saved_pack(directory, port, first_id, zoom=zoom, multi_zoom=multi_zoom) != saved_pack(reopened, port, restored_id, zoom=zoom, multi_zoom=multi_zoom):
         raise ValueError('Pack ID or stored MapLibre content changed after restart')
-    size = JOURNAL_HEADER.size + 2 * JOURNAL_RECORD.size
+    size = JOURNAL_HEADER.size + resources * JOURNAL_RECORD.size
     if read_bounded(directory / 'budget.journal', size) != read_bounded(reopened / 'budget.journal', size):
         raise ValueError('Reopening changed the request journal')
     if read_bounded(reopened / 'server-closed.txt', 32) != b'before=refused\nafter=refused\n':
         raise ValueError('Missing proof that the synthetic HTTPS port was closed')
-    return {'pid': pid, 'states': states, 'completedResources': 2, 'completedTiles': 1,
+    return {'pid': pid, 'states': states, 'completedResources': resources, 'completedTiles': resources - 1,
             'transportCalls': 0, 'newReservations': 0, 'newServerResponses': 0}
 
 
@@ -150,23 +157,25 @@ def verify_saved_style(directory):
     return digest
 
 
-def verify_captured_bounds(directory, pid):
+def verify_captured_bounds(directory, pid, *, multi_zoom=False):
     from product_map_sources import verify_source_bounds
 
     rows = sqlite_rows(directory / OPERATION_DB, 'SELECT style_json, metadata FROM background_map_operation')
     if len(rows) != 1 or not isinstance(rows[0][0], str):
         raise ValueError('Missing stored style for renderer bounds verification')
     style, metadata = rows[0]
-    return verify_source_bounds(directory, pid, json.loads(metadata), style)
+    return verify_source_bounds(directory, pid, json.loads(metadata), style, multi_zoom=multi_zoom)
 
 
-def capture_app_report(command, destination, *, reopening=False, product_map=False, product_tab=False, zoom=8):
+def capture_app_report(command, destination, *, reopening=False, product_map=False, product_tab=False, zoom=8, multi_zoom=False):
     args = ['--ez', 'fixture-reopen', 'true'] if reopening else []
     if product_map:
         args += ['--ez', 'fixture-product-map', 'true']
     if product_tab:
         args += ['--ez', 'fixture-product-tab', 'true']
     args += ['--ei', 'fixture-zoom', str(zoom)]
+    if multi_zoom:
+        args += ['--ez', 'fixture-multi-zoom', 'true']
     launch = command(4096, 'shell', 'am', 'start', '-W', '-n', ACTIVITY, *args, timeout=22)
     write_capture(destination / 'launch.log', launch)
     if b'Status: ok' not in launch:
@@ -191,7 +200,7 @@ def require_server_closed(port):
 
 
 def capture_recovery(key_path, apk, relay, java, identity, destination, expected_hash, *, reopening=False,
-                     product_map=False, product_tab=False, source_bounds=False, zoom=8):
+                     product_map=False, product_tab=False, source_bounds=False, zoom=8, multi_zoom=False):
     port, apk_hash = read_apk(apk, RN_TAB_APK_LIMIT if product_tab else RN_APK_LIMIT)
     if apk_hash != expected_hash:
         raise ValueError('React Native fixture APK hash changed')
@@ -200,12 +209,13 @@ def capture_recovery(key_path, apk, relay, java, identity, destination, expected
         return guest_command(key_path, limit, mode, *args, timeout=timeout)
 
     destination.mkdir(mode=0o700)
-    stage_relay(key_path, relay, raster_tile=True)
+    stage_relay(key_path, relay, raster_tile=True, multi_zoom=multi_zoom)
     server_source = Path(__file__).with_name('sdk-smoke') / 'FixtureStyleServer.java'
     relay_log = '/data/local/tmp/trip-rn-relay.log'
+    relay_mode = '--multi-zoom' if multi_zoom else '--raster-tile'
     relay_command = (f'CLASSPATH={FIXTURE_RELAY_PATH} app_process /system/bin FixtureLoopbackRelay {port} '
-                     f'--raster-tile > {relay_log} 2>&1; cat {relay_log}')
-    with pack_server(java, identity, server_source, port, destination / 'server.log', expire_pack=False, rn_recovery=True, rn_zoom=zoom):
+                     f'{relay_mode} > {relay_log} 2>&1; cat {relay_log}')
+    with pack_server(java, identity, server_source, port, destination / 'server.log', expire_pack=False, rn_recovery=True, rn_zoom=zoom, multi_zoom=multi_zoom):
         with ThreadPoolExecutor(max_workers=1) as executor:
             relay_task = executor.submit(command, LOG_LIMIT, 'shell', 'sh', '-c', relay_command, timeout=40)
             try:
@@ -218,7 +228,7 @@ def capture_recovery(key_path, apk, relay, java, identity, destination, expected
                     time.sleep(.25)
                 else:
                     raise ValueError('React Native fixture relay did not become ready')
-                pid = capture_app_report(command, destination, zoom=zoom)
+                pid = capture_app_report(command, destination, zoom=zoom, multi_zoom=multi_zoom)
             except (OSError, ValueError):
                 crash = command(LOG_LIMIT * 2, 'logcat', '-d', '-t', '180', '-v', 'threadtime',
                                 '-s', TAG + ':V', 'AndroidRuntime:E', 'ReactNativeJS:E', '*:S')
@@ -226,35 +236,36 @@ def capture_recovery(key_path, apk, relay, java, identity, destination, expected
                 raise
             finally:
                 write_capture(destination / 'relay.log', relay_task.result())
-    capture_saved_files(command, destination, pid, expected_hash)
-    result = verify_recovery(destination, port, pid, zoom=zoom)
+    capture_saved_files(command, destination, pid, expected_hash, multi_zoom=multi_zoom)
+    result = verify_recovery(destination, port, pid, zoom=zoom, multi_zoom=multi_zoom)
     if reopening:
         require_server_closed(port)
         reopened = destination / 'reopen'
         reopened.mkdir(mode=0o700)
         reopened_pid = capture_app_report(command, reopened, reopening=True, product_map=product_map,
-                                           product_tab=product_tab, zoom=zoom)
+                                           product_tab=product_tab, zoom=zoom, multi_zoom=multi_zoom)
         screen_key = 'productTab' if product_tab else 'productMap'
         if product_map or product_tab:
             from product_map_trial import capture_product_map
             result[screen_key] = capture_product_map(command, reopened, RN_FIXTURE_PACKAGE, ACTIVITY, reopened_pid,
-                                                     product_tab=product_tab, source_bounds=source_bounds, zoom=zoom)
-        capture_saved_files(command, reopened, reopened_pid, expected_hash)
+                                                     product_tab=product_tab, source_bounds=source_bounds, zoom=zoom, multi_zoom=multi_zoom)
+        capture_saved_files(command, reopened, reopened_pid, expected_hash, multi_zoom=multi_zoom)
         require_server_closed(port)
         write_capture(reopened / 'server-closed.txt', b'before=refused\nafter=refused\n')
-        result['reopened'] = verify_reopened(destination, port, pid, reopened_pid, zoom=zoom)
+        result['reopened'] = verify_reopened(destination, port, pid, reopened_pid, zoom=zoom, multi_zoom=multi_zoom)
         if product_map or product_tab:
             old_style = verify_saved_style(destination)
             if old_style != verify_saved_style(reopened):
                 raise ValueError('The saved style changed during the product map switch')
             result[screen_key]['styleSha256'] = old_style
         if source_bounds:
-            result[screen_key]['sourceCoverage'] = verify_captured_bounds(reopened, reopened_pid)
+            result[screen_key]['sourceCoverage'] = verify_captured_bounds(reopened, reopened_pid, multi_zoom=multi_zoom)
     return result
 
 
-def capture_saved_files(command, destination, pid, expected_hash):
-    size = JOURNAL_HEADER.size + 2 * JOURNAL_RECORD.size
+def capture_saved_files(command, destination, pid, expected_hash, *, multi_zoom=False):
+    resources = 3 if multi_zoom else 2
+    size = JOURNAL_HEADER.size + resources * JOURNAL_RECORD.size
     write_capture(destination / 'budget.journal', command(size, 'exec-out', 'run-as', RN_FIXTURE_PACKAGE, 'cat', JOURNAL))
     if running_pid(command, RN_FIXTURE_PACKAGE) != pid:
         raise ValueError('React Native fixture process changed during capture')
@@ -281,6 +292,7 @@ if __name__ == '__main__':
     parser.add_argument('--product-tab', action='store_true')
     parser.add_argument('--source-bounds', action='store_true')
     parser.add_argument('--zoom', type=int, choices=(8, 9), default=8)
+    parser.add_argument('--multi-zoom', action='store_true')
     args = parser.parse_args()
     if (args.product_map or args.product_tab) and args.reopened_pid is None:
         parser.error('Screen verification requires --reopened-pid')
@@ -288,21 +300,23 @@ if __name__ == '__main__':
         parser.error('Choose one screen verification mode')
     if args.source_bounds and not args.product_tab:
         parser.error('--source-bounds requires --product-tab')
+    if args.multi_zoom and (not args.source_bounds or args.zoom != 8):
+        parser.error('--multi-zoom requires --source-bounds and default --zoom 8')
     try:
-        result = verify_recovery(args.capture, args.port, args.pid, zoom=args.zoom)
+        result = verify_recovery(args.capture, args.port, args.pid, zoom=args.zoom, multi_zoom=args.multi_zoom)
         if args.reopened_pid is not None:
-            result['reopened'] = verify_reopened(args.capture, args.port, args.pid, args.reopened_pid, zoom=args.zoom)
+            result['reopened'] = verify_reopened(args.capture, args.port, args.pid, args.reopened_pid, zoom=args.zoom, multi_zoom=args.multi_zoom)
         if args.product_map or args.product_tab:
             from product_map_trial import verify_product_map
             screen_key = 'productTab' if args.product_tab else 'productMap'
             result[screen_key] = verify_product_map(args.capture / 'reopen', args.reopened_pid,
-                                                   product_tab=args.product_tab, package=RN_FIXTURE_PACKAGE, zoom=args.zoom)
+                                                   product_tab=args.product_tab, package=RN_FIXTURE_PACKAGE, zoom=args.zoom, multi_zoom=args.multi_zoom)
             old_style = verify_saved_style(args.capture)
             if old_style != verify_saved_style(args.capture / 'reopen'):
                 raise ValueError('The saved style changed during the product map switch')
             result[screen_key]['styleSha256'] = old_style
         if args.source_bounds:
-            result[screen_key]['sourceCoverage'] = verify_captured_bounds(args.capture / 'reopen', args.reopened_pid)
+            result[screen_key]['sourceCoverage'] = verify_captured_bounds(args.capture / 'reopen', args.reopened_pid, multi_zoom=args.multi_zoom)
         print(json.dumps(result, sort_keys=True))
     except (OSError, ValueError, sqlite3.Error) as error:
         parser.exit(1, f'React Native recovery capture failed: {error}\n')
