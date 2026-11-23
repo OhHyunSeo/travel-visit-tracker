@@ -16,8 +16,10 @@ APP = ROOT / "travel_visit_tracker"
 ORIGIN = "https://tiles.openfreemap.org"
 GENERATOR = """
 import {createHash} from 'node:crypto';
+import {DatabaseSync} from 'node:sqlite';
 import {regions} from './src/data/regions.ts';
-import {prepareBackgroundMapOperation} from './src/services/backgroundMapOperation.ts';
+import {prepareBackgroundMapOperation,validatePreparedBackgroundMapDownload} from './src/services/backgroundMapOperation.ts';
+import {BackgroundMapOperationRepository} from './src/storage/backgroundMapOperationRepository.ts';
 
 const origin = 'https://tiles.openfreemap.org';
 const tileVersion = '20261025_080012_pt';
@@ -38,12 +40,28 @@ const tile = {tilejson: '3.0.0', tiles: [`${origin}/planet/${tileVersion}/{z}/{x
   minzoom: 0, maxzoom: 14, bounds: [-180,-85.05113,180,85.05113], attribution: 'Test fixture'};
 const bytes = {style: Buffer.from(JSON.stringify(style)), tileJson: Buffer.from(JSON.stringify(tile))};
 const reference = {styleSha256: await digest(bytes.style), tileJsonSha256: await digest(bytes.tileJson), tileVersion};
-const store = {prepare: async () => true};
 const results = await Promise.all(regions.map(async ({id: regionId}) => {
-  const prepared = await prepareBackgroundMapOperation(store,
-    {operationId: '9729af8d-20ac-42db-ae59-3773944d5530',regionId,bytes,reference}, digest);
-  if (prepared.kind !== 'prepared') throw new Error('Fixture preparation failed');
-  return {scope: JSON.stringify(prepared.requestScope), style: prepared.styleJson, requests: []};
+  const db = new DatabaseSync(':memory:');
+  try {
+    const store = new BackgroundMapOperationRepository({
+      exec: async sql => db.exec(sql),
+      run: async (sql, ...params) => db.prepare(sql).run(...params),
+      first: async (sql, ...params) => db.prepare(sql).get(...params) ?? null,
+      all: async (sql, ...params) => db.prepare(sql).all(...params),
+    });
+    await store.initialize();
+    const prepared = await prepareBackgroundMapOperation(store,
+      {operationId: '9729af8d-20ac-42db-ae59-3773944d5530',regionId,bytes,reference}, digest);
+    if (prepared.kind !== 'prepared') throw new Error('Fixture preparation failed');
+    let input;
+    if (!(await validatePreparedBackgroundMapDownload(store, prepared, async (scope, style, metadata) => {
+      input = {scope, style, saved: metadata, requests: []};
+      return true;
+    }))) throw new Error('Fixture has no prepared SQLite row');
+    return input;
+  } finally {
+    db.close();
+  }
 }));
 process.stdout.write(JSON.stringify(results));
 """
@@ -151,6 +169,21 @@ class MapRequestScopeTests(unittest.TestCase):
         ]
         case["requests"] = [{"address": url, "method": method} for url, method, _ in requests]
         self.assertEqual(self.probe_cases([case]), [{"accepted": True, "resources": [entry[2] for entry in requests]}])
+
+    def test_binds_the_scope_to_the_exact_sqlite_operation(self):
+        cases = [{**case, "metadata": case["saved"]} for case in self.cases]
+        self.assertEqual(self.probe_cases(cases), [{"accepted": True, "resources": []}] * len(cases))
+        base = cases[0]
+        metadata = json.loads(base["metadata"])
+        mutations = [
+            {"operationId": "8729af8d-20ac-42db-ae59-3773944d5530"},
+            {"tileJsonSha256": "f" * 64}, {"localStyleSha256": "f" * 64},
+            {"plan": json.loads(cases[1]["metadata"])["plan"]},
+            {"kind": "other"}, {"schemaVersion": 2}, {"plan": "invalid"},
+        ]
+        modified = [{**base, "metadata": json.dumps({**metadata, **change})} for change in mutations]
+        modified.append({**base, "style": base["style"] + " "})
+        self.assertEqual(self.probe_cases(modified), [{"accepted": False, "resources": []}] * len(modified))
 
 
 if __name__ == "__main__":

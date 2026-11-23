@@ -23,8 +23,8 @@ struct TripPaintingMapRequestScope {
     let count: Int
   }
 
-  private struct Plan: Decodable {
-    struct Revision: Decodable {
+  private struct Plan: Decodable, Equatable {
+    struct Revision: Decodable, Equatable {
       let styleSha256: String
       let tileVersion: String
     }
@@ -62,6 +62,15 @@ struct TripPaintingMapRequestScope {
     let limits: Limits
   }
 
+  private struct PackMetadata: Decodable {
+    let kind: String
+    let schemaVersion: Int
+    let operationId: String
+    let plan: String
+    let tileJsonSha256: String
+    let localStyleSha256: String
+  }
+
   private static let providerOrigin = "https://tiles.openfreemap.org"
   private static let coordinateTemplate = "{z}/{x}/{y}"
   private static let fontStacks = ["Noto Sans Regular", "Noto Sans Italic", "Noto Sans Bold"]
@@ -79,6 +88,19 @@ struct TripPaintingMapRequestScope {
     else { return nil }
     let scope = Self(payload: payload)
     return scope.hasValidPolicy() && scope.hasValidPlan() && scope.matchesStyle(Data(styleJSON.utf8)) ? scope : nil
+  }
+
+  static func validatePrepared(_ json: String, styleJSON: String, metadataJSON: String) -> Self? {
+    guard metadataJSON.utf8.count <= 20_000,
+          let scope = validate(json, styleJSON: styleJSON),
+          let metadata = try? JSONDecoder().decode(PackMetadata.self, from: Data(metadataJSON.utf8)),
+          metadata.kind == "trip-painting-background-map", metadata.schemaVersion == 1,
+          metadata.operationId == scope.operationId, metadata.localStyleSha256 == scope.localStyleSha256,
+          metadata.tileJsonSha256 == scope.payload.tileJsonSha256,
+          let plan = try? JSONDecoder().decode(Plan.self, from: Data(metadata.plan.utf8)),
+          plan == scope.plan
+    else { return nil }
+    return scope
   }
 
   private static func matches(_ value: String, _ pattern: String) -> Bool {

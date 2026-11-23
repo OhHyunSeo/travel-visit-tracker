@@ -6,7 +6,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { regions } from '../src/data/regions';
 import { createBackgroundMapPackMetadata } from '../src/domain/backgroundMapPack';
 import { planBackgroundMap } from '../src/domain/backgroundMapPlan';
-import { recoverBackgroundMapOperation } from '../src/services/backgroundMapOperation';
+import {
+  recoverBackgroundMapOperation,
+  validatePreparedBackgroundMapDownload,
+  type BackgroundMapRequestScope,
+} from '../src/services/backgroundMapOperation';
 import { BackgroundMapOperationRepository } from '../src/storage/backgroundMapOperationRepository';
 import type { SqlConnection, SqlValue } from '../src/storage/repository';
 
@@ -75,6 +79,46 @@ describe('saved background map operation', () => {
     expect(await repository.bindPack(metadata, packId)).toBe(true);
     expect(await repository.styleForPack(otherId)).toBeNull();
     expect(await repository.styleForPack(packId)).toEqual({ metadata, styleJson });
+  });
+
+  it('validates the exact unbound record after reopen and skips missing, foreign and bound rows', async () => {
+    const styleJson = '{"name":"여행"}';
+    const requestScope: BackgroundMapRequestScope = {
+      schemaVersion: 1,
+      origin: 'https://tiles.openfreemap.org',
+      operationId: metadata.operationId,
+      localStyleSha256: metadata.localStyleSha256,
+      tileJsonSha256: metadata.tileJsonSha256,
+      plan,
+      resources: { vector: '', raster: '', glyphs: '', fontStacks: [], sprite: '' },
+      limits: { maxTileAttempts: 2_500, maxBodyBytes: 50_000_000, maxConcurrentRequests: 4 },
+    };
+    const prepared = { metadata, requestScope };
+    const seen: string[][] = [];
+    const validate = async (...args: [string, string, string]) => {
+      seen.push(args);
+      return true;
+    };
+
+    expect(await validatePreparedBackgroundMapDownload(repository, prepared, validate)).toBe(false);
+    expect(await repository.prepare(metadata, styleJson)).toBe(true);
+    db.close();
+    db = new DatabaseSync(path);
+    repository = new BackgroundMapOperationRepository(adapter(db));
+    expect(await validatePreparedBackgroundMapDownload(repository, prepared, validate)).toBe(true);
+    expect(await validatePreparedBackgroundMapDownload(repository, prepared, async () => false)).toBe(false);
+    const foreign = { ...prepared, metadata: { ...metadata, operationId: otherId } };
+    expect(await validatePreparedBackgroundMapDownload(repository, foreign, validate)).toBe(false);
+    expect(await repository.bindPack(metadata, packId)).toBe(true);
+    expect(await validatePreparedBackgroundMapDownload(repository, prepared, validate)).toBe(false);
+    expect(seen).toEqual([[JSON.stringify(requestScope), styleJson, JSON.stringify(metadata)]]);
+  });
+
+  it('skips a legacy row without style and non-text style bytes', async () => {
+    expect(await repository.prepare(metadata)).toBe(true);
+    expect(await repository.preparedDownloadRecord(metadata)).toBeNull();
+    db.prepare('UPDATE background_map_operation SET style_json=?').run(Buffer.from('{}'));
+    expect(await repository.preparedDownloadRecord(metadata)).toBeNull();
   });
 
   it('preserves an unbound operation across reopen, then saves the matching SDK ID', async () => {

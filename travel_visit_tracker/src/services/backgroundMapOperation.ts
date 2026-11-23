@@ -101,6 +101,17 @@ export async function prepareBackgroundMapOperation(
   return { kind: 'prepared' as const, metadata, styleJson: reviewed.styleJson, requestScope };
 }
 
+/** Check the unbound record using the style bytes on disk. This does not reserve or start a pack. */
+export async function validatePreparedBackgroundMapDownload(
+  store: Pick<BackgroundMapOperationRepository, 'preparedDownloadRecord'>,
+  prepared: Readonly<{ metadata: BackgroundMapPackMetadata; requestScope: BackgroundMapRequestScope }>,
+  validateScope: (scope: string, style: string, metadata: string) => Promise<boolean>,
+): Promise<boolean> {
+  const scope = JSON.stringify(prepared.requestScope);
+  const record = await store.preparedDownloadRecord(prepared.metadata);
+  return record ? (await validateScope(scope, record.styleJson, record.metadata)) === true : false;
+}
+
 /** Regenerate only the bytes recorded for this operation, without updating its identity. */
 export async function recoverBackgroundMapStyle(
   stored: BackgroundMapPackMetadata,

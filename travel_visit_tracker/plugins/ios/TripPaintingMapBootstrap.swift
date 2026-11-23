@@ -49,9 +49,9 @@ public final class TripPaintingMapBootstrap: NSObject {
     return ObjectIdentifier(first) == ObjectIdentifier(OfflineMapRequestGuard.self)
   }
 
-  @objc(validateDownloadScope:styleJSON:)
-  public static func validateDownloadScope(_ scopeJSON: String, styleJSON: String) -> Bool {
-    TripPaintingMapRequestScope.validate(scopeJSON, styleJSON: styleJSON) != nil
+  @objc(validateDownloadScope:styleJSON:metadataJSON:)
+  public static func validateDownloadScope(_ scopeJSON: String, styleJSON: String, metadataJSON: String) -> Bool {
+    TripPaintingMapRequestScope.validatePrepared(scopeJSON, styleJSON: styleJSON, metadataJSON: metadataJSON) != nil
   }
 }
 

@@ -9,6 +9,7 @@ struct ScopeProbe {
     }
     let scope: String
     let style: String
+    let metadata: String?
     let requests: [Request]
   }
 
@@ -21,7 +22,11 @@ struct ScopeProbe {
     let data = FileHandle.standardInput.readDataToEndOfFile()
     let cases = try JSONDecoder().decode([Case].self, from: data)
     let results = cases.map { item in
-      let scope = TripPaintingMapRequestScope.validate(item.scope, styleJSON: item.style)
+      let scope = if let metadata = item.metadata {
+        TripPaintingMapRequestScope.validatePrepared(item.scope, styleJSON: item.style, metadataJSON: metadata)
+      } else {
+        TripPaintingMapRequestScope.validate(item.scope, styleJSON: item.style)
+      }
       return Result(accepted: scope != nil, resources: item.requests.map {
         scope?.resourceKind(for: $0.address, method: $0.method)?.rawValue
       })

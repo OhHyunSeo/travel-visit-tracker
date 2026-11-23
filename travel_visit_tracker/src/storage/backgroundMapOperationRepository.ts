@@ -83,6 +83,16 @@ export class BackgroundMapOperationRepository {
     );
   }
 
+  async preparedDownloadRecord(expected: BackgroundMapPackMetadata) {
+    const saved = JSON.stringify(readBackgroundMapPackMetadata(expected));
+    return this.db.first<{ metadata: string; styleJson: string }>(
+      `SELECT metadata, style_json AS styleJson FROM background_map_operation
+       WHERE slot=1 AND metadata=? AND pack_id IS NULL AND typeof(style_json)='text'
+         AND length(CAST(style_json AS BLOB)) BETWEEN 1 AND ${maxStyleBytes}`,
+      saved,
+    );
+  }
+
   async bindPack(expected: BackgroundMapPackMetadata, packId: string): Promise<boolean> {
     if (!backgroundMapUuid.test(packId)) throw new Error('Invalid background map SDK pack ID');
     const saved = JSON.stringify(readBackgroundMapPackMetadata(expected));
