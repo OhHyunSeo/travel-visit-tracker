@@ -139,11 +139,14 @@ def capture_product_map(command, destination, package, activity, pid, *, product
         if row_pan:
             from row_pan_trial import capture_row_pan
             capture_row_pan(command, destination, package, activity, pid)
-        if product_tab:
-            status = command(64, 'exec-out', 'run-as', package, 'sh', '-c',
-                             'if [ -e files/SQLite/trip-painting-v1.db ]; then echo present; else echo absent; fi')
-            write_capture(destination / 'visit-storage.txt', status)
     finally:
+        if product_tab:
+            try:
+                status = command(64, 'exec-out', 'run-as', package, 'sh', '-c',
+                                 'if [ -e files/SQLite/trip-painting-v1.db ]; then echo present; else echo absent; fi')
+                write_capture(destination / 'visit-storage.txt', status)
+            except Exception as error:
+                write_capture(destination / 'visit-storage-error.txt', str(error).encode()[:LOG_LIMIT])
         log = command(LOG_LIMIT, 'logcat', '-d', '--pid', str(pid), '-v', 'threadtime', '-s',
                       TAG + ':V', 'ReactNativeJS:E', 'AndroidRuntime:E', '*:S')
         write_capture(destination / 'map.log', log)

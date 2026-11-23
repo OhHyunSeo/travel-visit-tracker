@@ -216,6 +216,21 @@ def require_server_closed(port):
             raise ValueError('Synthetic HTTPS port must refuse connections')
 
 
+def collect_post_map(directory, visual, persistence):
+    """Preserve the persistence result even when visual acceptance fails."""
+    report, errors = {}, []
+    for name, action in (('visual', visual), ('persistence', persistence)):
+        try:
+            report[name] = {'passed': True, 'result': action()}
+        except Exception as error:
+            report[name] = {'passed': False, 'error': str(error)[:1024]}
+            errors.append(f'{name}: {error}')
+    write_capture(directory / 'post-map-checks.json', json.dumps(report, sort_keys=True).encode())
+    if errors:
+        raise ValueError('; '.join(errors))
+    return report['visual']['result'], report['persistence']['result']
+
+
 def capture_recovery(key_path, apk, relay, java, identity, destination, expected_hash, *, reopening=False,
                      product_map=False, product_tab=False, source_bounds=False, zoom=8, multi_zoom=False, adjacent_tiles=False, row_tiles=False, row_pan=False):
     port, apk_hash = read_apk(apk, RN_TAB_APK_LIMIT if product_tab else RN_APK_LIMIT)
@@ -264,19 +279,31 @@ def capture_recovery(key_path, apk, relay, java, identity, destination, expected
         screen_key = 'productTab' if product_tab else 'productMap'
         if product_map or product_tab:
             from product_map_trial import capture_product_map
-            result[screen_key] = capture_product_map(command, reopened, RN_FIXTURE_PACKAGE, ACTIVITY, reopened_pid,
-                                                     product_tab=product_tab, source_bounds=source_bounds, zoom=zoom, multi_zoom=multi_zoom, adjacent_tiles=adjacent_tiles, row_tiles=row_tiles, row_pan=row_pan)
-        capture_saved_files(command, reopened, reopened_pid, expected_hash, multi_zoom=multi_zoom, adjacent_tiles=adjacent_tiles, row_tiles=row_tiles)
-        require_server_closed(port)
-        write_capture(reopened / 'server-closed.txt', b'before=refused\nafter=refused\n')
-        result['reopened'] = verify_reopened(destination, port, pid, reopened_pid, zoom=zoom, multi_zoom=multi_zoom, adjacent_tiles=adjacent_tiles, row_tiles=row_tiles)
+        def persistence():
+            try:
+                capture_saved_files(command, reopened, reopened_pid, expected_hash, multi_zoom=multi_zoom, adjacent_tiles=adjacent_tiles, row_tiles=row_tiles)
+            finally:
+                require_server_closed(port)
+                write_capture(reopened / 'server-closed.txt', b'before=refused\nafter=refused\n')
+            checks = {'reopened': verify_reopened(destination, port, pid, reopened_pid, zoom=zoom, multi_zoom=multi_zoom, adjacent_tiles=adjacent_tiles, row_tiles=row_tiles)}
+            if product_map or product_tab:
+                old_style = verify_saved_style(destination)
+                if old_style != verify_saved_style(reopened):
+                    raise ValueError('The saved style changed during the product map switch')
+                checks['styleSha256'] = old_style
+            if source_bounds:
+                checks['sourceCoverage'] = verify_captured_bounds(reopened, reopened_pid, multi_zoom=multi_zoom, adjacent_tiles=adjacent_tiles, row_tiles=row_tiles)
+            return checks
         if product_map or product_tab:
-            old_style = verify_saved_style(destination)
-            if old_style != verify_saved_style(reopened):
-                raise ValueError('The saved style changed during the product map switch')
-            result[screen_key]['styleSha256'] = old_style
-        if source_bounds:
-            result[screen_key]['sourceCoverage'] = verify_captured_bounds(reopened, reopened_pid, multi_zoom=multi_zoom, adjacent_tiles=adjacent_tiles, row_tiles=row_tiles)
+            def visual():
+                return capture_product_map(command, reopened, RN_FIXTURE_PACKAGE, ACTIVITY, reopened_pid,
+                                           product_tab=product_tab, source_bounds=source_bounds, zoom=zoom, multi_zoom=multi_zoom,
+                                           adjacent_tiles=adjacent_tiles, row_tiles=row_tiles, row_pan=row_pan)
+            result[screen_key], checks = collect_post_map(reopened, visual, persistence)
+            result[screen_key].update({key:value for key,value in checks.items() if key != 'reopened'})
+        else:
+            checks = persistence()
+        result['reopened'] = checks['reopened']
     return result
 
 

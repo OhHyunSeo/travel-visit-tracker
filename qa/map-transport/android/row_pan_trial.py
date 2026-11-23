@@ -12,6 +12,9 @@ from row_pan_observations import (INTERVAL_SECONDS, MAX_FRAMES, STABLE_FRAMES, f
 
 
 PHASES = ('pan-south', 'pan-north')
+COAST_PLAN = {'id': 'coastal-start-v1', 'startSwipePercent': [63, 45, 38, 45],
+              'southSwipePercent': [50, 51, 50, 36], 'northSwipePercent': [50, 36, 50, 60],
+              'durationMs': 500}
 
 
 def samples(directory, name):
@@ -24,6 +27,25 @@ def samples(directory, name):
 def verify_row_pan(directory, pid):
     baseline = json.loads(read_bounded(directory / 'restored-source.json', LOG_LIMIT))
     dimensions, orange, blue = samples(directory, 'restored.png')
+    if min(orange, blue) < 40:
+        raise ValueError('Row pan requires the verified two-tile baseline')
+    if (directory / 'row-pan-plan.json').exists() != (directory / 'pan-start').is_dir():
+        raise ValueError('Row pan coastal start and plan must be captured together')
+    if (directory / 'row-pan-plan.json').exists():
+        plan = json.loads(read_bounded(directory / 'row-pan-plan.json', LOG_LIMIT))
+        if plan != COAST_PLAN:
+            raise ValueError('Row pan used a different predeclared coastal plan')
+        root = directory / 'pan-start'
+        start = json.loads(read_bounded(root / 'zoom9-source.json', LOG_LIMIT))
+        validate_snapshot(start, baseline, pid)
+        verify_settling(root, baseline, pid)
+        if (not .08 <= start['center'][0] - baseline['center'][0] <= .16 or
+                abs(start['center'][1] - baseline['center'][1]) > 1e-5):
+            raise ValueError('Row pan did not reach the predeclared eastern start')
+        size, orange, blue = samples(root, 'screen.png')
+        if size != dimensions:
+            raise ValueError('Coastal start changed the screen dimensions')
+        baseline = start
     if min(orange, blue) < 40:
         raise ValueError('Row pan requires the verified two-tile baseline')
     centers = [baseline['center'][1]]
@@ -85,18 +107,35 @@ def capture_settled(command, root, package, activity, pid, baseline):
 def capture_row_pan(command, directory, package, activity, pid):
     width, height = samples(directory, 'restored.png')[0]
     baseline = json.loads(read_bounded(directory / 'restored-source.json', LOG_LIMIT))
-    report = {'baseline': frame_metrics(read_bounded(directory / 'restored.png', PNG_LIMIT)), 'phases': {}}
+    # Freeze the prospective plan before any gesture; old captures remain separate.
+    write_capture(directory / 'row-pan-plan.json', json.dumps(COAST_PLAN, sort_keys=True).encode())
+    require_foreground(command, activity)
+    if running_pid(command, package) != pid:
+        raise ValueError('Product process changed before coastal preparation')
+    x1,y1,x2,y2 = COAST_PLAN['startSwipePercent']
+    command(512, 'shell', 'input', 'swipe', str(width*x1//100), str(height*y1//100),
+            str(width*x2//100), str(height*y2//100), str(COAST_PLAN['durationMs']))
+    time.sleep(.75)
+    start = directory / 'pan-start';start.mkdir(mode=0o700)
+    capture_settled(command, start, package, activity, pid, baseline)
+    prepared = json.loads(read_bounded(start / 'zoom9-source.json', LOG_LIMIT))
+    if (not .08 <= prepared['center'][0] - baseline['center'][0] <= .16 or
+            abs(prepared['center'][1] - baseline['center'][1]) > 1e-5):
+        raise ValueError('Row pan did not reach the predeclared eastern start')
+    report = {'originalRestored': frame_metrics(read_bounded(directory / 'restored.png', PNG_LIMIT)),
+              'baseline': frame_metrics(read_bounded(start / 'screen.png', PNG_LIMIT)), 'phases': {}}
     # Stay within the map, above attribution and below the screen header.
-    x = str(width // 2)
-    for phase, start, end in ((PHASES[0], 51, 36), (PHASES[1], 36, 60)):
+    for phase, points in zip(PHASES, (COAST_PLAN['southSwipePercent'], COAST_PLAN['northSwipePercent'])):
         require_foreground(command, activity)
         if running_pid(command, package) != pid:
             raise ValueError('Product process changed before the pan gesture')
-        command(512, 'shell', 'input', 'swipe', x, str(height * start // 100), x, str(height * end // 100), '500')
+        x1,y1,x2,y2 = points
+        command(512, 'shell', 'input', 'swipe', str(width*x1//100), str(height*y1//100),
+                str(width*x2//100), str(height*y2//100), str(COAST_PLAN['durationMs']))
         time.sleep(.75)
         root = directory / phase
         root.mkdir(mode=0o700)
-        report['phases'][phase] = capture_settled(command, root, package, activity, pid, baseline)
+        report['phases'][phase] = capture_settled(command, root, package, activity, pid, prepared)
     # Overlay counts are diagnostic only; the acceptance below still counts bare raster.
     write_capture(directory / 'row-pan-observations.json', json.dumps(report, sort_keys=True).encode())
     return verify_row_pan(directory, pid)

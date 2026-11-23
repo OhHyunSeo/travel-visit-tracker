@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from PIL import Image, ImageDraw
 
-from row_pan_trial import capture_settled, verify_row_pan
+from row_pan_trial import COAST_PLAN, capture_settled, verify_row_pan
 from row_pan_observations import frame_metrics, observation, verify_settling
 
 
@@ -28,6 +28,31 @@ def capture(root):
 
 
 class RowPanTest(unittest.TestCase):
+    def test_coastal_start_uses_its_own_four_times_baseline_and_the_frozen_plan(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);capture(root)
+            start=root/'pan-start';start.mkdir()
+            source=json.loads((root/'restored-source.json').read_text())
+            source.update(phase='zoom9',center=[128.52,38.4])
+            (start/'zoom9-source.json').write_text(json.dumps(source))
+            (start/'screen.png').write_bytes((root/'pan-south/screen.png').read_bytes())
+            for phase in ('pan-south','pan-north'):
+                path=root/phase/'zoom9-source.json';data=json.loads(path.read_text())
+                data['center'][0]=128.52;path.write_text(json.dumps(data))
+            (root/'row-pan-plan.json').write_text(json.dumps(COAST_PLAN))
+            with patch('row_pan_trial.verify_settling'):
+                # The prepared baseline has as many blue samples as the south;
+                # comparing against the old narrow baseline would incorrectly pass.
+                with self.assertRaisesRegex(ValueError,'wider southern tile'):
+                    verify_row_pan(root,900)
+                plan={**COAST_PLAN,'durationMs':100}
+                (root/'row-pan-plan.json').write_text(json.dumps(plan))
+                with self.assertRaisesRegex(ValueError,'predeclared coastal plan'):
+                    verify_row_pan(root,900)
+                (root/'row-pan-plan.json').unlink()
+                with self.assertRaisesRegex(ValueError,'captured together'):
+                    verify_row_pan(root,900)
+
     def test_requires_wider_southern_tile_and_same_moving_renderer(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);capture(root)

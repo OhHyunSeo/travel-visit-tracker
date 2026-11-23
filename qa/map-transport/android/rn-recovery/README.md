@@ -126,3 +126,27 @@ unvisited-region overlay colors, using the existing grid and RGB tolerance.
 Overlay counts are diagnostic and never satisfy the 300/four-times raster gate.
 A settled view can still fail that gate. Historical captures without a settling
 report remain readable; they do not establish consecutive-frame stability.
+
+The next prospective plan, `coastal-start-v1`, prepares an eastern start with
+a 500ms horizontal swipe from (63%,45%) to (38%,45%) before the same vertical
+gestures. The source camera must move 0.08–0.16 degrees east and retain its
+latitude within 1e-5 degrees, source, process and zoom. It collects three stable
+pairs at `pan-start` and uses that prepared frame as the four-times baseline.
+The threshold remains max(300, four times that baseline), with the same grid,
+color tolerance and northern-view conditions. The plan is written before input
+to `row-pan-plan.json` and checked during replay. Original `restored` frames and
+previous 73→195 failures stay separate; old captures without a plan still replay
+against their original restored baseline.
+
+The plan was chosen from a host-only Web Mercator projection of the bundled
+2020 synthetic fixture at 720×1280, zoom 9 and density 2: the estimated start
+longitude is 128.5278, bare blue samples about 248, and a conservative southern
+latitude of 38.31 yields about 1,463. Attribution, antialiasing and actual gesture
+motion require device verification; these estimates are not native results.
+
+`post-map-checks.json` now records visual and persistence results independently.
+Even if visual capture/acceptance fails, the runner attempts the final request
+journal, app/MapLibre stores, server-closed probe and stored-style/source checks.
+The visit-storage audit and map log are attempted before stopping the app.
+Either failed branch keeps the overall command failed; collecting final stores
+does not convert a failed visual gate to a pass.
