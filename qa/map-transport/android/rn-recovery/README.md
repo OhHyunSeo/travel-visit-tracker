@@ -150,3 +150,21 @@ journal, app/MapLibre stores, server-closed probe and stored-style/source checks
 The visit-storage audit and map log are attempted before stopping the app.
 Either failed branch keeps the overall command failed; collecting final stores
 does not convert a failed visual gate to a pass.
+
+The next plan `coastal-return-v1` reuses the same eastern preparation and
+southern swipe, then returns to the prepared center instead of going farther
+north. Before the run it fixes a per-axis camera tolerance of 2 physical pixels
+in the zoom-9/density-2 Mercator world (524,288 pixels), and at least 80% overlap
+of max(start,returned) bare orange and blue sample sets. The southern frame must
+still satisfy the existing max(300, four-times-start) gate first.
+
+The existing APK cannot set a target center directly. A bounded controller
+computes the inverse drag from each observed center, adds 12 pixels for touch
+slop, and makes at most four 500ms gestures of at most 200 pixels. All endpoints
+must stay in the declared map area. It stops at the first observation within
+tolerance; every gesture and three-frame settled observation is retained under
+`pan-return/attempts/NN`, and `return-report.json` records the result. Replay
+recomputes each command and camera error, then compares the two sample sets.
+These prospective tolerances are not adjusted to the native outcome. Previous
+`coastal-start-v1` north/south trials and earlier failures retain their original
+replay rules. Final stores and request journal remain a separate check.
