@@ -110,3 +110,19 @@ view with fewer southern samples. Replay with `--row-pan --row-tiles` and the
 usual product-tab/source-bounds arguments. This observation is not accepted if
 only the camera moves or the wider-tile criterion fails. The first native attempt
 in the November 22 progress record did not meet that criterion.
+
+The November 23 host observer keeps the same gestures and raster acceptance.
+After the initial 0.75-second wait it collects at most six source/frame pairs,
+separated by at least 0.5 seconds, and selects only the first three consecutive
+pairs with an identical sampled RGB grid and centers within 1e-7 degrees of the
+first pair. Every pair must retain the baseline process, MapView, source and zoom.
+Raw observations live under `pan-*/observations/NN`; `settling.json` records the
+bounded selection. Replay verifies those files and the final selected pair.
+The reused native inspector reasserts zoom 9 with `moveCamera`, so this establishes
+stability under that inspection procedure, not the natural end time of inertia.
+
+`row-pan-observations.json` separates bare raster counts from the expected
+unvisited-region overlay colors, using the existing grid and RGB tolerance.
+Overlay counts are diagnostic and never satisfy the 300/four-times raster gate.
+A settled view can still fail that gate. Historical captures without a settling
+report remain readable; they do not establish consecutive-frame stability.
