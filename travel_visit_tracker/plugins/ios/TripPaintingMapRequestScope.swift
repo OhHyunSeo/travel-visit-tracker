@@ -51,6 +51,13 @@ struct TripPaintingMapRequestScope {
     let sprite: String
   }
 
+  private struct VectorCoverage: Decodable {
+    let bounds: [Double]
+    let minzoom: Int
+    let maxzoom: Int
+    let attribution: String
+  }
+
   private struct Payload: Decodable {
     let schemaVersion: Int
     let origin: String
@@ -177,6 +184,7 @@ struct TripPaintingMapRequestScope {
           let vector = sources["openmaptiles"], vector["type"] as? String == "vector",
           Set(vector.keys) == ["type", "tiles", "scheme", "bounds", "minzoom", "maxzoom", "attribution"],
           vector["scheme"] as? String == "xyz", vector["tiles"] as? [String] == [resources.vector],
+          coversPlan(vector),
           let raster = sources["ne2_shaded"], raster["type"] as? String == "raster",
           Set(raster.keys) == ["type", "tiles", "maxzoom", "tileSize"],
           raster["tiles"] as? [String] == [resources.raster],
@@ -184,6 +192,21 @@ struct TripPaintingMapRequestScope {
     else { return false }
     let explicitFonts = layers.compactMap { ($0["layout"] as? [String: Any])?["text-font"] as? [String] }
     return resources.fontStacks == Self.fontStacks.filter { explicitFonts.contains([$0]) }
+  }
+
+  private func coversPlan(_ vector: [String: Any]) -> Bool {
+    guard let data = try? JSONSerialization.data(withJSONObject: vector),
+          let coverage = try? JSONDecoder().decode(VectorCoverage.self, from: data),
+          (0...8).contains(coverage.minzoom), (12...22).contains(coverage.maxzoom),
+          coverage.bounds.count == 4, coverage.bounds.allSatisfy(\.isFinite),
+          !coverage.attribution.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+          coverage.attribution.utf16.count <= 4096
+    else { return false }
+    let bounds = coverage.bounds
+    return bounds[0] >= -180 && bounds[0] <= plan.bounds[0]
+      && bounds[1] >= -90 && bounds[1] <= plan.bounds[1]
+      && bounds[2] <= 180 && bounds[2] >= plan.bounds[2]
+      && bounds[3] <= 90 && bounds[3] >= plan.bounds[3]
   }
 
   // Compare the raw address. Reconstructing it from parsed URL components could hide escapes or queries.

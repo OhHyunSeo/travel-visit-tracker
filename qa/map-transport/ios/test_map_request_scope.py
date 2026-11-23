@@ -148,6 +148,23 @@ class MapRequestScopeTests(unittest.TestCase):
                     **case, "style": changed_style, "scope": json.dumps(scope),
                 }])[0]["accepted"])
 
+    def test_rejects_style_coverage_changes_even_when_style_matches_its_recorded_hash(self):
+        case = self.cases[0]
+        changes = [
+            {"bounds": [-180, -85, 0, 85]}, {"bounds": [-180, -91, 180, 85]},
+            {"bounds": [-180, -85, True, 85]}, {"minzoom": True}, {"minzoom": 9},
+            {"maxzoom": 11}, {"maxzoom": 14.5}, {"maxzoom": 23}, {"attribution": "   "},
+        ]
+        modified = []
+        for change in changes:
+            style = json.loads(case["style"])
+            style["sources"]["openmaptiles"].update(change)
+            style_json = json.dumps(style)
+            scope, metadata = json.loads(case["scope"]), json.loads(case["saved"])
+            scope["localStyleSha256"] = metadata["localStyleSha256"] = sha256(style_json.encode()).hexdigest()
+            modified.append({**case, "scope": json.dumps(scope), "style": style_json, "metadata": json.dumps(metadata)})
+        self.assertEqual(self.probe_cases(modified), [{"accepted": False, "resources": []}] * len(modified))
+
     def test_accepts_only_literal_scoped_get_addresses(self):
         case = deepcopy(self.cases[0])
         scope = json.loads(case["scope"])
