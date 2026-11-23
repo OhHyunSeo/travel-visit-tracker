@@ -48,6 +48,11 @@ public final class TripPaintingMapBootstrap: NSObject {
     else { return false }
     return ObjectIdentifier(first) == ObjectIdentifier(OfflineMapRequestGuard.self)
   }
+
+  @objc(validateDownloadScope:styleJSON:)
+  public static func validateDownloadScope(_ scopeJSON: String, styleJSON: String) -> Bool {
+    TripPaintingMapRequestScope.validate(scopeJSON, styleJSON: styleJSON) != nil
+  }
 }
 
 private final class OfflineMapRequestGuard: URLProtocol, @unchecked Sendable {

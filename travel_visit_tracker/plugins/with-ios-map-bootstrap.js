@@ -7,8 +7,11 @@ const {
 const { copyFile } = require('node:fs/promises');
 const path = require('node:path');
 
-const helper = 'TripPaintingMapBootstrap.swift';
-const bridge = 'TripPaintingOfflineMaps.m';
+const sources = [
+  'TripPaintingMapBootstrap.swift',
+  'TripPaintingMapRequestScope.swift',
+  'TripPaintingOfflineMaps.m',
+];
 const style = 'TripPaintingBootstrapStyle.json';
 
 module.exports = function withIOSMapBootstrap(config) {
@@ -37,14 +40,14 @@ module.exports = function withIOSMapBootstrap(config) {
     const groupName = getProjectName(projectRoot);
     const directory = path.join(platformProjectRoot, groupName);
     await Promise.all(
-      [helper, bridge, style].map((file) =>
+      [...sources, style].map((file) =>
         copyFile(require.resolve(`./ios/${file}`), path.join(directory, file)),
       ),
     );
 
     const project = config.modResults;
-    addBuildSourceFileToGroup({ project, groupName, filepath: path.posix.join(groupName, helper) });
-    addBuildSourceFileToGroup({ project, groupName, filepath: path.posix.join(groupName, bridge) });
+    for (const source of sources)
+      addBuildSourceFileToGroup({ project, groupName, filepath: path.posix.join(groupName, source) });
     addResourceFileToGroup({
       project,
       groupName,

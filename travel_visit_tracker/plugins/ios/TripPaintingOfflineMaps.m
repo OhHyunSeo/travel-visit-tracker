@@ -12,4 +12,13 @@ RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(isCacheOnly) {
   return @([TripPaintingMapBootstrap isCacheOnly]);
 }
 
+RCT_REMAP_METHOD(validateDownloadScope,
+                 validateDownloadScope:(NSString *)scopeJSON
+                 styleJSON:(NSString *)styleJSON
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject) {
+  resolve(@(scopeJSON && styleJSON &&
+            [TripPaintingMapBootstrap validateDownloadScope:scopeJSON styleJSON:styleJSON]));
+}
+
 @end
