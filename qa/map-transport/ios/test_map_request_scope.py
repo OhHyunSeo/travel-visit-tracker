@@ -18,9 +18,12 @@ APP = ROOT / "travel_visit_tracker"
 ORIGIN = "https://tiles.openfreemap.org"
 GENERATOR = """
 import {createHash} from 'node:crypto';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {regions} from './src/data/regions.ts';
-import {prepareBackgroundMapOperation,registerPreparedBackgroundMapStyle} from './src/services/backgroundMapOperation.ts';
+import {prepareBackgroundMapOperation,recoverPreparedBackgroundMapDownload,registerPreparedBackgroundMapStyle} from './src/services/backgroundMapOperation.ts';
 import {BackgroundMapOperationRepository} from './src/storage/backgroundMapOperationRepository.ts';
 
 const origin = 'https://tiles.openfreemap.org';
@@ -42,8 +45,10 @@ const tile = {tilejson: '3.0.0', tiles: [`${origin}/planet/${tileVersion}/{z}/{x
   minzoom: 0, maxzoom: 14, bounds: [-180,-85.05113,180,85.05113], attribution: 'Test fixture'};
 const bytes = {style: Buffer.from(JSON.stringify(style)), tileJson: Buffer.from(JSON.stringify(tile))};
 const reference = {styleSha256: await digest(bytes.style), tileJsonSha256: await digest(bytes.tileJson), tileVersion};
-const results = await Promise.all(regions.map(async ({id: regionId}) => {
-  const db = new DatabaseSync(':memory:');
+const results = await Promise.all(regions.map(async ({id: regionId}, index) => {
+  const directory = index === 0 ? mkdtempSync(join(tmpdir(), 'tp-prepared-map-')) : null;
+  const filename = directory ? join(directory, 'prepared.sqlite') : ':memory:';
+  let db = new DatabaseSync(filename);
   try {
     const store = new BackgroundMapOperationRepository({
       exec: async sql => db.exec(sql),
@@ -55,8 +60,17 @@ const results = await Promise.all(regions.map(async ({id: regionId}) => {
     const prepared = await prepareBackgroundMapOperation(store,
       {operationId: '9729af8d-20ac-42db-ae59-3773944d5530',regionId,bytes,reference}, digest);
     if (prepared.kind !== 'prepared') throw new Error('Fixture preparation failed');
+    if (directory) {
+      db.close();
+      db = null;
+      db = new DatabaseSync(filename);
+    }
     let input;
-    const address = await registerPreparedBackgroundMapStyle(store, prepared, async (scope, style, metadata) => {
+    const recovered = await recoverPreparedBackgroundMapDownload(store, bytes, digest);
+    if (!recovered || JSON.stringify(recovered.requestScope) !== JSON.stringify(prepared.requestScope)) {
+      throw new Error('Fixture did not recover the prepared scope');
+    }
+    const address = await registerPreparedBackgroundMapStyle(store, recovered, async (scope, style, metadata) => {
       const {operationId,localStyleSha256} = JSON.parse(metadata);
       const url = 'https://offline-style.trip-painting.invalid/v1/' + operationId + '/' + localStyleSha256 + '.json';
       input = {scope, style, saved: metadata, requests: [], address: url};
@@ -65,7 +79,8 @@ const results = await Promise.all(regions.map(async ({id: regionId}) => {
     if (!address) throw new Error('Fixture has no prepared SQLite row');
     return input;
   } finally {
-    db.close();
+    db?.close();
+    if (directory) rmSync(directory, {recursive: true, force: true});
   }
 }));
 process.stdout.write(JSON.stringify(results));

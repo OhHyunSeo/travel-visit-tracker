@@ -4,6 +4,8 @@ import { regions } from '../src/data/regions';
 import {
   prepareBackgroundMapOperation,
   recoverBackgroundMapStyle,
+  recoverPreparedBackgroundMapDownload,
+  registerPreparedBackgroundMapStyle,
 } from '../src/services/backgroundMapOperation';
 import {
   matchBackgroundMapSymbolRequest,
@@ -190,6 +192,62 @@ describe('preparing a background map operation', () => {
     await expect(
       recoverBackgroundMapStyle(restored, { ...bytes, tileJson: changedConfig }, digest),
     ).rejects.toMatchObject({ reason: 'digest' });
+  });
+
+  it('recovers the same scope and style address after loading a saved preparation', async () => {
+    const source = fixture();
+    const prepared = await prepareBackgroundMapOperation(
+      { prepare: vi.fn().mockResolvedValue(true) },
+      { operationId, regionId, ...source, minZoom: 9, maxZoom: 10 },
+      digest,
+    );
+    if (prepared.kind !== 'prepared') throw new Error('Expected prepared operation');
+    const record = { metadata: JSON.stringify(prepared.metadata), styleJson: prepared.styleJson };
+    const store = {
+      current: async () => ({ metadata: JSON.parse(record.metadata), packId: null }),
+      preparedDownloadRecord: vi.fn().mockResolvedValue(record),
+    };
+    const recovered = await recoverPreparedBackgroundMapDownload(store, source.bytes, digest);
+    expect(recovered).toEqual({ metadata: prepared.metadata, requestScope: prepared.requestScope });
+    if (!recovered) throw new Error('Expected recovered preparation');
+    const address = `https://offline-style.trip-painting.invalid/v1/${operationId}/${prepared.metadata.localStyleSha256}.json`;
+    const register = vi.fn().mockResolvedValue(address);
+    expect(await registerPreparedBackgroundMapStyle(store, recovered, register)).toBe(address);
+    expect(register).toHaveBeenCalledExactlyOnceWith(
+      JSON.stringify(prepared.requestScope), record.styleJson, record.metadata,
+    );
+    store.preparedDownloadRecord.mockResolvedValue({ ...record, styleJson: `${record.styleJson} ` });
+    await expect(recoverPreparedBackgroundMapDownload(store, source.bytes, digest)).rejects.toThrow(
+      'Saved background map style bytes differ',
+    );
+    await expect(recoverPreparedBackgroundMapDownload(store, fixture(encode({ ...style, extra: true })).bytes, digest))
+      .rejects.toMatchObject({ reason: 'digest' });
+  });
+
+  it('defers to an existing pack if it was attached during the preparation recheck', async () => {
+    const source = fixture();
+    const prepared = await prepareBackgroundMapOperation(
+      { prepare: vi.fn().mockResolvedValue(true) },
+      { operationId, regionId, ...source },
+      digest,
+    );
+    if (prepared.kind !== 'prepared') throw new Error('Expected prepared operation');
+    const packId = '1b433638-83b7-4d7b-ae95-63c41f70abcd';
+    let attachedPack: string | null = null;
+    const store = {
+      current: async () => ({ metadata: prepared.metadata, packId: attachedPack }),
+      preparedDownloadRecord: vi.fn().mockImplementation(async () => attachedPack ? null : {
+        metadata: JSON.stringify(prepared.metadata), styleJson: prepared.styleJson,
+      }),
+    };
+    const attachWhileHashing = async (data: Uint8Array) => {
+      attachedPack = packId;
+      return digest(data);
+    };
+    expect(await recoverPreparedBackgroundMapDownload(store, source.bytes, attachWhileHashing)).toBeNull();
+    expect(store.preparedDownloadRecord).toHaveBeenCalledTimes(1);
+    expect(await recoverPreparedBackgroundMapDownload(store, source.bytes, digest)).toBeNull();
+    expect(store.preparedDownloadRecord).toHaveBeenCalledTimes(1);
   });
 });
 

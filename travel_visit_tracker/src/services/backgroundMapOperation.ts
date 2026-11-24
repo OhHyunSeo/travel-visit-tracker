@@ -55,6 +55,23 @@ type PreparedBackgroundMapDownload = Readonly<{
 
 type PreparedDownloadStore = Pick<BackgroundMapOperationRepository, 'preparedDownloadRecord'>;
 
+function backgroundMapRequestScope(
+  metadata: BackgroundMapPackMetadata,
+  plan: BackgroundMapPlan,
+  resources: BackgroundMapResources,
+): BackgroundMapRequestScope {
+  return Object.freeze({
+    schemaVersion: 1,
+    origin: backgroundMapOrigin,
+    operationId: metadata.operationId,
+    localStyleSha256: metadata.localStyleSha256,
+    tileJsonSha256: metadata.tileJsonSha256,
+    plan,
+    resources,
+    limits: downloadLimits,
+  });
+}
+
 async function verifyBackgroundMapStyle(
   input: Omit<BackgroundMapPreparation, 'operationId'>,
   digestSha256: BackgroundMapSha256,
@@ -94,17 +111,7 @@ export async function prepareBackgroundMapOperation(
   });
   if (!(await store.prepare(metadata, reviewed.styleJson))) return { kind: 'busy' as const };
 
-  // Describe the stored operation. Native transport must validate and enforce this scope.
-  const requestScope: BackgroundMapRequestScope = Object.freeze({
-    schemaVersion: 1,
-    origin: backgroundMapOrigin,
-    operationId: metadata.operationId,
-    localStyleSha256: metadata.localStyleSha256,
-    tileJsonSha256: metadata.tileJsonSha256,
-    plan: reviewed.plan,
-    resources: reviewed.resources,
-    limits: downloadLimits,
-  });
+  const requestScope = backgroundMapRequestScope(metadata, reviewed.plan, reviewed.resources);
   return { kind: 'prepared' as const, metadata, styleJson: reviewed.styleJson, requestScope };
 }
 
@@ -146,6 +153,35 @@ export async function recoverBackgroundMapStyle(
   digestSha256: BackgroundMapSha256,
 ): Promise<string> {
   const metadata = readBackgroundMapPackMetadata(stored);
+  return (await verifySavedBackgroundMapStyle(metadata, bytes, digestSha256)).styleJson;
+}
+
+/** Rebuild the scope of a saved preparation before any native registration or SDK call. */
+export async function recoverPreparedBackgroundMapDownload(
+  store: PreparedDownloadStore & Pick<BackgroundMapOperationRepository, 'current'>,
+  bytes: BackgroundMapMetadataBytes,
+  digestSha256: BackgroundMapSha256,
+): Promise<PreparedBackgroundMapDownload | null> {
+  const current = await store.current();
+  if (!current || current.packId !== null) return null;
+
+  const metadata = readBackgroundMapPackMetadata(current.metadata);
+  const reviewed = await verifySavedBackgroundMapStyle(metadata, bytes, digestSha256);
+  // Recheck after hashing. Another caller can attach an existing SDK pack in the meantime.
+  const record = await store.preparedDownloadRecord(metadata);
+  if (!record) return null;
+  if (record.styleJson !== reviewed.styleJson) throw new Error('Saved background map style bytes differ');
+  return Object.freeze({
+    metadata,
+    requestScope: backgroundMapRequestScope(metadata, reviewed.plan, reviewed.resources),
+  });
+}
+
+async function verifySavedBackgroundMapStyle(
+  metadata: BackgroundMapPackMetadata,
+  bytes: BackgroundMapMetadataBytes,
+  digestSha256: BackgroundMapSha256,
+) {
   const plan = readBackgroundMapPlan(metadata.plan);
   const reviewed = await verifyBackgroundMapStyle(
     {
@@ -157,9 +193,11 @@ export async function recoverBackgroundMapStyle(
     },
     digestSha256,
   );
+  if (JSON.stringify(reviewed.plan) !== metadata.plan)
+    throw new Error('Saved background map plan differs');
   if (reviewed.localStyleSha256 !== metadata.localStyleSha256)
     throw new Error('Saved background map style hash differs');
-  return reviewed.styleJson;
+  return reviewed;
 }
 
 export type BackgroundMapOperationStatus =
