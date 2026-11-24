@@ -20,6 +20,11 @@ struct ScopeProbe {
 
   static func main() async throws {
     let data = FileHandle.standardInput.readDataToEndOfFile()
+    if let budgetArgument = CommandLine.arguments.firstIndex(of: "--request-budget") {
+      try MapRequestBudgetProbe.run(data, in: URL(fileURLWithPath: CommandLine.arguments[budgetArgument + 1]),
+                                    hold: CommandLine.arguments.contains("--hold"))
+      return
+    }
     let cases = try JSONDecoder().decode([Case].self, from: data)
     if CommandLine.arguments.contains("--local-style") {
       try await runLocalStyleProbe(cases)

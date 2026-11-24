@@ -7,13 +7,13 @@ struct TripPaintingMapRequestScope: Equatable {
     case vectorTile, rasterTile, glyph, sprite
   }
 
-  private struct Limits: Decodable, Equatable {
+  struct Limits: Codable, Equatable {
     let maxTileAttempts: Int
     let maxBodyBytes: Int
     let maxConcurrentRequests: Int
   }
 
-  private struct Range: Decodable, Equatable {
+  private struct Range: Codable, Equatable {
     let source: String
     let zoom: Int
     let minX: Int
@@ -23,8 +23,8 @@ struct TripPaintingMapRequestScope: Equatable {
     let count: Int
   }
 
-  private struct Plan: Decodable, Equatable {
-    struct Revision: Decodable, Equatable {
+  private struct Plan: Codable, Equatable {
+    struct Revision: Codable, Equatable {
       let styleSha256: String
       let tileVersion: String
     }
@@ -43,7 +43,7 @@ struct TripPaintingMapRequestScope: Equatable {
     let estimatedTileCount: Int
   }
 
-  private struct Resources: Decodable, Equatable {
+  private struct Resources: Codable, Equatable {
     let vector: String
     let raster: String
     let glyphs: String
@@ -58,7 +58,7 @@ struct TripPaintingMapRequestScope: Equatable {
     let attribution: String
   }
 
-  private struct Payload: Decodable, Equatable {
+  private struct Payload: Codable, Equatable {
     let schemaVersion: Int
     let origin: String
     let operationId: String
@@ -88,6 +88,13 @@ struct TripPaintingMapRequestScope: Equatable {
   private var resources: Resources { payload.resources }
   var operationId: String { payload.operationId }
   var localStyleSha256: String { payload.localStyleSha256 }
+  var limits: Limits { payload.limits }
+
+  func identityHash() -> String? {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    return (try? encoder.encode(payload)).map(Self.sha256)
+  }
 
   static func validate(_ json: String, styleJSON: String) -> Self? {
     guard json.utf8.count <= 16 * 1024, styleJSON.utf8.count <= 96 * 1024,
@@ -172,8 +179,7 @@ struct TripPaintingMapRequestScope: Equatable {
   }
 
   private func matchesStyle(_ data: Data) -> Bool {
-    let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    guard digest == localStyleSha256,
+    guard Self.sha256(data) == localStyleSha256,
           let style = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
           Set(style.keys) == ["version", "glyphs", "sprite", "sources", "layers"],
           style["version"] as? Int == 8, style["glyphs"] as? String == resources.glyphs,
@@ -192,6 +198,10 @@ struct TripPaintingMapRequestScope: Equatable {
     else { return false }
     let explicitFonts = layers.compactMap { ($0["layout"] as? [String: Any])?["text-font"] as? [String] }
     return resources.fontStacks == Self.fontStacks.filter { explicitFonts.contains([$0]) }
+  }
+
+  private static func sha256(_ data: Data) -> String {
+    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
   }
 
   private func coversPlan(_ vector: [String: Any]) -> Bool {
