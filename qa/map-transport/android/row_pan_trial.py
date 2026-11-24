@@ -83,21 +83,23 @@ def verify_row_pan(directory, pid):
     return {'baselineBottomTileSamples': blue, 'viewIdentity': baseline['viewIdentity'], 'phases': result}
 
 
-def capture_settled(command, root, package, activity, pid, baseline):
+def capture_settled(command, root, package, activity, pid, baseline, phase='zoom9'):
+    if phase not in ('saved', 'zoom9'):
+        raise ValueError('Unsupported settled inspection phase')
     records = []
     started = time.monotonic()
     for attempt in range(MAX_FRAMES):
         target = root / 'observations' / f'{attempt:02d}'
         target.mkdir(mode=0o700, parents=True)
         # Remove only the generated snapshot; keep every raw observation on the host.
-        command(256, 'exec-out', 'run-as', package, 'rm', '-f', 'files/map-source/zoom9.json')
-        capture_source(command, target, 'zoom9', package, activity, camera_zoom=9)
+        command(256, 'exec-out', 'run-as', package, 'rm', '-f', f'files/map-source/{phase}.json')
+        capture_source(command, target, phase, package, activity, camera_zoom=9 if phase == 'zoom9' else None)
         require_foreground(command, activity)
         if running_pid(command, package) != pid:
             raise ValueError('Product process changed during the pan gesture')
         write_capture(target / 'screen.png', command(PNG_LIMIT, 'exec-out', 'screencap', '-p'))
-        record = observation(target)
-        validate_snapshot(record['snapshot'], baseline, pid)
+        record = observation(target, phase)
+        validate_snapshot(record['snapshot'], baseline, pid, phase)
         records.append(record)
         if stable_tail(records):
             break
@@ -108,13 +110,13 @@ def capture_settled(command, root, package, activity, pid, baseline):
               'selectedAttempt': len(records) - 1 if stable else None,
               'requiredStableFrames': STABLE_FRAMES, 'maximumFrames': MAX_FRAMES,
               'minimumIntervalSeconds': INTERVAL_SECONDS, 'elapsedSeconds': time.monotonic() - started,
-              'records': records}
+              'records': records, 'inspectionPhase':phase, 'cameraReasserted':phase == 'zoom9'}
     write_capture(root / 'settling.json', json.dumps(report, sort_keys=True).encode())
     if not stable:
         raise ValueError('Row pan did not settle within the bounded observation window')
-    for name, limit in (('zoom9-source.json', LOG_LIMIT), ('screen.png', PNG_LIMIT)):
+    for name, limit in ((f'{phase}-source.json', LOG_LIMIT), ('screen.png', PNG_LIMIT)):
         write_capture(root / name, read_bounded(target / name, limit))
-    return verify_settling(root, baseline, pid)
+    return verify_settling(root, baseline, pid, phase)
 
 
 def capture_row_pan(command, directory, package, activity, pid):

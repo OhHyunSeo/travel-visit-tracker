@@ -1,6 +1,50 @@
 # Android 개발·검증 기록
 
-마지막 갱신: 2026-11-23, Asia/Seoul.
+마지막 갱신: 2026-11-24, Asia/Seoul.
+
+## 11월 24일 P3-02 후속: 작은 입력의 줌 변경 없는 관측과 줌 재지정 관측
+
+로컬 `7dbcda0`에서 재개했습니다. 공통 제품 `d7120dc`, 기존 row APK SHA-256 `439a93d62b103753819c99f813fe03fd4af5cdea597403f0a5f7232ca5a6d7dd`, 같은 합성 팩 구성과 두 행 `9/438/196`·`9/438/197`을 재사용했습니다. 제품·native 코드·의존성·기존 복귀 제어는 변경하지 않았고 새 빌드·다운로드도 없습니다. 원래 2px·80% 기준과 3.47px 복귀 실패는 새 판독기로 계속 실패함을 확인했습니다.
+
+별도 `--rn-small-pan` 경로와 `small-pan-observers-v1` 계획을 입력 전에 고정했습니다. 같은 동쪽 준비 제스처 뒤 입력 없는 대조 1회와 **위10/아래10/위12/아래12/위16/아래16px, 각각 500ms**를 순서대로 실행합니다. 위치 보정 없이 누적하며 기존 `--rn-row-pan` 복귀 시험과 섞지 않습니다. 각 단계는 `before-passive`, `after-passive`, `after-zoom9`를 별도 폴더에 보관합니다. `saved` native phase는 줌 extra 없이 현재 위치를 읽고, `zoom9`는 기존처럼 줌을 재지정합니다. 기존 APK의 해당 phase/zoom 제약을 확인했으며 추가 native 기능은 만들지 않았습니다.
+
+각 관측은 같은 PID·MapView·소스 bounds/URL·연결 false·줌 9와 화면 크기·두 저장 타일 표본을 확인합니다. 최대 6회 중 연속 3회의 표본 격자와 중심이 안정돼야 선택합니다. 생성된 기기 검사 파일만 지우고 과거 호스트 원문은 보존합니다. 재판독은 고정 입력/기간·native phase·원문과 최종 사본을 대조해 줌 재지정 관측을 passive로 바꿔 제출하는 경우도 거절합니다.
+
+호스트 **172개**와 SDK **47개**, 총 **219개** 검사가 통과했습니다. 줌 extra 없는 관측 호출, 0 이동과 줌 재지정 사이 변위의 분리, 입력 기간 변경·관측 종류 교체·잘못된 CLI 조합 거절을 포함합니다. 기존 초기 연결 로그 누락과 추가 `TRANSPORT_CALL` 거절도 유지합니다.
+
+첫 전용 API 37 수집 `rn-small-pan.OsoyBY3f`는 7단계 원문과 마지막 저장소를 확보했지만 종료 `map.log`에 초기 `MAP_OFFLINE`가 빠지고 `MAP_ROUTE`만 남아 **전체 판독 종료 코드 2**였습니다. observer 쌍의 수치와 영속성은 별도로 읽을 수 있어도 이 자료의 전체 실패는 유지했습니다. 긴 수집에 대응해 다음 전용 기기의 main 로그 공간을 **8MiB**로 요청하고 실제 용량 출력을 보관했습니다. 입력 전 초기 로그를 먼저 검증하며 종료 로그에도 기존 두 초기 기록이 모두 남아야 통과합니다. 초기·최종 로그 원문을 각각 검사하며 기준은 그대로입니다.
+
+재수집 `rn-small-pan-log.uutG7wMo`는 같은 APK·입력 계획으로 진행했고 초기 두 로그가 종료까지 유지됐습니다. 21개 관측 그룹 모두 첫 3회에서 안정됐으며 준비 위치까지 포함한 원문을 보존했습니다. 줌 9·밀도 2의 Mercator 좌표를 화면 픽셀로 환산한 결과입니다. 아래 방향이 양수입니다.
+
+| 단계 | 입력 Y(px) | 줌 변경 없는 전후 이동 Y(px) | 이후 줌 재지정 사이 이동 Y(px) |
+| --- | ---: | ---: | ---: |
+| 입력 없음 | 0 | 0 | 0 |
+| 위 10 | -10 | -1.7295 | 0 |
+| 아래 10 | +10 | +1.6201 | 0 |
+| 위 12 | -12 | -3.6904 | 0 |
+| 아래 12 | +12 | +3.6992 | 0 |
+| 위 16 | -16 | -7.5508 | 0 |
+| 아래 16 | +16 | +7.5518 | 0 |
+
+줌 재지정 사이 X 변위도 모든 단계에서 0이었고 입력에 따른 X 변위는 수치 오차 수준(최대 약 5.7e-8px)이었습니다. 작은 입력의 크기와 정착 이동량 차이는 이번 재수집에서 약 **8.27–8.45px**였습니다. 이는 이 QA 기기·500ms 입력의 정착 끝점 측정이며 OS touch slop 상수나 다른 기기의 값으로 단정하지 않습니다. passive 수집도 native intent를 사용하며 입력 뒤 대기·연속 안정성 확인을 거칩니다. 움직이는 중의 관성이나 순간적인 검사 개입은 이번 결과로 증명하지 않습니다.
+
+마지막 팩 ID·메타데이터·스타일·두 타일의 해시/저장 정보와 요청 장부가 같았습니다. 완료 리소스 3개·타일 2개, 재실행/전체 관측 뒤 새 전송 호출·서버 응답·예약은 각각 **0건**, 방문 DB 생성도 0건입니다. 재수집의 기기 수집과 독립 원문 재판독은 모두 **종료 코드 0**, `post-map-checks.json`의 시각/영속성은 모두 true입니다. 여기서 시각 판정은 관측 자료와 기존 지도 전환의 검증이며 **원위치 복귀 성공을 뜻하지 않습니다**. `observationsOnly=true`로 별도 보고합니다.
+
+Git 제외 원문은 `docs/test-results/android-map-transport-20261114-checkpoint/rn-small-pan-log.uutG7wMo/`입니다. `prospective-plan.json`, `result.json`, `capture/reopen/small-pan-plan.json`·`small-pan/00-control..06-down16`의 각 관측/입력, `small-pan-observations.json`, `map-log-capacity.txt`, 초기/최종 지도 로그, `post-map-checks.json`, `verified-replay-result.json`, `ports-closed.json`에 근거가 있습니다. `previous-capture-replay.json`은 첫 수집의 로그 실패 유지와 observer/영속성 분리 판독입니다. 재판독 명령의 PID 오기입으로 거절된 파일도 `replay-rejected-pid-*`로 보관했고 실제 수집 PID를 쓴 재판독이 통과했습니다. 원시 화면·DB·APK·키는 커밋하지 않습니다.
+
+시작 여유 약 **23GiB**, 첫/두 번째 전용 볼륨 생성 전 약 **22/21GiB**, 두 번째 정리 뒤/저장 직전 약 **28GiB**를 관측했습니다. 두 시도 모두 소유 10GiB 임시 볼륨이 제거됐고 최종 39443·5560·5561 포트 닫힘을 확인했습니다. 추가 빌드 중복 삭제는 0바이트이며 기존 앱·캐시·증거를 유지했습니다. 여유 관측 차이를 이번 중복 삭제량으로 계산하지 않습니다. 공유 300분 창 잔여는 시작 98%, 첫 기기 준비 88%, 첫 수집 뒤 75%, 두 번째 시작 70%, 수집 중 62%, 독립 재판독 시작 52%, 저장 직전 48%였습니다. 저장 지점은 이 항목의 Git 커밋이며 직전 로컬 `7dbcda0`도 보존합니다.
+
+다음은 이 응답 측정을 바탕으로 큰 복귀와 작은 잔여 오차 조정을 구분한 조작 방법을 **별도 시험 전에 정하고**, 동일한 2px·80% 기준으로 검증하는 것입니다. 이번에는 새 복귀 제어를 구현/실행하지 않았습니다. 기존 복귀 실패·P3-02 미완료를 유지하며 실제 공급자·개인 자료·다른 타일 유형·제품 전체 흐름·Android 휴대폰·Release는 미검증입니다.
+
+통과 명령(저장소 루트):
+
+```sh
+python3 -B -m unittest discover -s qa/map-transport/android -p 'test_*.py'
+python3 -B -m unittest discover -s qa/map-transport/android/sdk-smoke -p 'test_*.py'
+python3 -B qa/map-transport/android/rn_recovery.py docs/test-results/android-map-transport-20261114-checkpoint/rn-small-pan-log.uutG7wMo/capture --port 39443 --pid 4410 --reopened-pid 4702 --product-tab --source-bounds --row-tiles --small-pan
+```
+
+기기는 기존 `avd_boot_component.py --rn-reopen --rn-product-tab --rn-source-bounds --rn-row-tiles --rn-small-pan`에 같은 APK·해시·세 연결 중계·인증서와 새 폴더를 지정했습니다. 기존 Python·JDK 17을 사용했고 로컬 전체 앱 검사·native 재빌드는 하지 않았습니다. 결과 커밋의 원격 전체 앱 검사는 PR에서 별도로 확인합니다.
 
 ## 11월 23일 P3-02 후속: 저장한 복귀 입력·카메라 변위의 Mac 분석 후 한도 중지
 

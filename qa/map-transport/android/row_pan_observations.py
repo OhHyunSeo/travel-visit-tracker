@@ -38,15 +38,15 @@ def frame_metrics(data):
             'sampleGridSha256': digest.hexdigest()}
 
 
-def observation(root):
-    snapshot = json.loads(read_bounded(root / 'zoom9-source.json', LOG_LIMIT))
+def observation(root, phase='zoom9'):
+    snapshot = json.loads(read_bounded(root / f'{phase}-source.json', LOG_LIMIT))
     return {'snapshot': snapshot, 'frame': frame_metrics(read_bounded(root / 'screen.png', PNG_LIMIT))}
 
 
-def validate_snapshot(snapshot, baseline, pid):
+def validate_snapshot(snapshot, baseline, pid, phase='zoom9'):
     center = snapshot.get('center')
     bounds = baseline['source']['bounds']
-    if (snapshot.get('pid') != pid or snapshot.get('phase') != 'zoom9' or
+    if (snapshot.get('pid') != pid or snapshot.get('phase') != phase or
             snapshot.get('connected') is not False or snapshot.get('viewIdentity') != baseline['viewIdentity'] or
             snapshot.get('source') != baseline['source'] or snapshot.get('zoom') != 9 or
             not isinstance(center, list) or len(center) != 2 or
@@ -66,19 +66,19 @@ def stable_tail(records):
                for record in tail[1:])
 
 
-def verify_settling(root, baseline, pid):
+def verify_settling(root, baseline, pid, phase='zoom9'):
     report = json.loads(read_bounded(root / 'settling.json', LOG_LIMIT))
     attempts = report.get('attempts')
     if (type(attempts) is not int or not STABLE_FRAMES <= attempts <= MAX_FRAMES or
             report.get('stable') is not True or report.get('selectedAttempt') != attempts - 1):
         raise ValueError('Row pan has no bounded settled observation')
-    records = [observation(root / 'observations' / f'{index:02d}') for index in range(attempts)]
+    records = [observation(root / 'observations' / f'{index:02d}', phase) for index in range(attempts)]
     for record in records:
-        validate_snapshot(record['snapshot'], baseline, pid)
+        validate_snapshot(record['snapshot'], baseline, pid, phase)
     if not stable_tail(records):
         raise ValueError('Row pan did not settle across three consecutive observations')
     final = root / 'observations' / f'{attempts - 1:02d}'
-    for name, limit in (('zoom9-source.json', LOG_LIMIT), ('screen.png', PNG_LIMIT)):
+    for name, limit in ((f'{phase}-source.json', LOG_LIMIT), ('screen.png', PNG_LIMIT)):
         if read_bounded(root / name, limit) != read_bounded(final / name, limit):
             raise ValueError('Row pan selected a different frame from the settled observation')
     return {'attempts': attempts, 'stableFrames': STABLE_FRAMES, **records[-1]['frame']}

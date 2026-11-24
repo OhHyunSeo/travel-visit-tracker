@@ -168,3 +168,37 @@ recomputes each command and camera error, then compares the two sample sets.
 These prospective tolerances are not adjusted to the native outcome. Previous
 `coastal-start-v1` north/south trials and earlier failures retain their original
 replay rules. Final stores and request journal remain a separate check.
+
+`--rn-small-pan` (with row tiles, product tab, source bounds and reopen) is a
+separate observation mode and excludes `--rn-row-pan`. Replay uses `--small-pan`
+with the usual row-tile/product-tab/source-bounds arguments. It reuses the same
+APK and eastern preparation, then freezes `small-pan-observers-v1`: one no-input
+control followed by up/down 10, up/down 12 and up/down 16 physical pixels, each
+500ms. The steps are cumulative; no camera correction is fitted to their result.
+
+Each step stores `before-passive`, `after-passive` and `after-zoom9` separately.
+Passive inspection uses the existing native `saved` phase without a camera-zoom
+extra; the APK requires zoom=-1 for that phase and does not call `moveCamera`.
+The active phase reasserts zoom 9 as before. Each view needs three identical
+sampled grids with stable centers, at most six attempts, the same process,
+MapView, offline source/zoom, dimensions and both visible cached tiles. Only the
+generated private inspector file is removed before each fresh snapshot; earlier
+host copies, including the original saved-map evidence, remain intact.
+
+`small-pan-observations.json` reports the Mercator screen displacement from
+passive-before to passive-after, then separately from passive-after to zoom-9
+reassertion. Screenshots and all source observations remain in local-only
+evidence. Zero response is a measurement, not a failed collection. These are
+settled endpoint observations, not raw touch events or natural inertia timing;
+elapsed time between inspections can also matter. A valid diagnostic collection
+does not pass the existing 2px/80% return gate. Final request journal and stores
+are still checked independently, including when collection fails.
+
+For the longer small-input sequence, the runner requests an 8MiB main log ring
+inside the disposable guest before reopening the app and stores its reported
+capacity. It validates a startup log checkpoint before the small inputs and
+still requires the complete original startup/order/zero-transport log gate in
+the final log. It does not concatenate missing startup records into that log.
+The first small-input capture lacked `MAP_OFFLINE` in its final log and remains
+an overall failed capture even though its observer pairs and final stores were
+collected. The larger ring is a collection fix, not a relaxed acceptance gate.
