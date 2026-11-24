@@ -18,7 +18,7 @@ GENERATOR = """
 import {createHash} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {regions} from './src/data/regions.ts';
-import {prepareBackgroundMapOperation,validatePreparedBackgroundMapDownload} from './src/services/backgroundMapOperation.ts';
+import {prepareBackgroundMapOperation,registerPreparedBackgroundMapStyle} from './src/services/backgroundMapOperation.ts';
 import {BackgroundMapOperationRepository} from './src/storage/backgroundMapOperationRepository.ts';
 
 const origin = 'https://tiles.openfreemap.org';
@@ -54,10 +54,13 @@ const results = await Promise.all(regions.map(async ({id: regionId}) => {
       {operationId: '9729af8d-20ac-42db-ae59-3773944d5530',regionId,bytes,reference}, digest);
     if (prepared.kind !== 'prepared') throw new Error('Fixture preparation failed');
     let input;
-    if (!(await validatePreparedBackgroundMapDownload(store, prepared, async (scope, style, metadata) => {
-      input = {scope, style, saved: metadata, requests: []};
-      return true;
-    }))) throw new Error('Fixture has no prepared SQLite row');
+    const address = await registerPreparedBackgroundMapStyle(store, prepared, async (scope, style, metadata) => {
+      const {operationId,localStyleSha256} = JSON.parse(metadata);
+      const url = 'https://offline-style.trip-painting.invalid/v1/' + operationId + '/' + localStyleSha256 + '.json';
+      input = {scope, style, saved: metadata, requests: [], address: url};
+      return url;
+    });
+    if (!address) throw new Error('Fixture has no prepared SQLite row');
     return input;
   } finally {
     db.close();
@@ -77,6 +80,7 @@ class MapRequestScopeTests(unittest.TestCase):
         cls.probe = directory / "scope-probe"
         subprocess.run(["xcrun", "swiftc", "-module-cache-path", str(directory / "module-cache"),
                         str(APP / "plugins/ios/TripPaintingMapRequestScope.swift"),
+                        str(APP / "plugins/ios/TripPaintingOfflineMapRequestGuard.swift"),
                         str(HERE / "test-map-request-scope.swift"), "-o", str(cls.probe)],
                        check=True, capture_output=True, text=True, timeout=90)
         cls.cases = json.loads(subprocess.check_output(
@@ -201,6 +205,26 @@ class MapRequestScopeTests(unittest.TestCase):
         modified = [{**base, "metadata": json.dumps({**metadata, **change})} for change in mutations]
         modified.append({**base, "style": base["style"] + " "})
         self.assertEqual(self.probe_cases(modified), [{"accepted": False, "resources": []}] * len(modified))
+
+    def test_serve_only_the_registered_style_without_opening_network(self):
+        cases = [{**case, "metadata": case["saved"]} for case in self.cases[:2]]
+        scope = json.loads(cases[0]["scope"])
+        origin = "https://offline-style.trip-painting.invalid"
+        url = f'{origin}/v1/{scope["operationId"]}/{scope["localStyleSha256"]}.json'
+        self.assertEqual(cases[0]["address"], url)
+        requests = [
+            (url, "POST"), (url + "?change=1", "GET"), (url + "#change", "GET"),
+            (url.replace(origin, origin + ":443"), "GET"),
+            (url.replace("https://", "https://other@"), "GET"),
+            (url.replace("https://", "http://"), "GET"),
+            (url.replace(".invalid/", ".invalid./"), "GET"),
+            (url.replace(f'/{scope["localStyleSha256"]}', f'/{"0" * 64}'), "GET"),
+        ]
+        cases[0]["requests"] = [{"address": address, "method": method} for address, method in requests]
+        report = json.loads(subprocess.check_output([str(self.probe), "--local-style"],
+                                                   input=json.dumps(cases), text=True, timeout=20))
+        self.assertEqual(len(report), 11 + len(requests))
+        self.assertEqual([name for name, passed in report.items() if not passed], [])
 
 
 if __name__ == "__main__":

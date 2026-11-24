@@ -10,6 +10,7 @@ const path = require('node:path');
 const sources = [
   'TripPaintingMapBootstrap.swift',
   'TripPaintingMapRequestScope.swift',
+  'TripPaintingOfflineMapRequestGuard.swift',
   'TripPaintingOfflineMaps.m',
 ];
 const style = 'TripPaintingBootstrapStyle.json';

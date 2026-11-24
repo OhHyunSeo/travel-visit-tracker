@@ -53,40 +53,10 @@ public final class TripPaintingMapBootstrap: NSObject {
   public static func validateDownloadScope(_ scopeJSON: String, styleJSON: String, metadataJSON: String) -> Bool {
     TripPaintingMapRequestScope.validatePrepared(scopeJSON, styleJSON: styleJSON, metadataJSON: metadataJSON) != nil
   }
-}
 
-private final class OfflineMapRequestGuard: URLProtocol, @unchecked Sendable {
-  static let policy = OfflineMapRequestPolicy()
-
-  override class func canInit(with request: URLRequest) -> Bool {
-    guard let scheme = request.url?.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
-      return false
-    }
-    return policy.isBlocked
-  }
-
-  override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-
-  override func startLoading() {
-    client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
-  }
-
-  override func stopLoading() {}
-}
-
-private final class OfflineMapRequestPolicy: @unchecked Sendable {
-  private let lock = NSLock()
-  private var blocked = false
-
-  var isBlocked: Bool {
-    lock.lock()
-    defer { lock.unlock() }
-    return blocked
-  }
-
-  func setBlocked(_ value: Bool) {
-    lock.lock()
-    blocked = value
-    lock.unlock()
+  @objc(registerPreparedStyle:styleJSON:metadataJSON:)
+  public static func registerPreparedStyle(_ scopeJSON: String, styleJSON: String, metadataJSON: String) -> String? {
+    guard isCacheOnly() else { return nil }
+    return OfflineMapRequestGuard.policy.registerStyle(scopeJSON, styleJSON: styleJSON, metadataJSON: metadataJSON)?.absoluteString
   }
 }

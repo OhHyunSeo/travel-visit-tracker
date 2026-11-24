@@ -8,6 +8,7 @@ import { createBackgroundMapPackMetadata } from '../src/domain/backgroundMapPack
 import { planBackgroundMap } from '../src/domain/backgroundMapPlan';
 import {
   recoverBackgroundMapOperation,
+  registerPreparedBackgroundMapStyle,
   validatePreparedBackgroundMapDownload,
   type BackgroundMapRequestScope,
 } from '../src/services/backgroundMapOperation';
@@ -99,19 +100,29 @@ describe('saved background map operation', () => {
       seen.push(args);
       return true;
     };
+    const localURL = `https://offline-style.trip-painting.invalid/v1/${metadata.operationId}/${metadata.localStyleSha256}.json`;
+    const registerStyle = async (...args: [string, string, string]) => {
+      seen.push(args);
+      return localURL;
+    };
 
     expect(await validatePreparedBackgroundMapDownload(repository, prepared, validate)).toBe(false);
+    expect(await registerPreparedBackgroundMapStyle(repository, prepared, registerStyle)).toBeNull();
     expect(await repository.prepare(metadata, styleJson)).toBe(true);
     db.close();
     db = new DatabaseSync(path);
     repository = new BackgroundMapOperationRepository(adapter(db));
     expect(await validatePreparedBackgroundMapDownload(repository, prepared, validate)).toBe(true);
     expect(await validatePreparedBackgroundMapDownload(repository, prepared, async () => false)).toBe(false);
+    expect(await registerPreparedBackgroundMapStyle(repository, prepared, registerStyle)).toBe(localURL);
+    expect(await registerPreparedBackgroundMapStyle(repository, prepared, async () => `${localURL}?other`)).toBeNull();
     const foreign = { ...prepared, metadata: { ...metadata, operationId: otherId } };
     expect(await validatePreparedBackgroundMapDownload(repository, foreign, validate)).toBe(false);
     expect(await repository.bindPack(metadata, packId)).toBe(true);
     expect(await validatePreparedBackgroundMapDownload(repository, prepared, validate)).toBe(false);
-    expect(seen).toEqual([[JSON.stringify(requestScope), styleJson, JSON.stringify(metadata)]]);
+    expect(await registerPreparedBackgroundMapStyle(repository, prepared, registerStyle)).toBeNull();
+    const input = [JSON.stringify(requestScope), styleJson, JSON.stringify(metadata)];
+    expect(seen).toEqual([input, input]);
   });
 
   it('skips a legacy row without style and non-text style bytes', async () => {

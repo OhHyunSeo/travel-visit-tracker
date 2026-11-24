@@ -2,12 +2,12 @@ import CryptoKit
 import Foundation
 
 // A validated description of one operation. Creating it does not arm the transport.
-struct TripPaintingMapRequestScope {
+struct TripPaintingMapRequestScope: Equatable {
   enum ResourceKind: String {
     case vectorTile, rasterTile, glyph, sprite
   }
 
-  private struct Limits: Decodable {
+  private struct Limits: Decodable, Equatable {
     let maxTileAttempts: Int
     let maxBodyBytes: Int
     let maxConcurrentRequests: Int
@@ -43,7 +43,7 @@ struct TripPaintingMapRequestScope {
     let estimatedTileCount: Int
   }
 
-  private struct Resources: Decodable {
+  private struct Resources: Decodable, Equatable {
     let vector: String
     let raster: String
     let glyphs: String
@@ -58,7 +58,7 @@ struct TripPaintingMapRequestScope {
     let attribution: String
   }
 
-  private struct Payload: Decodable {
+  private struct Payload: Decodable, Equatable {
     let schemaVersion: Int
     let origin: String
     let operationId: String

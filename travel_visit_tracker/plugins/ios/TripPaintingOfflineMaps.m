@@ -22,4 +22,14 @@ RCT_REMAP_METHOD(validateDownloadScope,
             [TripPaintingMapBootstrap validateDownloadScope:scopeJSON styleJSON:styleJSON metadataJSON:metadataJSON]));
 }
 
+RCT_REMAP_METHOD(registerPreparedStyle,
+                 registerPreparedStyle:(NSString *)scopeJSON
+                 styleJSON:(NSString *)styleJSON
+                 metadataJSON:(NSString *)metadataJSON
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject) {
+  resolve(scopeJSON && styleJSON && metadataJSON ?
+            [TripPaintingMapBootstrap registerPreparedStyle:scopeJSON styleJSON:styleJSON metadataJSON:metadataJSON] : nil);
+}
+
 @end

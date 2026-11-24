@@ -48,6 +48,13 @@ export type BackgroundMapRequestScope = Readonly<{
   limits: typeof downloadLimits;
 }>;
 
+type PreparedBackgroundMapDownload = Readonly<{
+  metadata: BackgroundMapPackMetadata;
+  requestScope: BackgroundMapRequestScope;
+}>;
+
+type PreparedDownloadStore = Pick<BackgroundMapOperationRepository, 'preparedDownloadRecord'>;
+
 async function verifyBackgroundMapStyle(
   input: Omit<BackgroundMapPreparation, 'operationId'>,
   digestSha256: BackgroundMapSha256,
@@ -103,13 +110,33 @@ export async function prepareBackgroundMapOperation(
 
 /** Check the unbound record using the style bytes on disk. This does not reserve or start a pack. */
 export async function validatePreparedBackgroundMapDownload(
-  store: Pick<BackgroundMapOperationRepository, 'preparedDownloadRecord'>,
-  prepared: Readonly<{ metadata: BackgroundMapPackMetadata; requestScope: BackgroundMapRequestScope }>,
+  store: PreparedDownloadStore,
+  prepared: PreparedBackgroundMapDownload,
   validateScope: (scope: string, style: string, metadata: string) => Promise<boolean>,
 ): Promise<boolean> {
+  return (await readPreparedBackgroundMapDownload(store, prepared, validateScope)) === true;
+}
+
+/** Register the verified style for iOS MapLibre without turning on provider traffic. */
+export async function registerPreparedBackgroundMapStyle(
+  store: PreparedDownloadStore,
+  prepared: PreparedBackgroundMapDownload,
+  registerStyle: (scope: string, style: string, metadata: string) => Promise<string | null>,
+): Promise<string | null> {
+  const { operationId, localStyleSha256 } = prepared.metadata;
+  const address = `https://offline-style.trip-painting.invalid/v1/${operationId}/${localStyleSha256}.json`;
+  const registered = await readPreparedBackgroundMapDownload(store, prepared, registerStyle);
+  return registered === address ? address : null;
+}
+
+async function readPreparedBackgroundMapDownload<T>(
+  store: PreparedDownloadStore,
+  prepared: PreparedBackgroundMapDownload,
+  read: (scope: string, style: string, metadata: string) => Promise<T>,
+): Promise<T | null> {
   const scope = JSON.stringify(prepared.requestScope);
   const record = await store.preparedDownloadRecord(prepared.metadata);
-  return record ? (await validateScope(scope, record.styleJson, record.metadata)) === true : false;
+  return record ? read(scope, record.styleJson, record.metadata) : null;
 }
 
 /** Regenerate only the bytes recorded for this operation, without updating its identity. */
