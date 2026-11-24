@@ -152,6 +152,9 @@ def capture_product_map(command, destination, package, activity, pid, *, product
                                product_tab=product_tab, zoom=camera_zoom)
         if row_pan:
             from row_pan_trial import capture_row_pan
+            early=capture_map_log(command,pid)
+            write_capture(destination/'map-log-before-row-pan.log',early)
+            verify_map_log(early,pid,product_tab=product_tab)
             capture_row_pan(command, destination, package, activity, pid)
         if small_pan:
             from small_pan_trial import capture_small_pan

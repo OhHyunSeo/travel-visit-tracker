@@ -202,3 +202,21 @@ the final log. It does not concatenate missing startup records into that log.
 The first small-input capture lacked `MAP_OFFLINE` in its final log and remains
 an overall failed capture even though its observer pairs and final stores were
 collected. The larger ring is a collection fix, not a relaxed acceptance gate.
+
+The next return plan, `coastal-measured-return-v1`, freezes the response profile
+from `rn-small-pan-log.uutG7wMo`: 10/12/16px input magnitudes correspond to mean
+vertical screen movements of 1.675/3.695/7.551px. Above 10px residual error it
+uses the original coarse return; at 2–10px it chooses the input whose observed
+movement is nearest to that error, breaking ties toward the smaller input.
+It is vertical-only and rejects horizontal error over 2px instead of applying
+unmeasured horizontal calibration. The 2px-per-axis/80%-per-tile gate, four
+gesture limit, 500ms duration, 200px bound and map-area bounds are unchanged.
+
+`--rn-row-pan` now collects this prospectively fixed plan. Replay still
+recognizes the original fixed-12px `coastal-return-v1`, so its 3.47px failure
+cannot become a success through a new controller. The measured plan requires
+the 8MiB capacity record and startup checkpoint before row gestures; the final
+complete log and independent final stores/journal remain mandatory. It retains
+the existing zoom-9 settled observer, for which the small-input trial showed
+no extra displacement at the selected settled endpoints. This is one new trial,
+not a claim that the response profile generalizes to other devices or motions.

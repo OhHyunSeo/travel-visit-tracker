@@ -274,7 +274,7 @@ def capture_recovery(key_path, apk, relay, java, identity, destination, expected
         require_server_closed(port)
         reopened = destination / 'reopen'
         reopened.mkdir(mode=0o700)
-        if small_pan:
+        if small_pan or row_pan:
             # Only the disposable guest changes. Keep startup records through the
             # longer observation, then require them in the unchanged final gate.
             command(512,'shell','logcat','-b','main','-G','8M')

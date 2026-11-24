@@ -17,9 +17,10 @@ COAST_PLAN = {'id': 'coastal-start-v1', 'startSwipePercent': [63, 45, 38, 45],
               'durationMs': 500}
 
 
-def return_plan():
-    from row_return_trial import RETURN_POLICY
-    return {**COAST_PLAN, 'id':'coastal-return-v1', 'returnPolicy':RETURN_POLICY}
+def return_plan(measured=False):
+    from row_return_trial import RETURN_POLICY, MEASURED_RETURN_POLICY
+    return {**COAST_PLAN, 'id':'coastal-measured-return-v1' if measured else 'coastal-return-v1',
+            'returnPolicy':MEASURED_RETURN_POLICY if measured else RETURN_POLICY}
 
 
 def samples(directory, name):
@@ -33,15 +34,22 @@ def verify_row_pan(directory, pid):
     baseline = json.loads(read_bounded(directory / 'restored-source.json', LOG_LIMIT))
     dimensions, orange, blue = samples(directory, 'restored.png')
     returning = False
+    measured = False
     if min(orange, blue) < 40:
         raise ValueError('Row pan requires the verified two-tile baseline')
     if (directory / 'row-pan-plan.json').exists() != (directory / 'pan-start').is_dir():
         raise ValueError('Row pan coastal start and plan must be captured together')
     if (directory / 'row-pan-plan.json').exists():
         plan = json.loads(read_bounded(directory / 'row-pan-plan.json', LOG_LIMIT))
-        returning = plan == return_plan()
+        measured = plan == return_plan(measured=True)
+        returning = plan == return_plan() or measured
         if plan != COAST_PLAN and not returning:
             raise ValueError('Row pan used a different predeclared coastal plan')
+        if measured:
+            from product_map_trial import verify_map_log
+            verify_map_log(read_bounded(directory/'map-log-before-row-pan.log',LOG_LIMIT),pid,product_tab=True)
+            if b'ring buffer is 8 MiB' not in read_bounded(directory/'map-log-capacity.txt',4096):
+                raise ValueError('Measured return lacks the dedicated 8MiB log capacity')
         root = directory / 'pan-start'
         start = json.loads(read_bounded(root / 'zoom9-source.json', LOG_LIMIT))
         validate_snapshot(start, baseline, pid)
@@ -72,9 +80,9 @@ def verify_row_pan(directory, pid):
     if returning:
         if centers[1] >= centers[0]-1e-5 or result['pan-south']['bottomTileSamples'] < max(300,blue*4):
             raise ValueError('Return trial did not first expose the wider southern tile')
-        from row_return_trial import verify_row_return
+        from row_return_trial import verify_row_return, RETURN_POLICY, MEASURED_RETURN_POLICY
         return {'baselineBottomTileSamples':blue,'viewIdentity':baseline['viewIdentity'],
-                'phases':result,'returned':verify_row_return(directory,baseline,pid)}
+                'phases':result,'returned':verify_row_return(directory,baseline,pid,MEASURED_RETURN_POLICY if measured else RETURN_POLICY)}
     if not (centers[1] < centers[0] - 1e-5 and centers[2] > centers[0] + 1e-5):
         raise ValueError('Vertical gestures did not move south and north of the baseline')
     south, north = (result[phase] for phase in PHASES)
@@ -123,7 +131,7 @@ def capture_row_pan(command, directory, package, activity, pid):
     width, height = samples(directory, 'restored.png')[0]
     baseline = json.loads(read_bounded(directory / 'restored-source.json', LOG_LIMIT))
     # Freeze the prospective plan before any gesture; old captures remain separate.
-    write_capture(directory / 'row-pan-plan.json', json.dumps(return_plan(), sort_keys=True).encode())
+    write_capture(directory / 'row-pan-plan.json', json.dumps(return_plan(measured=True), sort_keys=True).encode())
     require_foreground(command, activity)
     if running_pid(command, package) != pid:
         raise ValueError('Product process changed before coastal preparation')
@@ -151,8 +159,8 @@ def capture_row_pan(command, directory, package, activity, pid):
         root = directory / phase
         root.mkdir(mode=0o700)
         report['phases'][phase] = capture_settled(command, root, package, activity, pid, prepared)
-    from row_return_trial import capture_row_return
-    report['returned'] = capture_row_return(command,directory,package,activity,pid,prepared,(width,height))
+    from row_return_trial import capture_row_return, MEASURED_RETURN_POLICY
+    report['returned'] = capture_row_return(command,directory,package,activity,pid,prepared,(width,height),MEASURED_RETURN_POLICY)
     # Overlay counts are diagnostic only; the acceptance below still counts bare raster.
     write_capture(directory / 'row-pan-observations.json', json.dumps(report, sort_keys=True).encode())
     return verify_row_pan(directory, pid)

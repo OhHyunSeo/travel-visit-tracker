@@ -1,14 +1,30 @@
 import json
+import math
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from row_return_trial import RETURN_POLICY, return_gesture, verify_row_return
+from row_return_trial import RETURN_POLICY, MEASURED_RETURN_POLICY, return_gesture, verify_row_return, world
 from test_row_pan_trial import capture
 
 
 class ReturnTrialTest(unittest.TestCase):
+    def test_measured_micro_inputs_use_the_nearest_observed_response(self):
+        target=[128.52,38.393];x,y=world(target)
+        def current(error):
+            return [target[0],math.degrees(math.atan(math.sinh(math.pi*(1-2*(y-error)/524288))))]
+        for error,finger in ((-4.72,12),(3.47,-12),(2.1,-10),(7,-16),(11,-23)):
+            move=return_gesture(current(error),target,(720,1280),MEASURED_RETURN_POLICY)
+            self.assertEqual(move[3]-move[1],finger)
+        self.assertIsNone(return_gesture(current(1.5),target,(720,1280),MEASURED_RETURN_POLICY))
+        self.assertEqual(MEASURED_RETURN_POLICY['cameraTolerancePixels'],2)
+        self.assertEqual(MEASURED_RETURN_POLICY['sampleOverlapPercent'],80)
+
+    def test_vertical_measurements_do_not_authorize_horizontal_correction(self):
+        with self.assertRaisesRegex(ValueError,'horizontal'):
+            return_gesture([128.51,38.393],[128.52,38.393],(720,1280),MEASURED_RETURN_POLICY)
+
     def test_controller_is_bounded_and_stops_inside_the_declared_tolerance(self):
         self.assertIsNone(return_gesture([128.52,38.393],[128.52,38.393],(720,1280)))
         move=return_gesture([128.52,38.298],[128.52,38.393],(720,1280))

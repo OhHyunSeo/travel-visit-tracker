@@ -38,8 +38,10 @@ class PostMapChecksTest(unittest.TestCase):
     def test_pan_failure_keeps_the_visit_storage_audit_and_map_log(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary)
+            log=(b'11-24 09:30:49.445  900  901 I TripProductMapQa: MAP_OFFLINE connected=false\n'
+                 b'11-24 09:30:49.446  900  901 I TripProductMapQa: MAP_ROUTE /(tabs)/index\n')
             def command(limit,*args,**kwargs):
-                if 'logcat' in args:return b'final map log'
+                if 'logcat' in args:return log
                 if 'sh' in args:return b'absent\n'
                 return b'<hierarchy/>'
             with patch('product_map_trial.wait_for_frame',return_value=(720,1280)), \
@@ -49,4 +51,4 @@ class PostMapChecksTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'visual gate failed'):
                     capture_product_map(command,root,'fixture.package','fixture/activity',900,product_tab=True,row_tiles=True,row_pan=True)
             self.assertEqual((root/'visit-storage.txt').read_bytes(),b'absent\n')
-            self.assertEqual((root/'map.log').read_bytes(),b'final map log')
+            self.assertEqual((root/'map.log').read_bytes(),log)
