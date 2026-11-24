@@ -35,7 +35,7 @@ class MapRequestBudgetTransportTests(unittest.TestCase):
                            check=True, capture_output=True, timeout=90)
             self.check_loopback([str(binary)], directory)
 
-    def check_loopback(self, command, directory):
+    def check_loopback(self, command, directory, *, check_wire_requests=None, check_replay=False):
         cases = json.loads(subprocess.check_output(["node", "--import", "tsx", "--input-type=module", "-e", GENERATOR],
                                                    cwd=APP, text=True, timeout=30))
         case = cases[0]
@@ -82,6 +82,14 @@ class MapRequestBudgetTransportTests(unittest.TestCase):
                                              "slots": ["started"] * 4 + ["busy"]})
                 wait_server(4, 4)
                 self.assertEqual(charges(), (4, 1024))
+                if check_replay:
+                    send("replay")
+                    self.assertEqual(receive(), {"event": "replay", "error": "missingReservation",
+                                                 "sends": 0, "httpBytes": 0})
+                    self.assertEqual(receive(), {"event": "afterReplay", "slot": "busy"})
+                    self.assertEqual(receive(), {"event": "afterPrematureFinish", "slot": "busy"})
+                    wait_server(4, 4)
+                    self.assertEqual(charges(), (4, 1024))
                 send("cancel")
                 self.assertEqual(receive(), {"event": "cancel", "whileCancelling": "busy"})
                 self.assertEqual(receive(), {"event": "terminal", "slot": 1, "sends": 1,
@@ -99,8 +107,11 @@ class MapRequestBudgetTransportTests(unittest.TestCase):
                 wait_server(5, 0)
                 self.assertEqual(server.peak, 4)
                 self.assertEqual(charges(), (5, 1280))
-                self.assertEqual(Counter(request.split(b"\r\n", 1)[0] for request in server.requests),
-                                 Counter(f"GET /resource/budget/{number} HTTP/1.1".encode() for number in range(1, 6)))
+                if check_wire_requests is None:
+                    self.assertEqual(Counter(request.split(b"\r\n", 1)[0] for request in server.requests),
+                                     Counter(f"GET /resource/budget/{number} HTTP/1.1".encode() for number in range(1, 6)))
+                else:
+                    check_wire_requests(server.requests, address)
                 process.stdin.close()
                 self.assertEqual(process.wait(timeout=5), 0)
             finally:

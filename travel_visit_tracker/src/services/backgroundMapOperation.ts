@@ -17,7 +17,10 @@ import {
   readBackgroundMapPlan,
   type BackgroundMapPlan,
 } from '../domain/backgroundMapPlan';
-import type { BackgroundMapOperationRepository } from '../storage/backgroundMapOperationRepository';
+import type {
+  BackgroundMapOperation,
+  BackgroundMapOperationRepository,
+} from '../storage/backgroundMapOperationRepository';
 
 type Pack = { id: string; bounds: unknown; metadata: unknown };
 type OperationStore = Pick<BackgroundMapOperationRepository, 'current' | 'bindPack'>;
@@ -54,6 +57,12 @@ type PreparedBackgroundMapDownload = Readonly<{
 }>;
 
 type PreparedDownloadStore = Pick<BackgroundMapOperationRepository, 'preparedDownloadRecord'>;
+type SavedPreparationStore = PreparedDownloadStore & Pick<BackgroundMapOperationRepository, 'current'>;
+
+function localBackgroundMapStyleAddress(metadata: BackgroundMapPackMetadata): string {
+  const { operationId, localStyleSha256 } = metadata;
+  return `https://offline-style.trip-painting.invalid/v1/${operationId}/${localStyleSha256}.json`;
+}
 
 function backgroundMapRequestScope(
   metadata: BackgroundMapPackMetadata,
@@ -130,8 +139,7 @@ export async function registerPreparedBackgroundMapStyle(
   prepared: PreparedBackgroundMapDownload,
   registerStyle: (scope: string, style: string, metadata: string) => Promise<string | null>,
 ): Promise<string | null> {
-  const { operationId, localStyleSha256 } = prepared.metadata;
-  const address = `https://offline-style.trip-painting.invalid/v1/${operationId}/${localStyleSha256}.json`;
+  const address = localBackgroundMapStyleAddress(prepared.metadata);
   const registered = await readPreparedBackgroundMapDownload(store, prepared, registerStyle);
   return registered === address ? address : null;
 }
@@ -158,7 +166,7 @@ export async function recoverBackgroundMapStyle(
 
 /** Rebuild the scope of a saved preparation before any native registration or SDK call. */
 export async function recoverPreparedBackgroundMapDownload(
-  store: PreparedDownloadStore & Pick<BackgroundMapOperationRepository, 'current'>,
+  store: SavedPreparationStore,
   bytes: BackgroundMapMetadataBytes,
   digestSha256: BackgroundMapSha256,
 ): Promise<PreparedBackgroundMapDownload | null> {
@@ -166,15 +174,26 @@ export async function recoverPreparedBackgroundMapDownload(
   if (!current || current.packId !== null) return null;
 
   const metadata = readBackgroundMapPackMetadata(current.metadata);
+  const snapshot = await verifyPreparedBackgroundMapRecord(store, metadata, bytes, digestSha256);
+  if (!snapshot) return null;
+  return Object.freeze({ metadata, requestScope: snapshot.requestScope });
+}
+
+async function verifyPreparedBackgroundMapRecord(
+  store: PreparedDownloadStore,
+  metadata: BackgroundMapPackMetadata,
+  bytes: BackgroundMapMetadataBytes,
+  digestSha256: BackgroundMapSha256,
+) {
   const reviewed = await verifySavedBackgroundMapStyle(metadata, bytes, digestSha256);
   // Recheck after hashing. Another caller can attach an existing SDK pack in the meantime.
   const record = await store.preparedDownloadRecord(metadata);
   if (!record) return null;
   if (record.styleJson !== reviewed.styleJson) throw new Error('Saved background map style bytes differ');
-  return Object.freeze({
-    metadata,
+  return {
+    record,
     requestScope: backgroundMapRequestScope(metadata, reviewed.plan, reviewed.resources),
-  });
+  };
 }
 
 async function verifySavedBackgroundMapStyle(
@@ -206,6 +225,67 @@ export type BackgroundMapOperationStatus =
   | { kind: 'missing-pack'; packId: string }
   | { kind: 'conflict' }
   | { kind: 'found'; packId: string };
+
+export type BackgroundMapStartDecision =
+  | Exclude<BackgroundMapOperationStatus, { kind: 'awaiting-pack' }>
+  | { kind: 'changed' }
+  | { kind: 'unavailable' }
+  | Readonly<{
+      kind: 'eligible';
+      requestScope: BackgroundMapRequestScope;
+      scopeJSON: string;
+      styleJSON: string;
+      metadataJSON: string;
+      styleAddress: string;
+    }>;
+
+/** Inspect a future start without registering a style, binding a pack or starting the SDK. */
+export async function decideBackgroundMapStart(
+  store: SavedPreparationStore,
+  bytes: BackgroundMapMetadataBytes,
+  digestSha256: BackgroundMapSha256,
+  listPacks: () => Promise<readonly Pack[]>,
+): Promise<BackgroundMapStartDecision> {
+  const current = await store.current();
+  if (!current) return { kind: 'idle' };
+
+  const { metadata, packId } = current;
+  const initialMatch = findBackgroundMapPack(await listPacks(), metadata, packId ?? undefined);
+  const existing = initialMatch.kind === 'missing'
+    ? (packId === null ? null : { kind: 'missing-pack' as const, packId })
+    : initialMatch;
+  if (existing) {
+    if (!sameBackgroundMapOperation(current, await store.current())) return { kind: 'changed' };
+    return existing;
+  }
+
+  const snapshot = await verifyPreparedBackgroundMapRecord(store, metadata, bytes, digestSha256);
+  if (!snapshot) {
+    return sameBackgroundMapOperation(current, await store.current()) ? { kind: 'unavailable' } : { kind: 'changed' };
+  }
+
+  // Hashing can overlap a recovery that discovers an SDK pack left by an earlier start.
+  const match = findBackgroundMapPack(await listPacks(), metadata);
+  const latest = await store.preparedDownloadRecord(metadata);
+  if (!latest || latest.metadata !== snapshot.record.metadata || latest.styleJson !== snapshot.record.styleJson)
+    return { kind: 'changed' };
+  if (match.kind !== 'missing') return match;
+
+  // Eligibility is a snapshot. The native gate must still check before creating or activating a pack.
+  return Object.freeze({
+    kind: 'eligible',
+    requestScope: snapshot.requestScope,
+    scopeJSON: JSON.stringify(snapshot.requestScope),
+    styleJSON: latest.styleJson,
+    metadataJSON: latest.metadata,
+    styleAddress: localBackgroundMapStyleAddress(metadata),
+  });
+}
+
+function sameBackgroundMapOperation(expected: BackgroundMapOperation, latest: BackgroundMapOperation | null) {
+  return latest !== null && latest.packId === expected.packId &&
+    JSON.stringify(latest.metadata) === JSON.stringify(expected.metadata);
+}
 
 /** Recover a matching pack from an authoritative SDK listing without creating or starting it. */
 export async function recoverBackgroundMapOperation(

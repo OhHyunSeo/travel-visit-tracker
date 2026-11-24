@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { regions } from '../src/data/regions';
 import {
+  decideBackgroundMapStart,
   prepareBackgroundMapOperation,
   recoverBackgroundMapStyle,
   recoverPreparedBackgroundMapDownload,
@@ -248,6 +249,81 @@ describe('preparing a background map operation', () => {
     expect(store.preparedDownloadRecord).toHaveBeenCalledTimes(1);
     expect(await recoverPreparedBackgroundMapDownload(store, source.bytes, digest)).toBeNull();
     expect(store.preparedDownloadRecord).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('checking whether a prepared background map can start', () => {
+  const operationId = '9729af8d-20ac-42db-ae59-3773944d5530';
+  const packId = '1b433638-83b7-4d7b-ae95-63c41f70abcd';
+
+  async function preparedFixture() {
+    const source = fixture();
+    const prepared = await prepareBackgroundMapOperation(
+      { prepare: vi.fn().mockResolvedValue(true) },
+      { operationId, regionId, ...source, minZoom: 9, maxZoom: 10 },
+      digest,
+    );
+    if (prepared.kind !== 'prepared') throw new Error('Expected prepared operation');
+    const record = { metadata: JSON.stringify(prepared.metadata), styleJson: prepared.styleJson };
+    const store = {
+      current: vi.fn().mockResolvedValue({ metadata: prepared.metadata, packId: null }),
+      preparedDownloadRecord: vi.fn().mockResolvedValue(record),
+    };
+    const pack = { id: packId, bounds: prepared.requestScope.plan.bounds, metadata: prepared.metadata };
+    return { bytes: source.bytes, prepared, record, store, pack };
+  }
+
+  it('returns the exact read-only handoff from the still-unbound row and a fresh pack listing', async () => {
+    const { bytes, prepared, record, store } = await preparedFixture();
+    const list = vi.fn().mockResolvedValue([]);
+    await expect(decideBackgroundMapStart(store, bytes, digest, list)).resolves.toEqual({
+      kind: 'eligible',
+      requestScope: prepared.requestScope,
+      scopeJSON: JSON.stringify(prepared.requestScope),
+      styleJSON: record.styleJson,
+      metadataJSON: record.metadata,
+      styleAddress: `https://offline-style.trip-painting.invalid/v1/${operationId}/${prepared.metadata.localStyleSha256}.json`,
+    });
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(store.preparedDownloadRecord.mock.calls).toEqual([[prepared.metadata], [prepared.metadata]]);
+  });
+
+  it('reports prior and conflicting packs without hashing or binding a replacement', async () => {
+    const { bytes, prepared, store, pack } = await preparedFixture();
+    const hashing = vi.fn(digest);
+    const list = vi.fn().mockResolvedValue([pack]);
+    await expect(decideBackgroundMapStart(store, bytes, hashing, list)).resolves.toEqual({ kind: 'found', packId });
+
+    list.mockResolvedValue([pack, { ...pack, id: operationId }]);
+    await expect(decideBackgroundMapStart(store, bytes, hashing, list)).resolves.toEqual({ kind: 'conflict' });
+
+    store.current.mockResolvedValue({ metadata: prepared.metadata, packId });
+    list.mockResolvedValue([]);
+    await expect(decideBackgroundMapStart(store, bytes, hashing, list)).resolves.toEqual({ kind: 'missing-pack', packId });
+    expect(hashing).not.toHaveBeenCalled();
+    expect(store.preparedDownloadRecord).not.toHaveBeenCalled();
+  });
+
+  it('detects an SDK pack that appears while loading the unbound preparation', async () => {
+    const { bytes, store, pack } = await preparedFixture();
+    const list = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([pack]);
+    await expect(decideBackgroundMapStart(store, bytes, digest, list)).resolves.toEqual({ kind: 'found', packId });
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  it('withholds an eligible decision when the durable row changes before or during the final listing', async () => {
+    const { bytes, prepared, record, store } = await preparedFixture();
+    const list = vi.fn().mockResolvedValue([]);
+    store.preparedDownloadRecord.mockResolvedValueOnce(null);
+    store.current.mockResolvedValueOnce({ metadata: prepared.metadata, packId: null })
+      .mockResolvedValueOnce({ metadata: prepared.metadata, packId });
+    await expect(decideBackgroundMapStart(store, bytes, digest, list)).resolves.toEqual({ kind: 'changed' });
+    expect(list).toHaveBeenCalledTimes(1);
+
+    store.preparedDownloadRecord.mockResolvedValueOnce(record).mockResolvedValueOnce({
+      ...record, styleJson: `${record.styleJson} `,
+    });
+    await expect(decideBackgroundMapStart(store, bytes, digest, list)).resolves.toEqual({ kind: 'changed' });
   });
 });
 

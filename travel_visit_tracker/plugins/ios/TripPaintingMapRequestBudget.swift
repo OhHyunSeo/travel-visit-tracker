@@ -10,8 +10,13 @@ final class TripPaintingMapRequestBudget: @unchecked Sendable {
 
   struct Permit {
     fileprivate let id: UUID
+    let url: URL
     let maximumBodyBytes: Int
     let kind: TripPaintingMapRequestScope.ResourceKind
+  }
+
+  struct ExchangeClaim {
+    fileprivate let id: UUID
   }
 
   enum Decision {
@@ -24,11 +29,13 @@ final class TripPaintingMapRequestBudget: @unchecked Sendable {
     let reservedBytes: Int
   }
 
+  private enum Activity { case reserved, dispatched }
+
   private let scope: TripPaintingMapRequestScope
   private let identity: String
   private let database: BudgetDatabase
   private let lock = NSLock()
-  private var active = Set<UUID>()
+  private var active: [UUID: Activity] = [:]
   private var charges: Charges?
 
   init?(scope: TripPaintingMapRequestScope, directory: URL, opening: Opening) {
@@ -43,9 +50,9 @@ final class TripPaintingMapRequestBudget: @unchecked Sendable {
   }
 
   func reserve(_ request: URLRequest, maximumBodyBytes: Int) -> Decision {
-    guard let address = request.url?.absoluteString, let method = request.httpMethod,
+    guard let url = request.url, let method = request.httpMethod,
           request.httpBody == nil, request.httpBodyStream == nil,
-          let kind = scope.resourceKind(for: address, method: method)
+          let kind = scope.resourceKind(for: url.absoluteString, method: method)
     else { return .outsideScope }
     guard maximumBodyBytes > 0, maximumBodyBytes <= scope.limits.maxBodyBytes else { return .invalidReservation }
 
@@ -66,16 +73,31 @@ final class TripPaintingMapRequestBudget: @unchecked Sendable {
       return .unavailable
     }
     charges = next
-    let permit = Permit(id: UUID(), maximumBodyBytes: maximumBodyBytes, kind: kind)
-    active.insert(permit.id)
+    let permit = Permit(id: UUID(), url: url, maximumBodyBytes: maximumBodyBytes, kind: kind)
+    active[permit.id] = .reserved
     return .reserved(permit)
   }
 
-  /// The permit covers the exchange through actual terminal completion, including cancellation.
+  func claimForExchange(_ permit: Permit) -> ExchangeClaim? {
+    lock.lock()
+    defer { lock.unlock() }
+    guard charges != nil, active[permit.id] == .reserved else { return nil }
+    active[permit.id] = .dispatched
+    return ExchangeClaim(id: permit.id)
+  }
+
+  /// Abandon a reservation that has never started an exchange.
   func finish(_ permit: Permit) {
     lock.lock()
-    active.remove(permit.id)
-    lock.unlock()
+    defer { lock.unlock() }
+    if active[permit.id] == .reserved { active.removeValue(forKey: permit.id) }
+  }
+
+  /// Only the connection owner can return the slot after terminal completion.
+  func finish(_ claim: ExchangeClaim) {
+    lock.lock()
+    defer { lock.unlock() }
+    if active[claim.id] == .dispatched { active.removeValue(forKey: claim.id) }
   }
 
   private final class BudgetDatabase {

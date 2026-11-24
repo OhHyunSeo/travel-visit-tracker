@@ -11,6 +11,8 @@ const sources = [
   'TripPaintingMapBootstrap.swift',
   'TripPaintingMapRequestScope.swift',
   'TripPaintingMapRequestBudget.swift',
+  'TripPaintingMapHTTPResponse.swift',
+  'TripPaintingMapHTTPExchange.swift',
   'TripPaintingOfflineMapRequestGuard.swift',
   'TripPaintingOfflineMaps.m',
 ];

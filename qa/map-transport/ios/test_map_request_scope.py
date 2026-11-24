@@ -23,7 +23,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {regions} from './src/data/regions.ts';
-import {prepareBackgroundMapOperation,recoverPreparedBackgroundMapDownload,registerPreparedBackgroundMapStyle} from './src/services/backgroundMapOperation.ts';
+import {decideBackgroundMapStart,prepareBackgroundMapOperation,recoverPreparedBackgroundMapDownload,registerPreparedBackgroundMapStyle} from './src/services/backgroundMapOperation.ts';
 import {BackgroundMapOperationRepository} from './src/storage/backgroundMapOperationRepository.ts';
 
 const origin = 'https://tiles.openfreemap.org';
@@ -70,13 +70,18 @@ const results = await Promise.all(regions.map(async ({id: regionId}, index) => {
     if (!recovered || JSON.stringify(recovered.requestScope) !== JSON.stringify(prepared.requestScope)) {
       throw new Error('Fixture did not recover the prepared scope');
     }
+    const decision = await decideBackgroundMapStart(store, bytes, digest, async () => []);
+    if (decision.kind !== 'eligible' || decision.scopeJSON !== JSON.stringify(recovered.requestScope) ||
+        decision.styleJSON !== prepared.styleJson || decision.metadataJSON !== JSON.stringify(prepared.metadata)) {
+      throw new Error('Fixture did not verify the same saved start inputs');
+    }
     const address = await registerPreparedBackgroundMapStyle(store, recovered, async (scope, style, metadata) => {
       const {operationId,localStyleSha256} = JSON.parse(metadata);
       const url = 'https://offline-style.trip-painting.invalid/v1/' + operationId + '/' + localStyleSha256 + '.json';
       input = {scope, style, saved: metadata, requests: [], address: url};
       return url;
     });
-    if (!address) throw new Error('Fixture has no prepared SQLite row');
+    if (!address || address !== decision.styleAddress) throw new Error('Fixture has no matching prepared style address');
     return input;
   } finally {
     db?.close();
