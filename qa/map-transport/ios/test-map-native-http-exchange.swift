@@ -12,7 +12,8 @@ enum NativeMapHTTPExchangeProbe {
 
   static func main() throws {
     let args = CommandLine.arguments
-    guard args.count == 3, let port = UInt16(args[1]), port >= 1024, let line = readLine() else {
+    let single = args.count == 4 && args[3] == "--single"
+    guard args.count == 3 || single, let port = UInt16(args[1]), port >= 1024, let line = readLine() else {
       throw CocoaError(.fileReadCorruptFile)
     }
     let input = try JSONDecoder().decode(Input.self, from: Data(line.utf8))
@@ -22,7 +23,12 @@ enum NativeMapHTTPExchangeProbe {
           let budget = TripPaintingMapRequestBudget(scope: scope, directory: directory, opening: .newOperation)
     else { throw CocoaError(.fileReadCorruptFile) }
 
-    let driver = Driver(budget: budget, input: input, port: port)
+    let driver = Driver(budget: budget, input: input, port: port, single: single)
+    if single {
+      driver.process("single")
+      guard driver.completed.wait(timeout: .now() + 10) == .success else { throw URLError(.timedOut) }
+      return
+    }
     driver.process("start")
     while let command = readLine() { driver.process(command) }
   }
@@ -31,19 +37,24 @@ enum NativeMapHTTPExchangeProbe {
     private let budget: TripPaintingMapRequestBudget
     private let input: Input
     private let port: UInt16
+    private let single: Bool
     private let queue = DispatchQueue(label: "TripPaintingNativeMapHTTPExchangeFixture")
     private var exchanges = [Int: TripPaintingMapHTTPExchange]()
     private var firstPermit: TripPaintingMapRequestBudget.Permit?
+    let completed = DispatchSemaphore(value: 0)
 
-    init(budget: TripPaintingMapRequestBudget, input: Input, port: UInt16) {
+    init(budget: TripPaintingMapRequestBudget, input: Input, port: UInt16, single: Bool) {
       self.budget = budget
       self.input = input
       self.port = port
+      self.single = single
     }
 
     func process(_ command: String) {
       queue.sync {
         switch command {
+        case "single":
+          emit("start", ["slot": start(1, for: input.tile)])
         case "start":
           emit("start", ["outside": start(0, for: input.otherTile),
                          "slots": (1...5).map { start($0, for: input.tile) }])
@@ -96,6 +107,7 @@ enum NativeMapHTTPExchangeProbe {
                                                    destination: .loopbackFixture(port),
                                                    queue: queue, timeout: 8) { [weak self] report in
           guard let self, self.exchanges.removeValue(forKey: number) != nil else { return }
+          if self.single { return self.reportSingle(report) }
           switch report.result {
           case .success(let (response, body)):
             let totalBytes = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\ntest".utf8.count
@@ -114,6 +126,20 @@ enum NativeMapHTTPExchangeProbe {
         exchange.start()
         return "started"
       }
+    }
+
+    private func reportSingle(_ report: TripPaintingMapHTTPExchange.Report) {
+      var fields: [String: Any] = ["sends": report.requestSends, "httpBytes": report.receivedHTTPBytes]
+      switch report.result {
+      case .success(let (response, body)):
+        fields["status"] = response.statusCode
+        fields["bytes"] = body.count
+      case .failure(let error):
+        fields["error"] = String(describing: error)
+        fields["bytes"] = 0
+      }
+      emit("terminal", fields)
+      completed.signal()
     }
 
     private func emit(_ event: String, _ details: [String: Any]) {
