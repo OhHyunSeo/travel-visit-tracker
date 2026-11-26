@@ -220,3 +220,13 @@ complete log and independent final stores/journal remain mandatory. It retains
 the existing zoom-9 settled observer, for which the small-input trial showed
 no extra displacement at the selected settled endpoints. This is one new trial,
 not a claim that the response profile generalizes to other devices or motions.
+
+Add `--rn-midpoint-return` to `--rn-row-pan` for the predeclared second start
+condition. Keep the same preparation swipe and require longitude 128.50427174022053°
+within four physical pixels at zoom 9, on the 720×1280 fixture. This window lies
+between the two saved start observations. A missed start preserves its capture
+and proceeds to persistence checks without sending a south or return swipe.
+The midpoint case only sends coarse and fine return inputs within the observed
+error and input ranges recorded in `row-pan-plan.json`. The existing 2px and 80%
+acceptance checks still apply. Replay with `--row-pan --midpoint-return` to
+require the new plan and recheck both bounds. Older plans remain replayable.

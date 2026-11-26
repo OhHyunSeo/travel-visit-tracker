@@ -17,6 +17,12 @@ MEASURED_RETURN_POLICY = {**RETURN_POLICY, 'controller':'measured-small-v1',
                           'microThresholdPixels':10,
                           'verticalResponsePixels':[[10,1.675],[12,3.695],[16,7.551]],
                           'responseCapture':'rn-small-pan-log.uutG7wMo'}
+OBSERVED_RETURN_RANGE = {
+    'coarseErrorYPixels': [-180.47851385045215, -178.09179512309493],
+    'coarseSwipeYPixels': [190, 192],
+    'fineErrorYPixels': [-7.091796779597644, -5.757812470925273],
+    'fineSwipeYPixels': [16, 16],
+}
 
 
 def world(center):
@@ -56,7 +62,20 @@ def return_gesture(current, target, dimensions, policy=RETURN_POLICY):
     return [x,y,*end,RETURN_POLICY['durationMs']]
 
 
-def verify_row_return(directory, baseline, pid, policy=RETURN_POLICY):
+def check_observed_gesture(index, error_y, gesture):
+    if index >= 2:
+        raise ValueError('Another return gesture would exceed the observed sequence')
+    stage = 'coarse' if index == 0 else 'fine'
+    minimum_error, maximum_error = OBSERVED_RETURN_RANGE[f'{stage}ErrorYPixels']
+    minimum_swipe, maximum_swipe = OBSERVED_RETURN_RANGE[f'{stage}SwipeYPixels']
+    swipe_y = gesture[3] - gesture[1] if gesture is not None else 0
+    if (not minimum_error <= error_y <= maximum_error or
+            not minimum_swipe <= swipe_y <= maximum_swipe):
+        raise ValueError(f'{stage.capitalize()} return would leave the observed range '
+                         f'(Y error {error_y:.6f}px, input {swipe_y:+d}px)')
+
+
+def verify_row_return(directory, baseline, pid, policy=RETURN_POLICY, *, observed_only=False):
     root=directory/'pan-return'
     report=json.loads(read_bounded(root/'return-report.json',LOG_LIMIT))
     count=report.get('attempts')
@@ -69,6 +88,8 @@ def verify_row_return(directory, baseline, pid, policy=RETURN_POLICY):
         gesture=json.loads(read_bounded(folder/'gesture.json',LOG_LIMIT))
         if gesture != return_gesture(previous['center'],baseline['center'],report['dimensions'],policy):
             raise ValueError('Return gesture differs from the predeclared controller')
+        if observed_only:
+            check_observed_gesture(index, camera_error(previous['center'], baseline['center'])[1], gesture)
         verify_settling(folder,baseline,pid)
         previous=json.loads(read_bounded(folder/'zoom9-source.json',LOG_LIMIT))
         validate_snapshot(previous,baseline,pid)
@@ -87,14 +108,16 @@ def verify_row_return(directory, baseline, pid, policy=RETURN_POLICY):
     return {'attempts':count,'cameraErrorPixels':error,'tileSamples':overlaps}
 
 
-def capture_row_return(command,directory,package,activity,pid,baseline,dimensions,policy=RETURN_POLICY):
+def capture_row_return(command,directory,package,activity,pid,baseline,dimensions,policy=RETURN_POLICY, *, observed_only=False):
     from row_pan_trial import capture_settled
     root=directory/'pan-return';root.mkdir(mode=0o700)
     current=json.loads(read_bounded(directory/'pan-south/zoom9-source.json',LOG_LIMIT))
     records=[]
     for index in range(policy['maxGestures']):
-        folder=root/'attempts'/f'{index:02d}';folder.mkdir(mode=0o700,parents=True)
         gesture=return_gesture(current['center'],baseline['center'],dimensions,policy)
+        if observed_only:
+            check_observed_gesture(index, camera_error(current['center'], baseline['center'])[1], gesture)
+        folder=root/'attempts'/f'{index:02d}';folder.mkdir(mode=0o700,parents=True)
         write_capture(folder/'gesture.json',json.dumps(gesture).encode())
         require_foreground(command,activity)
         if running_pid(command,package) != pid:
@@ -110,4 +133,4 @@ def capture_row_return(command,directory,package,activity,pid,baseline,dimension
     report={'policy':policy,'dimensions':list(dimensions),'attempts':len(records),
             'selectedAttempt':len(records)-1,'records':records}
     write_capture(root/'return-report.json',json.dumps(report,sort_keys=True).encode())
-    return verify_row_return(directory,baseline,pid,policy)
+    return verify_row_return(directory,baseline,pid,policy,observed_only=observed_only)

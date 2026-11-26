@@ -15,12 +15,34 @@ PHASES = ('pan-south', 'pan-north')
 COAST_PLAN = {'id': 'coastal-start-v1', 'startSwipePercent': [63, 45, 38, 45],
               'southSwipePercent': [50, 51, 50, 36], 'northSwipePercent': [50, 36, 50, 60],
               'durationMs': 500}
+MIDPOINT_LONGITUDE = 128.50427174022053
+MIDPOINT_TOLERANCE_PX = 4
+COAST_DIMENSIONS = (720, 1280)
 
 
-def return_plan(measured=False):
-    from row_return_trial import RETURN_POLICY, MEASURED_RETURN_POLICY
+def return_plan(measured=False, *, midpoint=False):
+    from row_return_trial import RETURN_POLICY, MEASURED_RETURN_POLICY, OBSERVED_RETURN_RANGE
+    if midpoint:
+        return {**COAST_PLAN, 'id': 'coastal-midpoint-return-v1',
+                'returnPolicy': MEASURED_RETURN_POLICY,
+                'startLongitude': MIDPOINT_LONGITUDE, 'startTolerancePixels': MIDPOINT_TOLERANCE_PX,
+                'dimensions': list(COAST_DIMENSIONS), 'observedReturnRange': OBSERVED_RETURN_RANGE}
     return {**COAST_PLAN, 'id':'coastal-measured-return-v1' if measured else 'coastal-return-v1',
             'returnPolicy':MEASURED_RETURN_POLICY if measured else RETURN_POLICY}
+
+
+def check_coastal_start(start, baseline, dimensions, *, midpoint):
+    longitude, latitude = start['center']
+    base_longitude, base_latitude = baseline['center']
+    if not .08 <= longitude - base_longitude <= .16 or abs(latitude - base_latitude) > 1e-5:
+        raise ValueError('Row pan did not reach the predeclared eastern start')
+    if midpoint:
+        from row_return_trial import RETURN_POLICY
+        degrees = MIDPOINT_TOLERANCE_PX * 360 / RETURN_POLICY['worldPixels']
+        if dimensions != COAST_DIMENSIONS:
+            raise ValueError('Midpoint return requires a 720×1280 capture')
+        if not MIDPOINT_LONGITUDE - degrees <= longitude <= MIDPOINT_LONGITUDE + degrees:
+            raise ValueError(f'Midpoint start condition not met (longitude {longitude:.12f}°)')
 
 
 def samples(directory, name):
@@ -30,18 +52,19 @@ def samples(directory, name):
     return orange[0], len(orange[1]), len(blue[1])
 
 
-def verify_row_pan(directory, pid):
+def verify_row_pan(directory, pid, *, require_midpoint=False):
     baseline = json.loads(read_bounded(directory / 'restored-source.json', LOG_LIMIT))
     dimensions, orange, blue = samples(directory, 'restored.png')
     returning = False
-    measured = False
+    measured = midpoint = False
     if min(orange, blue) < 40:
         raise ValueError('Row pan requires the verified two-tile baseline')
     if (directory / 'row-pan-plan.json').exists() != (directory / 'pan-start').is_dir():
         raise ValueError('Row pan coastal start and plan must be captured together')
     if (directory / 'row-pan-plan.json').exists():
         plan = json.loads(read_bounded(directory / 'row-pan-plan.json', LOG_LIMIT))
-        measured = plan == return_plan(measured=True)
+        midpoint = plan == return_plan(midpoint=True)
+        measured = midpoint or plan == return_plan(measured=True)
         returning = plan == return_plan() or measured
         if plan != COAST_PLAN and not returning:
             raise ValueError('Row pan used a different predeclared coastal plan')
@@ -54,13 +77,13 @@ def verify_row_pan(directory, pid):
         start = json.loads(read_bounded(root / 'zoom9-source.json', LOG_LIMIT))
         validate_snapshot(start, baseline, pid)
         verify_settling(root, baseline, pid)
-        if (not .08 <= start['center'][0] - baseline['center'][0] <= .16 or
-                abs(start['center'][1] - baseline['center'][1]) > 1e-5):
-            raise ValueError('Row pan did not reach the predeclared eastern start')
+        check_coastal_start(start, baseline, dimensions, midpoint=midpoint)
         size, orange, blue = samples(root, 'screen.png')
         if size != dimensions:
             raise ValueError('Coastal start changed the screen dimensions')
         baseline = start
+    if require_midpoint and not midpoint:
+        raise ValueError('Expected the predeclared midpoint return plan')
     if min(orange, blue) < 40:
         raise ValueError('Row pan requires the verified two-tile baseline')
     centers = [baseline['center'][1]]
@@ -70,7 +93,7 @@ def verify_row_pan(directory, pid):
         snapshot = json.loads(read_bounded(root / 'zoom9-source.json', LOG_LIMIT))
         validate_snapshot(snapshot, baseline, pid)
         center = snapshot['center']
-        if (root / 'settling.json').exists():
+        if midpoint or (root / 'settling.json').exists():
             verify_settling(root, baseline, pid)
         size, top, bottom = samples(root, 'screen.png')
         if size != dimensions or top < 40:
@@ -82,7 +105,8 @@ def verify_row_pan(directory, pid):
             raise ValueError('Return trial did not first expose the wider southern tile')
         from row_return_trial import verify_row_return, RETURN_POLICY, MEASURED_RETURN_POLICY
         return {'baselineBottomTileSamples':blue,'viewIdentity':baseline['viewIdentity'],
-                'phases':result,'returned':verify_row_return(directory,baseline,pid,MEASURED_RETURN_POLICY if measured else RETURN_POLICY)}
+                'phases':result,'returned':verify_row_return(directory,baseline,pid,MEASURED_RETURN_POLICY if measured else RETURN_POLICY,
+                                                            observed_only=midpoint)}
     if not (centers[1] < centers[0] - 1e-5 and centers[2] > centers[0] + 1e-5):
         raise ValueError('Vertical gestures did not move south and north of the baseline')
     south, north = (result[phase] for phase in PHASES)
@@ -127,11 +151,13 @@ def capture_settled(command, root, package, activity, pid, baseline, phase='zoom
     return verify_settling(root, baseline, pid, phase)
 
 
-def capture_row_pan(command, directory, package, activity, pid):
+def capture_row_pan(command, directory, package, activity, pid, *, midpoint=False):
     width, height = samples(directory, 'restored.png')[0]
+    if midpoint and (width, height) != COAST_DIMENSIONS:
+        raise ValueError('Midpoint return requires a 720×1280 capture')
     baseline = json.loads(read_bounded(directory / 'restored-source.json', LOG_LIMIT))
     # Freeze the prospective plan before any gesture; old captures remain separate.
-    write_capture(directory / 'row-pan-plan.json', json.dumps(return_plan(measured=True), sort_keys=True).encode())
+    write_capture(directory / 'row-pan-plan.json', json.dumps(return_plan(measured=True, midpoint=midpoint), sort_keys=True).encode())
     require_foreground(command, activity)
     if running_pid(command, package) != pid:
         raise ValueError('Product process changed before coastal preparation')
@@ -142,9 +168,9 @@ def capture_row_pan(command, directory, package, activity, pid):
     start = directory / 'pan-start';start.mkdir(mode=0o700)
     capture_settled(command, start, package, activity, pid, baseline)
     prepared = json.loads(read_bounded(start / 'zoom9-source.json', LOG_LIMIT))
-    if (not .08 <= prepared['center'][0] - baseline['center'][0] <= .16 or
-            abs(prepared['center'][1] - baseline['center'][1]) > 1e-5):
-        raise ValueError('Row pan did not reach the predeclared eastern start')
+    check_coastal_start(prepared, baseline, (width, height), midpoint=midpoint)
+    if midpoint and min(samples(start, 'screen.png')[1:]) < 40:
+        raise ValueError('Row pan requires the verified two-tile baseline')
     report = {'originalRestored': frame_metrics(read_bounded(directory / 'restored.png', PNG_LIMIT)),
               'baseline': frame_metrics(read_bounded(start / 'screen.png', PNG_LIMIT)), 'phases': {}}
     # Stay within the map, above attribution and below the screen header.
@@ -159,8 +185,16 @@ def capture_row_pan(command, directory, package, activity, pid):
         root = directory / phase
         root.mkdir(mode=0o700)
         report['phases'][phase] = capture_settled(command, root, package, activity, pid, prepared)
+    if midpoint:
+        south = json.loads(read_bounded(root / 'zoom9-source.json', LOG_LIMIT))
+        southern = report['phases']['pan-south']
+        if (southern['dimensions'] != [width, height] or south['center'][1] >= prepared['center'][1] - 1e-5 or
+                southern['topTileSamples'] < 40 or
+                southern['bottomTileSamples'] < max(300, report['baseline']['bottomTileSamples'] * 4)):
+            raise ValueError('Return trial did not first expose the wider southern tile')
     from row_return_trial import capture_row_return, MEASURED_RETURN_POLICY
-    report['returned'] = capture_row_return(command,directory,package,activity,pid,prepared,(width,height),MEASURED_RETURN_POLICY)
+    report['returned'] = capture_row_return(command,directory,package,activity,pid,prepared,(width,height),MEASURED_RETURN_POLICY,
+                                            observed_only=midpoint)
     # Overlay counts are diagnostic only; the acceptance below still counts bare raster.
     write_capture(directory / 'row-pan-observations.json', json.dumps(report, sort_keys=True).encode())
-    return verify_row_pan(directory, pid)
+    return verify_row_pan(directory, pid, require_midpoint=midpoint)

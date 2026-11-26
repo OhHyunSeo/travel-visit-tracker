@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from PIL import Image, ImageDraw
 
-from row_pan_trial import COAST_PLAN, capture_settled, verify_row_pan
+from row_pan_trial import COAST_PLAN, MIDPOINT_LONGITUDE, capture_row_pan, capture_settled, check_coastal_start, verify_row_pan
 from row_pan_observations import frame_metrics, observation, verify_settling
 
 
@@ -28,6 +28,40 @@ def capture(root):
 
 
 class RowPanTest(unittest.TestCase):
+    def test_midpoint_gate_includes_four_pixels_and_excludes_both_historical_starts(self):
+        baseline = {'center': [128.40422065099693, 38.39305843344254]}
+        for pixels in (-4, 0, 4):
+            start = {'center': [MIDPOINT_LONGITUDE + pixels * 360 / 524288, baseline['center'][1]]}
+            check_coastal_start(start, baseline, (720, 1280), midpoint=True)
+        for longitude in (128.49197381196836, 128.5165696684727,
+                          MIDPOINT_LONGITUDE - 4.01 * 360 / 524288,
+                          MIDPOINT_LONGITUDE + 4.01 * 360 / 524288):
+            start = {'center': [longitude, baseline['center'][1]]}
+            check_coastal_start(start, baseline, (720, 1280), midpoint=False)
+            with self.assertRaisesRegex(ValueError, 'Midpoint start condition not met'):
+                check_coastal_start(start, baseline, (720, 1280), midpoint=True)
+
+    def test_capture_saves_a_missed_start_without_sending_a_south_swipe(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            capture(root)
+            baseline = json.loads((root / 'restored-source.json').read_text())
+            start = {**baseline, 'center': [128.52, 38.4]}
+            inputs = []
+
+            def settled(command, target, package, activity, pid, original):
+                (target / 'zoom9-source.json').write_text(json.dumps(start))
+
+            with patch('row_pan_trial.samples', return_value=((720, 1280), 6000, 80)), \
+                    patch('row_pan_trial.capture_settled', side_effect=settled), \
+                    patch('row_pan_trial.require_foreground'), patch('row_pan_trial.running_pid', return_value=900), \
+                    patch('row_pan_trial.time.sleep'):
+                with self.assertRaisesRegex(ValueError, 'Midpoint start condition not met'):
+                    capture_row_pan(lambda *args: inputs.append(args), root, 'fixture', 'activity', 900, midpoint=True)
+            self.assertEqual(len(inputs), 1)
+            self.assertEqual(json.loads((root / 'row-pan-plan.json').read_text())['id'], 'coastal-midpoint-return-v1')
+            self.assertEqual(json.loads((root / 'pan-start/zoom9-source.json').read_text()), start)
+
     def test_coastal_start_uses_its_own_four_times_baseline_and_the_frozen_plan(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);capture(root)

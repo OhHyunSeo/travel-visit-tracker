@@ -5,11 +5,18 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from row_return_trial import RETURN_POLICY, MEASURED_RETURN_POLICY, return_gesture, verify_row_return, world
+from row_return_trial import RETURN_POLICY, MEASURED_RETURN_POLICY, check_observed_gesture, return_gesture, verify_row_return, world
 from test_row_pan_trial import capture
 
 
 class ReturnTrialTest(unittest.TestCase):
+    def test_midpoint_return_allows_only_the_observed_correction_range(self):
+        check_observed_gesture(0, -179, [360, 614, 360, 805, 500])
+        check_observed_gesture(1, -6, [360, 614, 360, 630, 500])
+        for index, error, finger in ((0, -181, 193), (1, -7.1, 16), (1, -6, 12), (2, -6, 16)):
+            with self.assertRaisesRegex(ValueError, 'observed'):
+                check_observed_gesture(index, error, [360, 614, 360, 614 + finger, 500])
+
     def test_measured_micro_inputs_use_the_nearest_observed_response(self):
         target=[128.52,38.393];x,y=world(target)
         def current(error):
