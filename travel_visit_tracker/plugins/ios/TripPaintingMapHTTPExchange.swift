@@ -11,7 +11,7 @@ final class TripPaintingMapHTTPExchange: @unchecked Sendable {
     #endif
   }
 
-  struct Report {
+  struct Report: Sendable {
     let result: Result<(response: HTTPURLResponse, body: Data), Error>
     let requestSends: Int
     let receivedHTTPBytes: Int

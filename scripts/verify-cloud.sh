@@ -16,6 +16,7 @@ python3 -B -m unittest discover -s qa/map-transport/ios -p 'test_map_request_sco
 python3 -B -m unittest discover -s qa/map-transport/ios -p 'test_map_request_budget_transport.py'
 python3 -B -m unittest discover -s qa/map-transport/ios -p 'test_map_http_response.py'
 python3 -B -m unittest discover -s qa/map-transport/ios -p 'test_map_native_http_exchange.py'
+python3 -B -m unittest discover -s qa/map-transport/ios -p 'test_map_native_request_queue.py'
 python3 -m unittest discover -s qa/map-transport/ios-maplibre -p 'test_cancel_result.py'
 python3 -m unittest discover -s qa/map-transport/ios-maplibre -p 'test_tls_result.py'
 python3 -m unittest discover -s qa/map-transport/ios-maplibre -p 'test_tls_queue_result.py'
