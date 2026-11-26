@@ -6,7 +6,8 @@ from unittest.mock import patch
 
 from PIL import Image, ImageDraw
 
-from row_pan_trial import COAST_PLAN, MIDPOINT_LONGITUDE, capture_row_pan, capture_settled, check_coastal_start, verify_row_pan
+from row_pan_trial import (COAST_PLAN, MIDPOINT_LONGITUDE, capture_row_pan, capture_settled,
+                           check_coastal_start, midpoint_preparation_plan, verify_row_pan)
 from row_pan_observations import frame_metrics, observation, verify_settling
 
 
@@ -59,8 +60,25 @@ class RowPanTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'Midpoint start condition not met'):
                     capture_row_pan(lambda *args: inputs.append(args), root, 'fixture', 'activity', 900, midpoint=True)
             self.assertEqual(len(inputs), 1)
-            self.assertEqual(json.loads((root / 'row-pan-plan.json').read_text())['id'], 'coastal-midpoint-return-v1')
+            self.assertEqual(inputs[0][4:], ('453', '576', '285', '576', '500'))
+            self.assertEqual(json.loads((root / 'row-pan-plan.json').read_text())['id'], 'coastal-midpoint-shorter-prep-v1')
+            self.assertEqual(json.loads((root / 'pan-start/gesture.json').read_text()), [453, 576, 285, 576, 500])
             self.assertEqual(json.loads((root / 'pan-start/zoom9-source.json').read_text()), start)
+
+    def test_shorter_preparation_replay_rejects_a_legacy_swipe_in_its_receipt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            capture(root)
+            start = root / 'pan-start'
+            start.mkdir()
+            (start / 'gesture.json').write_text(json.dumps([453, 576, 273, 576, 500]))
+            (root / 'row-pan-plan.json').write_text(json.dumps(midpoint_preparation_plan()))
+            (root / 'map-log-capacity.txt').write_text('ring buffer is 8 MiB')
+            (root / 'map-log-before-row-pan.log').write_text(
+                '11-26 09:30:49.445  900  901 I TripProductMapQa: MAP_OFFLINE connected=false\n'
+                '11-26 09:30:49.446  900  901 I TripProductMapQa: MAP_ROUTE /(tabs)/index\n')
+            with self.assertRaisesRegex(ValueError, 'preparation swipe differs'):
+                verify_row_pan(root, 900, require_midpoint=True)
 
     def test_coastal_start_uses_its_own_four_times_baseline_and_the_frozen_plan(self):
         with tempfile.TemporaryDirectory() as temporary:

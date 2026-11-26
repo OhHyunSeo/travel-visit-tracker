@@ -222,11 +222,18 @@ no extra displacement at the selected settled endpoints. This is one new trial,
 not a claim that the response profile generalizes to other devices or motions.
 
 Add `--rn-midpoint-return` to `--rn-row-pan` for the predeclared second start
-condition. Keep the same preparation swipe and require longitude 128.50427174022053°
-within four physical pixels at zoom 9, on the 720×1280 fixture. This window lies
+condition. The current plan, `coastal-midpoint-shorter-prep-v1`, sends one 168px
+leftward swipe from (453,576) to (285,576) over 500ms. The three prior 180px
+inputs settled 127.80, 163.62 and 158.04px east. Adding their median input-to-motion
+difference (21.96px) to the 145.71px target gives this trial input. The range of
+prior responses makes the actual start an open measurement.
+Require longitude 128.50427174022053° within four physical pixels at zoom 9,
+on the 720×1280 fixture. This window lies
 between the two saved start observations. A missed start preserves its capture
 and proceeds to persistence checks without sending a south or return swipe.
 The midpoint case only sends coarse and fine return inputs within the observed
 error and input ranges recorded in `row-pan-plan.json`. The existing 2px and 80%
 acceptance checks still apply. Replay with `--row-pan --midpoint-return` to
-require the new plan and recheck both bounds. Older plans remain replayable.
+require a midpoint plan and recheck both bounds. The shorter plan also checks
+`pan-start/gesture.json` against its frozen input. The prior 180px midpoint plan
+remains independently replayable with its original start result.

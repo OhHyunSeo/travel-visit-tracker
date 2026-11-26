@@ -18,6 +18,9 @@ COAST_PLAN = {'id': 'coastal-start-v1', 'startSwipePercent': [63, 45, 38, 45],
 MIDPOINT_LONGITUDE = 128.50427174022053
 MIDPOINT_TOLERANCE_PX = 4
 COAST_DIMENSIONS = (720, 1280)
+# A 145.71px target plus the 21.96px median input-to-motion difference
+# from the three 180px swipes gives a single prospective 168px input.
+MIDPOINT_PREPARATION_SWIPE = (453, 576, 285, 576, 500)
 
 
 def return_plan(measured=False, *, midpoint=False):
@@ -29,6 +32,13 @@ def return_plan(measured=False, *, midpoint=False):
                 'dimensions': list(COAST_DIMENSIONS), 'observedReturnRange': OBSERVED_RETURN_RANGE}
     return {**COAST_PLAN, 'id':'coastal-measured-return-v1' if measured else 'coastal-return-v1',
             'returnPolicy':MEASURED_RETURN_POLICY if measured else RETURN_POLICY}
+
+
+def midpoint_preparation_plan():
+    plan = return_plan(midpoint=True)
+    del plan['startSwipePercent']
+    return {**plan, 'id': 'coastal-midpoint-shorter-prep-v1',
+            'startSwipePixels': list(MIDPOINT_PREPARATION_SWIPE)}
 
 
 def check_coastal_start(start, baseline, dimensions, *, midpoint):
@@ -63,7 +73,8 @@ def verify_row_pan(directory, pid, *, require_midpoint=False):
         raise ValueError('Row pan coastal start and plan must be captured together')
     if (directory / 'row-pan-plan.json').exists():
         plan = json.loads(read_bounded(directory / 'row-pan-plan.json', LOG_LIMIT))
-        midpoint = plan == return_plan(midpoint=True)
+        shorter_preparation = plan == midpoint_preparation_plan()
+        midpoint = shorter_preparation or plan == return_plan(midpoint=True)
         measured = midpoint or plan == return_plan(measured=True)
         returning = plan == return_plan() or measured
         if plan != COAST_PLAN and not returning:
@@ -74,6 +85,10 @@ def verify_row_pan(directory, pid, *, require_midpoint=False):
             if b'ring buffer is 8 MiB' not in read_bounded(directory/'map-log-capacity.txt',4096):
                 raise ValueError('Measured return lacks the dedicated 8MiB log capacity')
         root = directory / 'pan-start'
+        if shorter_preparation:
+            recorded_swipe = json.loads(read_bounded(root / 'gesture.json', LOG_LIMIT))
+            if recorded_swipe != plan['startSwipePixels']:
+                raise ValueError('Midpoint preparation swipe differs from the predeclared plan')
         start = json.loads(read_bounded(root / 'zoom9-source.json', LOG_LIMIT))
         validate_snapshot(start, baseline, pid)
         verify_settling(root, baseline, pid)
@@ -157,15 +172,21 @@ def capture_row_pan(command, directory, package, activity, pid, *, midpoint=Fals
         raise ValueError('Midpoint return requires a 720×1280 capture')
     baseline = json.loads(read_bounded(directory / 'restored-source.json', LOG_LIMIT))
     # Freeze the prospective plan before any gesture; old captures remain separate.
-    write_capture(directory / 'row-pan-plan.json', json.dumps(return_plan(measured=True, midpoint=midpoint), sort_keys=True).encode())
+    plan = midpoint_preparation_plan() if midpoint else return_plan(measured=True)
+    write_capture(directory / 'row-pan-plan.json', json.dumps(plan, sort_keys=True).encode())
     require_foreground(command, activity)
     if running_pid(command, package) != pid:
         raise ValueError('Product process changed before coastal preparation')
-    x1,y1,x2,y2 = COAST_PLAN['startSwipePercent']
-    command(512, 'shell', 'input', 'swipe', str(width*x1//100), str(height*y1//100),
-            str(width*x2//100), str(height*y2//100), str(COAST_PLAN['durationMs']))
+    start = directory / 'pan-start'
+    start.mkdir(mode=0o700)
+    if midpoint:
+        swipe = plan['startSwipePixels']
+        write_capture(start / 'gesture.json', json.dumps(swipe).encode())
+    else:
+        x1, y1, x2, y2 = plan['startSwipePercent']
+        swipe = [width*x1//100, height*y1//100, width*x2//100, height*y2//100, plan['durationMs']]
+    command(512, 'shell', 'input', 'swipe', *map(str, swipe))
     time.sleep(.75)
-    start = directory / 'pan-start';start.mkdir(mode=0o700)
     capture_settled(command, start, package, activity, pid, baseline)
     prepared = json.loads(read_bounded(start / 'zoom9-source.json', LOG_LIMIT))
     check_coastal_start(prepared, baseline, (width, height), midpoint=midpoint)
