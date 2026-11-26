@@ -56,15 +56,22 @@ final class OfflineMapRequestPolicy: @unchecked Sendable {
     guard let scope = TripPaintingMapRequestScope.validatePrepared(scopeJSON, styleJSON: styleJSON, metadataJSON: metadataJSON),
           let url = URL(string: "https://\(TripPaintingMapOperationRoute.host)/v1/\(scope.operationId)/\(scope.localStyleSha256).json")
     else { return nil }
+    return register(LocalStyle(url: url, bytes: Data(styleJSON.utf8), scope: scope), requiresCacheOnly: false)
+  }
 
-    let bytes = Data(styleJSON.utf8)
+  func registerOperationStyle(_ route: TripPaintingMapOperationRoute) -> URL? {
+    register(LocalStyle(url: route.styleURL, bytes: route.styleBytes, scope: route.scope), requiresCacheOnly: true)
+  }
+
+  private func register(_ style: LocalStyle, requiresCacheOnly: Bool) -> URL? {
     lock.lock()
     defer { lock.unlock() }
+    guard !requiresCacheOnly || blocked else { return nil }
     if let existing = registeredStyle {
-      return existing.scope == scope && existing.bytes == bytes ? existing.url : nil
+      return existing.url == style.url && existing.scope == style.scope && existing.bytes == style.bytes ? existing.url : nil
     }
-    registeredStyle = LocalStyle(url: url, bytes: bytes, scope: scope)
-    return url
+    registeredStyle = style
+    return style.url
   }
 
   func intercepts(_ request: URLRequest) -> Bool {

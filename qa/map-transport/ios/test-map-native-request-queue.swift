@@ -18,6 +18,9 @@ enum NativeMapRequestQueueProbe {
     let outsideScope: Bool?
     let describeRoute: Bool?
     let routedRequest: RoutedRequest?
+    let blockStyleRequests: Bool?
+    let registerOperationStyle: Bool?
+    let fetchStyle: URL?
   }
 
   private struct RoutedRequest: Decodable {
@@ -27,7 +30,7 @@ enum NativeMapRequestQueueProbe {
     let body: String?
   }
 
-  static func main() throws {
+  static func main() async throws {
     let args = CommandLine.arguments
     let decoder = JSONDecoder()
     guard args.count == 3, let port = UInt16(args[1]), port >= 1024, let line = readLine() else {
@@ -44,7 +47,20 @@ enum NativeMapRequestQueueProbe {
     while let line = readLine() {
       let command = try decoder.decode(Command.self, from: Data(line.utf8))
       driver.process(command)
+      if let url = command.fetchStyle { await driver.fetchStyle(url) }
     }
+  }
+
+  // Fail with a distinct error if the tested guard leaves a request unhandled.
+  private final class NoNetworkFallback: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+      client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
+    }
+
+    override func stopLoading() {}
   }
 
   private final class Driver: @unchecked Sendable {
@@ -55,6 +71,7 @@ enum NativeMapRequestQueueProbe {
     private lazy var route = TripPaintingMapOperationRoute(scopeJSON: input.scope, styleJSON: input.style,
                                                            metadataJSON: input.saved)
     private var identifiers: [Int: UUID] = [:]
+    private var styleSession: URLSession?
 
     init?(scope: TripPaintingMapRequestScope, directory: URL, port: UInt16, input: Input) {
       let queue = DispatchQueue(label: "TripPaintingNativeMapRequestQueueFixture")
@@ -67,6 +84,8 @@ enum NativeMapRequestQueueProbe {
       ledger = directory.appendingPathComponent("request-budget-v1.sqlite")
     }
 
+    deinit { styleSession?.invalidateAndCancel() }
+
     func process(_ command: Command) {
       queue.sync {
         for number in command.add ?? [] {
@@ -77,6 +96,11 @@ enum NativeMapRequestQueueProbe {
                          "style": String(decoding: route.styleBytes, as: UTF8.self)])
         }
         if let routed = command.routedRequest { routeRequest(routed) }
+        if let blocked = command.blockStyleRequests { OfflineMapRequestGuard.policy.setBlocked(blocked) }
+        if command.registerOperationStyle == true {
+          let address = route.flatMap { OfflineMapRequestGuard.policy.registerOperationStyle($0) }
+          emit("registeredStyle", ["address": address.map { $0.absoluteString as Any } ?? NSNull()])
+        }
         if let number = command.cancel, let id = identifiers[number] {
           requests.cancel(id)
           requests.cancel(id)
@@ -87,6 +111,29 @@ enum NativeMapRequestQueueProbe {
         }
         // A terminal connection callback cannot run during this serial turn.
         emit("checkpoint", ["charges": readCharges()])
+      }
+    }
+
+    func fetchStyle(_ address: URL) async {
+      precondition(address.scheme == "https" && address.host == TripPaintingMapOperationRoute.host)
+      if styleSession == nil {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfflineMapRequestGuard.self, NoNetworkFallback.self]
+        configuration.timeoutIntervalForRequest = 3
+        styleSession = URLSession(configuration: configuration)
+      }
+      guard let styleSession else { preconditionFailure("missing fixture session") }
+      do {
+        let (body, response) = try await styleSession.data(from: address)
+        guard let response = response as? HTTPURLResponse else { preconditionFailure("missing style response") }
+        emit("styleResult", ["address": response.url.map { $0.absoluteString as Any } ?? NSNull(),
+                             "status": response.statusCode,
+                             "length": response.value(forHTTPHeaderField: "Content-Length").map { $0 as Any } ?? NSNull(),
+                             "mimeType": response.mimeType.map { $0 as Any } ?? NSNull(),
+                             "body": String(decoding: body, as: UTF8.self)])
+      } catch {
+        let error = error as NSError
+        emit("styleResult", ["errorDomain": error.domain, "errorCode": error.code])
       }
     }
 

@@ -66,6 +66,7 @@ class MapNativeRequestQueueTests(unittest.TestCase):
             str(sources / "TripPaintingMapHTTPResponse.swift"),
             str(sources / "TripPaintingMapHTTPExchange.swift"),
             str(sources / "TripPaintingMapRequestQueue.swift"),
+            str(sources / "TripPaintingOfflineMapRequestGuard.swift"),
             str(HERE / "test-map-native-request-queue.swift"),
             "-framework", "Network", "-framework", "Security", "-o", str(cls.binary),
         ], check=True, timeout=90)
@@ -132,6 +133,46 @@ class MapNativeRequestQueueTests(unittest.TestCase):
     def charges(self, ledger):
         with sqlite3.connect(ledger) as database:
             return database.execute("SELECT tile_attempts, reserved_bytes FROM request_budget").fetchone()
+
+    def test_urlsession_guard_serves_only_the_registered_operation_style(self):
+        scope = json.loads(self.payload["scope"])
+        root = (f"https://offline-style.trip-painting.invalid/v2/{scope['operationId']}/"
+                f"{scope['localStyleSha256']}")
+        address = root + "/style.json"
+        checkpoint = {"event": "checkpoint", "charges": [0, 0]}
+        denied = {"event": "styleResult", "errorDomain": "NSURLErrorDomain", "errorCode": -1009}
+        with self.fixture() as (probe, server, ledger):
+            probe.send({"registerOperationStyle": True})
+            self.assertEqual(probe.receive(), {"event": "registeredStyle", "address": None})
+            self.assertEqual(probe.receive(), checkpoint)
+
+            self.checkpoint(probe, [0, 0], blockStyleRequests=True, fetchStyle=address)
+            self.assertEqual(probe.receive(), denied)
+
+            probe.send({"describeRoute": True, "registerOperationStyle": True})
+            route = probe.receive()
+            self.assertEqual(route["event"], "route")
+            self.assertEqual(route["styleURL"], address)
+            self.assertEqual(probe.receive(), {"event": "registeredStyle", "address": address})
+            self.assertEqual(probe.receive(), checkpoint)
+
+            self.checkpoint(probe, [0, 0], fetchStyle=address)
+            result = probe.receive()
+            self.assertEqual(result, {"event": "styleResult", "address": address, "status": 200,
+                                      "length": str(len(route["style"].encode())),
+                                      "mimeType": "application/json", "body": route["style"]})
+            sources = json.loads(result["body"])["sources"]
+            for source, kind in (("openmaptiles", "vector"), ("ne2_shaded", "raster")):
+                self.assertEqual(sources[source]["tiles"],
+                                 [root + "/resource" + urlsplit(scope["resources"][kind]).path])
+
+            wrong_job = address.replace(scope["operationId"], "7729af8d-20ac-42db-ae59-3773944d5530")
+            resource = root + "/resource" + urlsplit(self.payload["tiles"][0]).path
+            for wrong_address in (wrong_job, address + "?changed=1", address + "/", resource):
+                self.checkpoint(probe, [0, 0], fetchStyle=wrong_address)
+                self.assertEqual(probe.receive(), denied)
+            self.wait_server(server, 0, 0)
+            self.assertEqual(self.charges(ledger), (0, 0))
 
     def test_prepared_route_rewrites_only_validated_resources_and_reaches_the_queue(self):
         scope = json.loads(self.payload["scope"])
