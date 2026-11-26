@@ -36,7 +36,6 @@ final class OfflineMapRequestPolicy: @unchecked Sendable {
     fileprivate let scope: TripPaintingMapRequestScope
   }
 
-  private static let localStyleHost = "offline-style.trip-painting.invalid"
   private let lock = NSLock()
   private var blocked = false
   private var registeredStyle: LocalStyle?
@@ -55,7 +54,7 @@ final class OfflineMapRequestPolicy: @unchecked Sendable {
 
   func registerStyle(_ scopeJSON: String, styleJSON: String, metadataJSON: String) -> URL? {
     guard let scope = TripPaintingMapRequestScope.validatePrepared(scopeJSON, styleJSON: styleJSON, metadataJSON: metadataJSON),
-          let url = URL(string: "https://\(Self.localStyleHost)/v1/\(scope.operationId)/\(scope.localStyleSha256).json")
+          let url = URL(string: "https://\(TripPaintingMapOperationRoute.host)/v1/\(scope.operationId)/\(scope.localStyleSha256).json")
     else { return nil }
 
     let bytes = Data(styleJSON.utf8)
@@ -73,7 +72,7 @@ final class OfflineMapRequestPolicy: @unchecked Sendable {
     else { return false }
     // Even when external requests are enabled, the app's reserved host has no network route.
     let host = request.url?.host?.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
-    return host == Self.localStyleHost || isBlocked
+    return host == TripPaintingMapOperationRoute.host || isBlocked
   }
 
   func localStyle(for request: URLRequest) -> LocalStyle? {

@@ -78,7 +78,7 @@ struct TripPaintingMapRequestScope: Equatable {
     let localStyleSha256: String
   }
 
-  private static let providerOrigin = "https://tiles.openfreemap.org"
+  fileprivate static let providerOrigin = "https://tiles.openfreemap.org"
   private static let coordinateTemplate = "{z}/{x}/{y}"
   private static let fontStacks = ["Noto Sans Regular", "Noto Sans Italic", "Noto Sans Bold"]
   private static let mercatorLimit = atan(sinh(Double.pi)) * 180 / Double.pi
@@ -250,5 +250,60 @@ struct TripPaintingMapRequestScope: Equatable {
           let range = plan.tileRanges.first(where: { $0.source == source && $0.zoom == zoom })
     else { return false }
     return (range.minX...range.maxX).contains(x) && (range.minY...range.maxY).contains(y)
+  }
+}
+
+/// Gives a verified offline style its own resource addresses before it enters a shared SDK session.
+struct TripPaintingMapOperationRoute {
+  static let host = "offline-style.trip-painting.invalid"
+
+  let scope: TripPaintingMapRequestScope
+  let styleURL: URL
+  let styleBytes: Data
+  private let resourcePrefix: String
+
+  init?(scopeJSON: String, styleJSON: String, metadataJSON: String) {
+    guard let scope = TripPaintingMapRequestScope.validatePrepared(scopeJSON, styleJSON: styleJSON,
+                                                                  metadataJSON: metadataJSON),
+          var style = (try? JSONSerialization.jsonObject(with: Data(styleJSON.utf8))) as? [String: Any],
+          var sources = style["sources"] as? [String: [String: Any]],
+          var vector = sources["openmaptiles"], let vectorTemplate = (vector["tiles"] as? [String])?.first,
+          var raster = sources["ne2_shaded"], let rasterTemplate = (raster["tiles"] as? [String])?.first,
+          let glyphs = style["glyphs"] as? String, let sprite = style["sprite"] as? String
+    else { return nil }
+
+    let root = "https://\(Self.host)/v2/\(scope.operationId)/\(scope.localStyleSha256)"
+    let resourcePrefix = "\(root)/resource"
+    func operationAddress(_ providerAddress: String) -> String {
+      // The prepared scope already checked the exact provider prefix and all four templates.
+      resourcePrefix + providerAddress.dropFirst(TripPaintingMapRequestScope.providerOrigin.count)
+    }
+    vector["tiles"] = [operationAddress(vectorTemplate)]
+    raster["tiles"] = [operationAddress(rasterTemplate)]
+    sources["openmaptiles"] = vector
+    sources["ne2_shaded"] = raster
+    style["sources"] = sources
+    style["glyphs"] = operationAddress(glyphs)
+    style["sprite"] = operationAddress(sprite)
+
+    guard let styleURL = URL(string: "\(root)/style.json"),
+          let bytes = try? JSONSerialization.data(withJSONObject: style, options: [.sortedKeys, .withoutEscapingSlashes])
+    else { return nil }
+    self.scope = scope
+    self.styleURL = styleURL
+    self.styleBytes = bytes
+    self.resourcePrefix = resourcePrefix
+  }
+
+  func providerRequest(for request: URLRequest) -> URLRequest? {
+    guard request.httpMethod == "GET", request.httpBody == nil, request.httpBodyStream == nil,
+          let address = request.url?.absoluteString, address.hasPrefix(resourcePrefix + "/"),
+          address.utf8.count <= resourcePrefix.utf8.count + 512
+    else { return nil }
+    let providerAddress = TripPaintingMapRequestScope.providerOrigin + address.dropFirst(resourcePrefix.count)
+    guard scope.resourceKind(for: providerAddress, method: "GET") != nil,
+          let providerURL = URL(string: providerAddress), providerURL.absoluteString == providerAddress
+    else { return nil }
+    return URLRequest(url: providerURL)
   }
 }

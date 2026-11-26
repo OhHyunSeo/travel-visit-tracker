@@ -12,7 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from test_http_exchange import QueueFixture
 from test_map_request_scope import APP, GENERATOR, HERE
@@ -132,6 +132,69 @@ class MapNativeRequestQueueTests(unittest.TestCase):
     def charges(self, ledger):
         with sqlite3.connect(ledger) as database:
             return database.execute("SELECT tile_attempts, reserved_bytes FROM request_budget").fetchone()
+
+    def test_prepared_route_rewrites_only_validated_resources_and_reaches_the_queue(self):
+        scope = json.loads(self.payload["scope"])
+        resources = scope["resources"]
+        root = (f"https://offline-style.trip-painting.invalid/v2/{scope['operationId']}/"
+                f"{scope['localStyleSha256']}")
+
+        def alias(address):
+            return root + "/resource" + urlsplit(address).path
+
+        expected_style = json.loads(self.payload["style"])
+        expected_style["glyphs"] = alias(resources["glyphs"])
+        expected_style["sprite"] = alias(resources["sprite"])
+        expected_style["sources"]["openmaptiles"]["tiles"] = [alias(resources["vector"])]
+        expected_style["sources"]["ne2_shaded"]["tiles"] = [alias(resources["raster"])]
+
+        vector = self.payload["tiles"][0]
+        vector_range = next(item for item in scope["plan"]["tileRanges"] if item["source"] == "vector")
+        raster_range = next(item for item in scope["plan"]["tileRanges"] if item["source"] == "raster")
+        raster = resources["raster"].format(z=raster_range["zoom"], x=raster_range["minX"], y=raster_range["minY"])
+        glyph = resources["glyphs"].format(fontstack=quote(resources["fontStacks"][0]), range="0-255")
+        sprite = resources["sprite"] + ".json"
+        outside_scope = resources["vector"].format(z=vector_range["zoom"], x=vector_range["minX"] - 1,
+                                                     y=vector_range["minY"])
+        other_operation = "7729af8d-20ac-42db-ae59-3773944d5530"
+        rejected = [
+            {"address": vector},
+            {"address": alias(vector).replace(scope["operationId"], other_operation)},
+            {"address": alias(vector).replace(scope["localStyleSha256"], "f" * 64)},
+            {"address": alias(vector) + "?extra=1"},
+            {"address": alias(vector) + "#fragment"},
+            {"address": alias(outside_scope)},
+            {"address": alias(vector), "method": "POST"},
+            {"address": alias(vector), "body": "fixture request body"},
+        ]
+
+        with self.fixture() as (probe, server, ledger):
+            probe.send({"describeRoute": True})
+            route = probe.receive()
+            self.assertEqual(route["event"], "route")
+            self.assertEqual(route["styleURL"], root + "/style.json")
+            self.assertEqual(json.loads(route["style"]), expected_style)
+            self.assertEqual(probe.receive(), {"event": "checkpoint", "charges": [0, 0]})
+
+            for number, request in enumerate(rejected, 10):
+                with self.subTest(rejected=number):
+                    probe.send({"routedRequest": {"number": number, **request}})
+                    self.assertEqual(probe.receive(), {"event": "routeRejected", "number": number})
+                    self.assertEqual(probe.receive(), {"event": "checkpoint", "charges": [0, 0]})
+            self.wait_server(server, 0, 0)
+            self.assertEqual(self.charges(ledger), (0, 0))
+
+            admitted = [vector, raster, glyph, sprite]
+            for number, address in enumerate(admitted, 1):
+                self.checkpoint(probe, [min(number, 2), 256 * number],
+                                routedRequest={"number": number, "address": alias(address)})
+            requests = self.wait_server(server, 4, 4)
+            self.assertCountEqual(map(self.wire_path, requests), [urlsplit(address).path for address in admitted])
+            server.release.set()
+            self.assertCountEqual([probe.receive() for _ in admitted],
+                                  [self.terminal(number) for number in range(1, 5)])
+            self.wait_server(server, 4, 0)
+            self.assertEqual(self.charges(ledger), (2, 1024))
 
     def test_unreserved_pending_cancellation_then_fifo_after_terminal(self):
         expected_paths = [urlsplit(url).path for url in self.payload["tiles"]]

@@ -16,6 +16,15 @@ enum NativeMapRequestQueueProbe {
     let close: Bool?
     let bytes: Int?
     let outsideScope: Bool?
+    let describeRoute: Bool?
+    let routedRequest: RoutedRequest?
+  }
+
+  private struct RoutedRequest: Decodable {
+    let number: Int
+    let address: URL
+    let method: String?
+    let body: String?
   }
 
   static func main() throws {
@@ -29,7 +38,7 @@ enum NativeMapRequestQueueProbe {
     guard !input.tiles.isEmpty,
           let scope = TripPaintingMapRequestScope.validatePrepared(input.scope, styleJSON: input.style,
                                                                    metadataJSON: input.saved),
-          let driver = Driver(scope: scope, directory: directory, port: port, tiles: input.tiles)
+          let driver = Driver(scope: scope, directory: directory, port: port, input: input)
     else { throw CocoaError(.fileReadCorruptFile) }
 
     while let line = readLine() {
@@ -42,17 +51,19 @@ enum NativeMapRequestQueueProbe {
     private let queue: DispatchQueue
     private let requests: TripPaintingMapRequestQueue
     private let ledger: URL
-    private let tiles: [URL]
+    private let input: Input
+    private lazy var route = TripPaintingMapOperationRoute(scopeJSON: input.scope, styleJSON: input.style,
+                                                           metadataJSON: input.saved)
     private var identifiers: [Int: UUID] = [:]
 
-    init?(scope: TripPaintingMapRequestScope, directory: URL, port: UInt16, tiles: [URL]) {
+    init?(scope: TripPaintingMapRequestScope, directory: URL, port: UInt16, input: Input) {
       let queue = DispatchQueue(label: "TripPaintingNativeMapRequestQueueFixture")
       guard let requests = TripPaintingMapRequestQueue(scope: scope, directory: directory, opening: .newOperation,
                                                        destination: .loopbackFixture(port), queue: queue, timeout: 20)
       else { return nil }
       self.queue = queue
       self.requests = requests
-      self.tiles = tiles
+      self.input = input
       ledger = directory.appendingPathComponent("request-budget-v1.sqlite")
     }
 
@@ -61,6 +72,11 @@ enum NativeMapRequestQueueProbe {
         for number in command.add ?? [] {
           enqueue(number, bytes: command.bytes ?? 256, outsideScope: command.outsideScope ?? false)
         }
+        if command.describeRoute == true, let route {
+          emit("route", ["styleURL": route.styleURL.absoluteString,
+                         "style": String(decoding: route.styleBytes, as: UTF8.self)])
+        }
+        if let routed = command.routedRequest { routeRequest(routed) }
         if let number = command.cancel, let id = identifiers[number] {
           requests.cancel(id)
           requests.cancel(id)
@@ -75,12 +91,32 @@ enum NativeMapRequestQueueProbe {
     }
 
     private func enqueue(_ number: Int, bytes: Int, outsideScope: Bool) {
-      precondition(number > 0 && identifiers[number] == nil)
-      let tile = tiles[(number - 1) % tiles.count]
+      let tile = input.tiles[(number - 1) % input.tiles.count]
       let address = outsideScope ? tile.appending(queryItems: [URLQueryItem(name: "fixture", value: "outside")]) : tile
+      enqueue(request(for: address), number: number, bytes: bytes)
+    }
+
+    private func routeRequest(_ routed: RoutedRequest) {
+      var request = request(for: routed.address)
+      request.httpMethod = routed.method ?? "GET"
+      if let body = routed.body { request.httpBody = Data(body.utf8) }
+      guard let providerRequest = route?.providerRequest(for: request) else {
+        emit("routeRejected", ["number": routed.number])
+        return
+      }
+      enqueue(providerRequest, number: routed.number, bytes: 256)
+    }
+
+    private func request(for address: URL) -> URLRequest {
       var request = URLRequest(url: address)
       request.setValue("Bearer fixture-only", forHTTPHeaderField: "Authorization")
       request.setValue("fixture-account=1", forHTTPHeaderField: "Cookie")
+      return request
+    }
+
+    private func enqueue(_ request: URLRequest, number: Int, bytes: Int) {
+      precondition(number > 0 && identifiers[number] == nil)
+      let address = request.url
       identifiers[number] = requests.enqueue(request, maximumBodyBytes: bytes) { [weak self] result in
         guard let self else { return }
         precondition(self.identifiers.removeValue(forKey: number) != nil)
