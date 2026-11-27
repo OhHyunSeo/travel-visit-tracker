@@ -104,6 +104,10 @@ class MapRequestScopeTests(unittest.TestCase):
                         str(APP / "plugins/ios/TripPaintingMapRequestScope.swift"),
                         str(APP / "plugins/ios/TripPaintingOfflineMapRequestGuard.swift"),
                         str(APP / "plugins/ios/TripPaintingMapRequestBudget.swift"),
+                        str(APP / "plugins/ios/TripPaintingMapHTTPResponse.swift"),
+                        str(APP / "plugins/ios/TripPaintingMapHTTPExchange.swift"),
+                        str(APP / "plugins/ios/TripPaintingMapRequestQueue.swift"),
+                        str(APP / "plugins/ios/TripPaintingMapQueuedResource.swift"),
                         str(HERE / "test-map-request-budget.swift"),
                         str(HERE / "test-map-request-scope.swift"), "-o", str(cls.probe)],
                        check=True, capture_output=True, text=True, timeout=90)

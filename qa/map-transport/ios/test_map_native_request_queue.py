@@ -135,10 +135,13 @@ class MapNativeRequestQueueTests(unittest.TestCase):
         with sqlite3.connect(ledger) as database:
             return database.execute("SELECT tile_attempts, reserved_bytes FROM request_budget").fetchone()
 
-    def resource_requests(self, *numbers):
+    def operation_style_address(self):
         scope = json.loads(self.payload["scope"])
-        prefix = (f"https://offline-style.trip-painting.invalid/v2/{scope['operationId']}/"
-                  f"{scope['localStyleSha256']}/resource")
+        return (f"https://offline-style.trip-painting.invalid/v2/{scope['operationId']}/"
+                f"{scope['localStyleSha256']}/style.json")
+
+    def resource_requests(self, *numbers):
+        prefix = self.operation_style_address().removesuffix("/style.json") + "/resource"
         return [{"number": number, "address": prefix + urlsplit(self.payload["tiles"][number - 1]).path}
                 for number in numbers]
 
@@ -151,6 +154,107 @@ class MapNativeRequestQueueTests(unittest.TestCase):
 
     def resource_result(self, request):
         return {"event": "resourceResult", **request, "status": 200, "length": "4", "body": "test"}
+
+    def activate_session(self, probe):
+        probe.send({"blockStyleRequests": True, "registerActiveOperation": True})
+        self.assertEqual(probe.receive(), {"event": "registeredActiveOperation",
+                                           "address": self.operation_style_address()})
+        self.assertEqual(probe.receive(), {"event": "checkpoint", "charges": [0, 0]})
+
+    def session_starts(self, probe, requests, charges):
+        probe.send({"startSessionRequests": requests})
+        for request in requests:
+            self.assertEqual(probe.receive(), {"event": "sessionStarted", "number": request["number"]})
+        self.assertEqual(probe.receive(), {"event": "checkpoint", "charges": charges})
+
+    def session_error(self, number, code):
+        return {"event": "sessionResult", "number": number, "bodyBytes": 0,
+                "errorDomain": "NSURLErrorDomain", "errorCode": code}
+
+    def test_urlsession_active_operation_serves_style_and_only_its_resource_aliases(self):
+        style_address = self.operation_style_address()
+        allowed = self.resource_requests(1)[0]
+        provider = self.payload["tiles"][0]
+        operation_id = json.loads(self.payload["scope"])["operationId"]
+        unrelated = allowed["address"].replace(operation_id, "7729af8d-20ac-42db-ae59-3773944d5530")
+        with self.fixture() as (probe, server, ledger):
+            self.activate_session(probe)
+            self.checkpoint(probe, [0, 0], fetchStyle=style_address)
+            style = probe.receive()
+            self.assertEqual((style["event"], style["address"], style["status"], style["mimeType"]),
+                             ("styleResult", style_address, 200, "application/json"))
+            self.assertEqual(style["length"], str(len(style["body"].encode())))
+            vector = json.loads(self.payload["scope"])["resources"]["vector"]
+            path_prefix = style_address.removesuffix("/style.json") + "/resource"
+            self.assertEqual(json.loads(style["body"])["sources"]["openmaptiles"]["tiles"],
+                             [path_prefix + urlsplit(vector).path])
+
+            denied = [{"number": 2, "address": provider}, {"number": 3, "address": unrelated}]
+            self.session_starts(probe, denied, [0, 0])
+            self.assertCountEqual([probe.receive() for _ in denied],
+                                  [self.session_error(number, -1009) for number in (2, 3)])
+            self.wait_server(server, 0, 0)
+
+            self.session_starts(probe, [allowed], [0, 0])
+            self.assertEqual(self.wire_path(self.wait_server(server, 1, 1)[0]), urlsplit(provider).path)
+            server.release.set()
+            self.assertEqual(probe.receive(), {"event": "sessionResult", **allowed, "bodyBytes": 4,
+                                               "status": 200, "length": "4", "body": "test"})
+            self.wait_server(server, 1, 0)
+            self.assertEqual(self.charges(ledger), (1, 256))
+
+    def test_urlsession_task_cancel_closes_held_transport_without_data(self):
+        with self.fixture() as (probe, server, ledger):
+            self.activate_session(probe)
+            self.session_starts(probe, self.resource_requests(1), [0, 0])
+            self.wait_server(server, 1, 1)
+
+            self.checkpoint(probe, [1, 256], cancelSessionRequest=1)
+            self.assertEqual(probe.receive(), self.session_error(1, -999))
+            self.wait_server(server, 1, 0)
+            self.assertFalse(server.release.is_set())
+            self.assertEqual(self.charges(ledger), (1, 256))
+
+    def test_urlsession_unregister_fails_active_and_pending_and_stops_new_admission(self):
+        old_operation = json.loads(self.payload["scope"])["operationId"]
+        replacement_operation = "7729af8d-20ac-42db-ae59-3773944d5530"
+        with self.fixture() as (probe, server, ledger):
+            self.activate_session(probe)
+            self.session_starts(probe, self.resource_requests(1, 2, 3, 4, 5, 6), [0, 0])
+            self.wait_server(server, 4, 4)
+            deadline = time.monotonic() + 5
+            while True:
+                probe.send({"inspectPendingRequests": True})
+                pending = probe.receive()
+                self.assertEqual(pending["event"], "pendingRequests")
+                self.assertEqual(probe.receive(), {"event": "checkpoint", "charges": [4, 1024]})
+                if pending["count"] == 2:
+                    break
+                self.assertLess(time.monotonic(), deadline, "two URLSession requests must be waiting")
+                time.sleep(.01)
+
+            probe.send({"watchReplacementOperation": replacement_operation, "unregisterActiveOperation": True})
+            self.assertEqual(probe.receive(), {"event": "unregisteredActiveOperation", "removed": True})
+            self.assertEqual(probe.receive(), {"event": "checkpoint", "charges": [4, 1024]})
+            replacement_address = self.operation_style_address().replace(old_operation, replacement_operation)
+            expected = [self.session_error(number, -999) for number in range(1, 7)]
+            expected += [{"event": "replacementWhileRetiring", "admitted": False},
+                         {"event": "replacementAfterRetirement", "settled": 4, "oldAdmitted": False,
+                          "newAddress": replacement_address}]
+            observed = [probe.receive() for _ in expected]
+            self.assertCountEqual(observed, expected)
+            self.assertLess(observed.index(expected[-2]), observed.index(expected[-1]))
+            self.wait_server(server, 4, 0)
+
+            self.session_starts(probe, self.resource_requests(7), [4, 1024])
+            self.assertEqual(probe.receive(), self.session_error(7, -1009))
+            self.checkpoint(probe, [4, 1024], fetchStyle=self.operation_style_address())
+            self.assertEqual(probe.receive(), {"event": "styleResult", "errorDomain": "NSURLErrorDomain",
+                                               "errorCode": -1009})
+            self.assertFalse(server.release.is_set())
+            self.wait_server(server, 4, 0)
+            self.assertEqual(self.charges(ledger), (4, 1024))
+            self.assertEqual(self.charges(ledger.parent / "replacement" / ledger.name), (0, 0))
 
     def test_queued_resource_returns_at_its_alias_and_rejects_another_context(self):
         scope = json.loads(self.payload["scope"])

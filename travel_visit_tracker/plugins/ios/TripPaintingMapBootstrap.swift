@@ -43,7 +43,7 @@ public final class TripPaintingMapBootstrap: NSObject {
 
   @objc public static func isCacheOnly() -> Bool {
     let config = MLNNetworkConfiguration.sharedManager.sessionConfiguration ?? .default
-    guard OfflineMapRequestGuard.policy.isBlocked,
+    guard OfflineMapRequestGuard.policy.isCacheOnly,
           let first = config.protocolClasses?.first
     else { return false }
     return ObjectIdentifier(first) == ObjectIdentifier(OfflineMapRequestGuard.self)

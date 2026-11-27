@@ -21,6 +21,12 @@ enum NativeMapRequestQueueProbe {
     let blockStyleRequests: Bool?
     let registerOperationStyle: Bool?
     let fetchStyle: URL?
+    let registerActiveOperation: Bool?
+    let unregisterActiveOperation: Bool?
+    let watchReplacementOperation: String?
+    let startSessionRequests: [RoutedRequest]?
+    let cancelSessionRequest: Int?
+    let inspectPendingRequests: Bool?
     let startResources: [RoutedRequest]?
     let cancelResource: Int?
     let cancelResourceAtTerminal: Int?
@@ -77,11 +83,13 @@ enum NativeMapRequestQueueProbe {
     private let queue: DispatchQueue
     private let requests: TripPaintingMapRequestQueue
     private let ledger: URL
+    private let port: UInt16
     private let input: Input
     private lazy var route = TripPaintingMapOperationRoute(scopeJSON: input.scope, styleJSON: input.style,
                                                            metadataJSON: input.saved)
     private var identifiers: [Int: UUID] = [:]
-    private var styleSession: URLSession?
+    private let session: URLSession
+    private var sessionTasks: [Int: URLSessionDataTask] = [:]
     private lazy var routedResources = route.map {
       TripPaintingMapQueuedResource(route: $0, requests: requests, queue: queue, maximumBodyBytes: 256)
     }
@@ -95,10 +103,16 @@ enum NativeMapRequestQueueProbe {
       self.queue = queue
       self.requests = requests
       self.input = input
+      self.port = port
       ledger = directory.appendingPathComponent("request-budget-v1.sqlite")
+      let configuration = URLSessionConfiguration.ephemeral
+      configuration.protocolClasses = [OfflineMapRequestGuard.self, NoNetworkFallback.self]
+      configuration.httpMaximumConnectionsPerHost = 12
+      configuration.timeoutIntervalForRequest = 10
+      session = URLSession(configuration: configuration)
     }
 
-    deinit { styleSession?.invalidateAndCancel() }
+    deinit { session.invalidateAndCancel() }
 
     func process(_ command: Command) {
       queue.sync {
@@ -120,6 +134,23 @@ enum NativeMapRequestQueueProbe {
           let address = route.flatMap { OfflineMapRequestGuard.policy.registerOperationStyle($0) }
           emit("registeredStyle", ["address": address.map { $0.absoluteString as Any } ?? NSNull()])
         }
+        if command.registerActiveOperation == true {
+          let address = routedResources.flatMap { OfflineMapRequestGuard.policy.registerActiveOperation($0) }
+          emit("registeredActiveOperation", ["address": address.map { $0.absoluteString as Any } ?? NSNull()])
+        }
+        if let operationID = command.watchReplacementOperation { watchReplacementOperation(operationID) }
+        if command.unregisterActiveOperation == true {
+          let removed = routedResources.map { OfflineMapRequestGuard.policy.unregisterActiveOperation($0) } ?? false
+          emit("unregisteredActiveOperation", ["removed": removed])
+        }
+        for resource in command.startSessionRequests ?? [] { startSessionRequest(resource) }
+        if let number = command.cancelSessionRequest, let task = sessionTasks[number] {
+          task.cancel()
+          task.cancel()
+        }
+        if command.inspectPendingRequests == true {
+          emit("pendingRequests", ["count": requests.fixturePendingCount])
+        }
         if let number = command.cancel, let id = identifiers[number] {
           requests.cancel(id)
           requests.cancel(id)
@@ -131,6 +162,70 @@ enum NativeMapRequestQueueProbe {
         // A terminal connection callback cannot run during this serial turn.
         emit("checkpoint", ["charges": readCharges()])
       }
+    }
+
+    private func watchReplacementOperation(_ operationID: String) {
+      guard let old = routedResources else { preconditionFailure("missing old resources") }
+      let replacementRoute = route(replacingOperationID: operationID)
+      let directory = ledger.deletingLastPathComponent().appendingPathComponent("replacement", isDirectory: true)
+      try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+      let replacementQueue = TripPaintingMapRequestQueue(scope: replacementRoute.scope, directory: directory,
+                                                         opening: .newOperation, destination: .loopbackFixture(port),
+                                                         queue: queue, timeout: 20)!
+      let replacement = TripPaintingMapQueuedResource(route: replacementRoute, requests: replacementQueue,
+                                                     queue: queue, maximumBodyBytes: 256)
+      let policy = OfflineMapRequestGuard.policy
+      let expectedTerminals = requests.scope.limits.maxConcurrentRequests
+      var terminals = 0
+      requests.fixtureDidSettle = { [weak self] _, _ in
+        guard let self else { return }
+        terminals += 1
+        if terminals == 1 {
+          let admitted = policy.registerActiveOperation(replacement)
+          self.emit("replacementWhileRetiring", ["admitted": admitted != nil])
+        }
+        if terminals == expectedTerminals {
+          self.requests.fixtureDidSettle = nil
+          self.queue.async {
+            let oldAddress = policy.registerActiveOperation(old)
+            let newAddress = policy.registerActiveOperation(replacement)
+            self.emit("replacementAfterRetirement", ["settled": expectedTerminals,
+                                                     "oldAdmitted": oldAddress != nil,
+                                                     "newAddress": newAddress.map { $0.absoluteString as Any } ?? NSNull()])
+          }
+        }
+      }
+    }
+
+    private func startSessionRequest(_ resource: RoutedRequest) {
+      let number = resource.number
+      precondition(resource.address.scheme == "https"
+        && [TripPaintingMapOperationRoute.host, "tiles.openfreemap.org"].contains(resource.address.host))
+      precondition(sessionTasks[number] == nil)
+      var request = request(for: resource.address)
+      request.httpMethod = resource.method ?? "GET"
+      if let body = resource.body { request.httpBody = Data(body.utf8) }
+      let task = session.dataTask(with: request) { [weak self] body, response, error in
+        guard let self else { return }
+        self.queue.async {
+          precondition(self.sessionTasks.removeValue(forKey: number) != nil)
+          var fields: [String: Any] = ["number": number, "bodyBytes": body?.count ?? 0]
+          if let response = response as? HTTPURLResponse {
+            fields["address"] = response.url?.absoluteString
+            fields["status"] = response.statusCode
+            fields["length"] = response.value(forHTTPHeaderField: "Content-Length")
+          }
+          if let body { fields["body"] = String(decoding: body, as: UTF8.self) }
+          if let error = error as NSError? {
+            fields["errorDomain"] = error.domain
+            fields["errorCode"] = error.code
+          }
+          self.emit("sessionResult", fields)
+        }
+      }
+      sessionTasks[number] = task
+      task.resume()
+      emit("sessionStarted", ["number": number])
     }
 
     private func startResource(_ resource: RoutedRequest) {
@@ -206,15 +301,12 @@ enum NativeMapRequestQueueProbe {
 
     private func checkResourceContext(_ context: ResourceContext) {
       guard let route else { preconditionFailure("missing fixture route") }
-      let operationID = route.scope.operationId
       let alternateQueue = DispatchQueue(label: "TripPaintingNativeMapResourceWrongQueueFixture")
       let startQueue: DispatchQueue
       let resourceRoute: TripPaintingMapOperationRoute
       if let otherID = context.otherOperationID {
         startQueue = queue
-        resourceRoute = TripPaintingMapOperationRoute(
-          scopeJSON: input.scope.replacingOccurrences(of: operationID, with: otherID), styleJSON: input.style,
-          metadataJSON: input.saved.replacingOccurrences(of: operationID, with: otherID))!
+        resourceRoute = self.route(replacingOperationID: otherID)
       } else {
         startQueue = alternateQueue
         resourceRoute = route
@@ -231,17 +323,19 @@ enum NativeMapRequestQueueProbe {
       emit("resourceContext", ["accepted": id != nil])
     }
 
+    private func route(replacingOperationID operationID: String) -> TripPaintingMapOperationRoute {
+      guard let oldID = route?.scope.operationId,
+            let replacement = TripPaintingMapOperationRoute(
+              scopeJSON: input.scope.replacingOccurrences(of: oldID, with: operationID), styleJSON: input.style,
+              metadataJSON: input.saved.replacingOccurrences(of: oldID, with: operationID))
+      else { preconditionFailure("missing replacement route") }
+      return replacement
+    }
+
     func fetchStyle(_ address: URL) async {
       precondition(address.scheme == "https" && address.host == TripPaintingMapOperationRoute.host)
-      if styleSession == nil {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [OfflineMapRequestGuard.self, NoNetworkFallback.self]
-        configuration.timeoutIntervalForRequest = 3
-        styleSession = URLSession(configuration: configuration)
-      }
-      guard let styleSession else { preconditionFailure("missing fixture session") }
       do {
-        let (body, response) = try await styleSession.data(from: address)
+        let (body, response) = try await session.data(from: address)
         guard let response = response as? HTTPURLResponse else { preconditionFailure("missing style response") }
         emit("styleResult", ["address": response.url.map { $0.absoluteString as Any } ?? NSNull(),
                              "status": response.statusCode,

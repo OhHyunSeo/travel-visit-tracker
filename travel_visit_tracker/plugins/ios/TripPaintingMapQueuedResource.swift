@@ -10,9 +10,9 @@ final class TripPaintingMapQueuedResource: @unchecked Sendable {
     let completion: Completion
   }
 
-  private let route: TripPaintingMapOperationRoute
+  let route: TripPaintingMapOperationRoute
   private let requests: TripPaintingMapRequestQueue
-  private let queue: DispatchQueue
+  let queue: DispatchQueue
   private let maximumBodyBytes: Int
   private var deliveries: [UUID: Delivery] = [:]
   private var closed = false
@@ -27,9 +27,7 @@ final class TripPaintingMapQueuedResource: @unchecked Sendable {
 
   @discardableResult
   func start(_ request: URLRequest, completion: @escaping Completion) -> UUID? {
-    dispatchPrecondition(condition: .onQueue(queue))
-    guard !closed, requests.queue === queue, requests.scope == route.scope,
-          (1...route.scope.limits.maxBodyBytes).contains(maximumBodyBytes),
+    guard canActivate,
           let url = request.url, let providerRequest = route.providerRequest(for: request)
     else { return nil }
 
@@ -42,6 +40,12 @@ final class TripPaintingMapQueuedResource: @unchecked Sendable {
     return id
   }
 
+  var canActivate: Bool {
+    dispatchPrecondition(condition: .onQueue(queue))
+    return !closed && requests.queue === queue && requests.scope == route.scope
+      && (1...route.scope.limits.maxBodyBytes).contains(maximumBodyBytes)
+  }
+
   func cancel(_ id: UUID) {
     dispatchPrecondition(condition: .onQueue(queue))
     guard let delivery = deliveries.removeValue(forKey: id) else { return }
@@ -49,12 +53,20 @@ final class TripPaintingMapQueuedResource: @unchecked Sendable {
   }
 
   /// Close the operation's only resource adapter and request queue. Existing charges stay in the ledger.
-  func close() {
+  func close(notifyingWith error: Error? = nil, onDrained: (() -> Void)? = nil) {
     dispatchPrecondition(condition: .onQueue(queue))
-    guard !closed else { return }
-    closed = true
-    deliveries.removeAll()
-    if requests.queue === queue, requests.scope == route.scope { requests.close() }
+    let bound = requests.queue === queue && requests.scope == route.scope
+    if !closed {
+      closed = true
+      let waiting = error == nil ? [] : Array(deliveries.values)
+      deliveries.removeAll()
+      if bound { requests.close() }
+      if let error {
+        for delivery in waiting { delivery.completion(.failure(error)) }
+      }
+    }
+    guard let onDrained else { return }
+    if bound { requests.whenClosed(onDrained) } else { onDrained() }
   }
 
   private func deliver(_ result: Result<TripPaintingMapHTTPExchange.Report, TripPaintingMapRequestQueue.Failure>,

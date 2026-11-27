@@ -36,8 +36,13 @@ final class TripPaintingMapRequestQueue: @unchecked Sendable {
   private var active: [UUID: Active] = [:]
   private var closed = false
   private var draining = false
+  private var closeCallbacks: [() -> Void] = []
   #if TP_MAP_TRANSPORT_FIXTURE
   var fixtureDidSettle: ((UUID, TripPaintingMapHTTPExchange.Report) -> Void)?
+  var fixturePendingCount: Int {
+    dispatchPrecondition(condition: .onQueue(queue))
+    return pending.count
+  }
   #endif
 
   init?(scope: TripPaintingMapRequestScope, directory: URL, opening: TripPaintingMapRequestBudget.Opening,
@@ -99,6 +104,20 @@ final class TripPaintingMapRequestQueue: @unchecked Sendable {
     for id in Array(active.keys) { cancel(id) }
   }
 
+  func whenClosed(_ callback: @escaping () -> Void) {
+    dispatchPrecondition(condition: .onQueue(queue))
+    precondition(closed)
+    closeCallbacks.append(callback)
+    finishClosing()
+  }
+
+  private func finishClosing() {
+    guard closed, active.isEmpty else { return }
+    let callbacks = closeCallbacks
+    closeCallbacks.removeAll()
+    for callback in callbacks { callback() }
+  }
+
   private func drain() {
     guard !closed, !draining else { return }
     draining = true
@@ -123,6 +142,7 @@ final class TripPaintingMapRequestQueue: @unchecked Sendable {
         #endif
         // The exchange has returned its claimed slot after its terminal callback.
         drain()
+        finishClosing()
       }
       active[work.id] = Active(exchange: exchange)
       exchange.start()
