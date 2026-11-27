@@ -15,6 +15,7 @@ final class TripPaintingMapQueuedResource: @unchecked Sendable {
   private let queue: DispatchQueue
   private let maximumBodyBytes: Int
   private var deliveries: [UUID: Delivery] = [:]
+  private var closed = false
 
   init(route: TripPaintingMapOperationRoute, requests: TripPaintingMapRequestQueue,
        queue: DispatchQueue, maximumBodyBytes: Int) {
@@ -27,7 +28,7 @@ final class TripPaintingMapQueuedResource: @unchecked Sendable {
   @discardableResult
   func start(_ request: URLRequest, completion: @escaping Completion) -> UUID? {
     dispatchPrecondition(condition: .onQueue(queue))
-    guard requests.queue === queue, requests.scope == route.scope,
+    guard !closed, requests.queue === queue, requests.scope == route.scope,
           (1...route.scope.limits.maxBodyBytes).contains(maximumBodyBytes),
           let url = request.url, let providerRequest = route.providerRequest(for: request)
     else { return nil }
@@ -45,6 +46,15 @@ final class TripPaintingMapQueuedResource: @unchecked Sendable {
     dispatchPrecondition(condition: .onQueue(queue))
     guard let delivery = deliveries.removeValue(forKey: id) else { return }
     requests.cancel(delivery.requestID)
+  }
+
+  /// Close the operation's only resource adapter and request queue. Existing charges stay in the ledger.
+  func close() {
+    dispatchPrecondition(condition: .onQueue(queue))
+    guard !closed else { return }
+    closed = true
+    deliveries.removeAll()
+    if requests.queue === queue, requests.scope == route.scope { requests.close() }
   }
 
   private func deliver(_ result: Result<TripPaintingMapHTTPExchange.Report, TripPaintingMapRequestQueue.Failure>,

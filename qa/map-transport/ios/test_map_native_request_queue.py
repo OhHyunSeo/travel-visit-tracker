@@ -203,6 +203,22 @@ class MapNativeRequestQueueTests(unittest.TestCase):
             self.wait_server(server, 1, 0)
             self.assertEqual(self.charges(ledger), (1, 256))
 
+    def test_queued_resource_closes_after_a_success_with_active_and_waiting_requests(self):
+        with self.fixture() as (probe, server, ledger):
+            self.resource_starts(probe, self.resource_requests(1, 2, 3, 4, 5, 6), [4, 1024])
+            addresses = [urlsplit(address).path for address in self.payload["tiles"][:4]]
+            requests = self.wait_server(server, 4, 4)
+            self.assertCountEqual(map(self.wire_path, requests), addresses)
+            self.checkpoint(probe, [4, 1024], closeResourcesAtTerminal=4)
+            server.release.set()
+
+            self.assertEqual(probe.receive(), {"event": "resourceClosedAtTerminal", "status": 200,
+                                               "bytes": 4, "charges": [4, 1024]})
+            self.assertEqual(probe.receive(), {"event": "resourceCloseDrained", "active": 4, "sends": 4})
+            self.resource_starts(probe, self.resource_requests(7), [4, 1024], accepted=False)
+            self.wait_server(server, 4, 0)
+            self.assertEqual(self.charges(ledger), (4, 1024))
+
     def test_urlsession_guard_serves_only_the_registered_operation_style(self):
         scope = json.loads(self.payload["scope"])
         root = (f"https://offline-style.trip-painting.invalid/v2/{scope['operationId']}/"

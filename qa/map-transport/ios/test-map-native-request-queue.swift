@@ -24,6 +24,7 @@ enum NativeMapRequestQueueProbe {
     let startResources: [RoutedRequest]?
     let cancelResource: Int?
     let cancelResourceAtTerminal: Int?
+    let closeResourcesAtTerminal: Int?
     let checkResourceContext: ResourceContext?
   }
 
@@ -112,6 +113,7 @@ enum NativeMapRequestQueueProbe {
         for resource in command.startResources ?? [] { startResource(resource) }
         if let number = command.cancelResource { cancelResource(number) }
         if let number = command.cancelResourceAtTerminal { cancelResourceAtTerminal(number) }
+        if let active = command.closeResourcesAtTerminal { closeResourcesAtTerminal(active) }
         if let context = command.checkResourceContext { checkResourceContext(context) }
         if let blocked = command.blockStyleRequests { OfflineMapRequestGuard.policy.setBlocked(blocked) }
         if command.registerOperationStyle == true {
@@ -173,6 +175,32 @@ enum NativeMapRequestQueueProbe {
                                                 "status": reply.response.statusCode, "bytes": reply.body.count])
         // The queue callback is already enqueued, and may queue a second consumer-delivery turn.
         self.queue.async { self.queue.async { self.emit("resourceDeliveryDrained", ["number": number]) } }
+      }
+    }
+
+    private func closeResourcesAtTerminal(_ active: Int) {
+      precondition(active > 0 && resourceIdentifiers.count >= active)
+      var terminals = 0
+      var sends = 0
+      requests.fixtureDidSettle = { [weak self] _, report in
+        guard let self else { return }
+        terminals += 1
+        sends += report.requestSends
+        if terminals == 1 {
+          let reply = try! report.result.get()
+          guard let resources = self.routedResources else { preconditionFailure("missing fixture resources") }
+          resources.close()
+          resources.close()
+          self.emit("resourceClosedAtTerminal", ["status": reply.response.statusCode, "bytes": reply.body.count,
+                                                 "charges": self.readCharges()])
+        }
+        if terminals == active {
+          self.requests.fixtureDidSettle = nil
+          let observedSends = sends
+          self.queue.async {
+            self.queue.async { self.emit("resourceCloseDrained", ["active": active, "sends": observedSends]) }
+          }
+        }
       }
     }
 
