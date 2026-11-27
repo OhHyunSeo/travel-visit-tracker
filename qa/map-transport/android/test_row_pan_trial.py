@@ -7,7 +7,8 @@ from unittest.mock import patch
 from PIL import Image, ImageDraw
 
 from row_pan_trial import (COAST_PLAN, MIDPOINT_LONGITUDE, capture_row_pan, capture_settled,
-                           check_coastal_start, midpoint_preparation_plan, verify_row_pan)
+                           check_coastal_start, midpoint_preparation_decision,
+                           midpoint_preparation_plan, verify_row_pan)
 from row_pan_observations import frame_metrics, observation, verify_settling
 
 
@@ -57,13 +58,48 @@ class RowPanTest(unittest.TestCase):
                     patch('row_pan_trial.capture_settled', side_effect=settled), \
                     patch('row_pan_trial.require_foreground'), patch('row_pan_trial.running_pid', return_value=900), \
                     patch('row_pan_trial.time.sleep'):
-                with self.assertRaisesRegex(ValueError, 'Midpoint start condition not met'):
+                with self.assertRaisesRegex(ValueError, 'outside measured correction ranges'):
                     capture_row_pan(lambda *args: inputs.append(args), root, 'fixture', 'activity', 900, midpoint=True)
             self.assertEqual(len(inputs), 1)
             self.assertEqual(inputs[0][4:], ('453', '576', '285', '576', '500'))
-            self.assertEqual(json.loads((root / 'row-pan-plan.json').read_text())['id'], 'coastal-midpoint-shorter-prep-v1')
-            self.assertEqual(json.loads((root / 'pan-start/gesture.json').read_text()), [453, 576, 285, 576, 500])
-            self.assertEqual(json.loads((root / 'pan-start/zoom9-source.json').read_text()), start)
+            self.assertEqual(json.loads((root / 'row-pan-plan.json').read_text())['id'], 'coastal-midpoint-single-correction-v1')
+            self.assertEqual(json.loads((root / 'pan-preparation/gesture.json').read_text()), [453, 576, 285, 576, 500])
+            self.assertEqual(json.loads((root / 'pan-preparation/zoom9-source.json').read_text()), start)
+            self.assertFalse((root / 'pan-start').exists())
+
+    def test_correction_uses_the_smallest_input_with_matching_direction(self):
+        for offset, action, end_x in ((-4, 'already-in-range', None), (4, 'already-in-range', None),
+                                     (6.16, 'single-correction', 372), (-6.16, 'single-correction', 348),
+                                     (8, 'single-correction', 376), (-8, 'single-correction', 344),
+                                     (11.30, 'outside-calibration', None), (-11.28, 'outside-calibration', None)):
+            with self.subTest(offset=offset):
+                start = {'center': [MIDPOINT_LONGITUDE + offset * 360 / 524288, 38.4]}
+                result = midpoint_preparation_decision(start)
+                self.assertEqual(result['action'], action)
+                self.assertEqual(result['gesture'], [360, 614, end_x, 614, 500] if end_x else None)
+
+    def test_a_missed_correction_does_not_retry_or_send_south_swipe(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            capture(root)
+            baseline = json.loads((root / 'restored-source.json').read_text())
+            inputs = []
+
+            def settled(command, target, package, activity, pid, original):
+                offset = 6.16 if target.name == 'pan-preparation' else 4.2
+                view = {**baseline, 'center': [MIDPOINT_LONGITUDE + offset * 360 / 524288, 38.4]}
+                (target / 'zoom9-source.json').write_text(json.dumps(view))
+
+            with patch('row_pan_trial.samples', return_value=((720, 1280), 6000, 80)), \
+                    patch('row_pan_trial.capture_settled', side_effect=settled), \
+                    patch('row_pan_trial.require_foreground'), patch('row_pan_trial.running_pid', return_value=900), \
+                    patch('row_pan_trial.time.sleep'):
+                with self.assertRaisesRegex(ValueError, 'Midpoint start condition not met'):
+                    capture_row_pan(lambda *args: inputs.append(args), root, 'fixture', 'activity', 900, midpoint=True)
+            self.assertEqual([item[4:] for item in inputs], [('453', '576', '285', '576', '500'),
+                                                              ('360', '614', '372', '614', '500')])
+            self.assertTrue((root / 'pan-start/zoom9-source.json').is_file())
+            self.assertFalse((root / 'pan-return').exists())
 
     def test_shorter_preparation_replay_rejects_a_legacy_swipe_in_its_receipt(self):
         with tempfile.TemporaryDirectory() as temporary:

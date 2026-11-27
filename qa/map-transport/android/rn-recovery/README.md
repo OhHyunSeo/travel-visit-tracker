@@ -222,7 +222,7 @@ no extra displacement at the selected settled endpoints. This is one new trial,
 not a claim that the response profile generalizes to other devices or motions.
 
 Add `--rn-midpoint-return` to `--rn-row-pan` for the predeclared second start
-condition. The current plan, `coastal-midpoint-shorter-prep-v1`, sends one 168px
+condition. The earlier plan, `coastal-midpoint-shorter-prep-v1`, uses a 168px
 leftward swipe from (453,576) to (285,576) over 500ms. The three prior 180px
 inputs settled 127.80, 163.62 and 158.04px east. Adding their median input-to-motion
 difference (21.96px) to the 145.71px target gives this trial input. The range of
@@ -237,6 +237,16 @@ acceptance checks still apply. Replay with `--row-pan --midpoint-return` to
 require a midpoint plan and recheck both bounds. The shorter plan also checks
 `pan-start/gesture.json` against its frozen input. The prior 180px midpoint plan
 remains independently replayable with its original start result.
+
+The current midpoint capture, `coastal-midpoint-single-correction-v1`, uses the
+same 168px preparation and records its settled position in `pan-preparation/`.
+It records at most one correction selected by the observed signed east/west
+error and the independently measured 12px and 16px response ranges. It picks the
+shortest applicable input. If preparation already meets ±4px, it observes again
+without a correction. If no candidate applies, it stops at the preparation
+gate. The `pan-start/` observation after a correction must independently meet
+the existing start checks before south or return gestures. Replay reselects the
+correction from the saved first center and compares that decision to the record.
 
 `--rn-small-pan --rn-horizontal-small-pan` selects a separate observation plan
 on the same 720×1280 zoom-9 fixture. Replay with `--small-pan --horizontal-small-pan`.
