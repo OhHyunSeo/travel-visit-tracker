@@ -21,6 +21,10 @@ enum NativeMapRequestQueueProbe {
     let blockStyleRequests: Bool?
     let registerOperationStyle: Bool?
     let fetchStyle: URL?
+    let startResources: [RoutedRequest]?
+    let cancelResource: Int?
+    let cancelResourceAtTerminal: Int?
+    let checkResourceContext: ResourceContext?
   }
 
   private struct RoutedRequest: Decodable {
@@ -28,6 +32,11 @@ enum NativeMapRequestQueueProbe {
     let address: URL
     let method: String?
     let body: String?
+  }
+
+  private struct ResourceContext: Decodable {
+    let address: URL
+    let otherOperationID: String?
   }
 
   static func main() async throws {
@@ -72,6 +81,10 @@ enum NativeMapRequestQueueProbe {
                                                            metadataJSON: input.saved)
     private var identifiers: [Int: UUID] = [:]
     private var styleSession: URLSession?
+    private lazy var routedResources = route.map {
+      TripPaintingMapQueuedResource(route: $0, requests: requests, queue: queue, maximumBodyBytes: 256)
+    }
+    private var resourceIdentifiers: [Int: UUID] = [:]
 
     init?(scope: TripPaintingMapRequestScope, directory: URL, port: UInt16, input: Input) {
       let queue = DispatchQueue(label: "TripPaintingNativeMapRequestQueueFixture")
@@ -96,6 +109,10 @@ enum NativeMapRequestQueueProbe {
                          "style": String(decoding: route.styleBytes, as: UTF8.self)])
         }
         if let routed = command.routedRequest { routeRequest(routed) }
+        for resource in command.startResources ?? [] { startResource(resource) }
+        if let number = command.cancelResource { cancelResource(number) }
+        if let number = command.cancelResourceAtTerminal { cancelResourceAtTerminal(number) }
+        if let context = command.checkResourceContext { checkResourceContext(context) }
         if let blocked = command.blockStyleRequests { OfflineMapRequestGuard.policy.setBlocked(blocked) }
         if command.registerOperationStyle == true {
           let address = route.flatMap { OfflineMapRequestGuard.policy.registerOperationStyle($0) }
@@ -112,6 +129,78 @@ enum NativeMapRequestQueueProbe {
         // A terminal connection callback cannot run during this serial turn.
         emit("checkpoint", ["charges": readCharges()])
       }
+    }
+
+    private func startResource(_ resource: RoutedRequest) {
+      let number = resource.number
+      precondition(number > 0 && resourceIdentifiers[number] == nil)
+      var request = request(for: resource.address)
+      request.httpMethod = resource.method ?? "GET"
+      if let body = resource.body { request.httpBody = Data(body.utf8) }
+      let id = routedResources?.start(request) { [weak self] result in
+        guard let self else { return }
+        self.resourceIdentifiers.removeValue(forKey: number)
+        var fields: [String: Any] = ["number": number]
+        switch result {
+        case .success(let (response, body)):
+          fields["address"] = response.url?.absoluteString
+          fields["status"] = response.statusCode
+          fields["length"] = response.value(forHTTPHeaderField: "Content-Length")
+          fields["body"] = String(decoding: body, as: UTF8.self)
+        case .failure(let error):
+          fields["error"] = String(describing: error)
+        }
+        self.emit("resourceResult", fields)
+      }
+      resourceIdentifiers[number] = id
+      emit("resourceStart", ["number": number, "accepted": id != nil])
+    }
+
+    private func cancelResource(_ number: Int) {
+      guard let id = resourceIdentifiers.removeValue(forKey: number) else { return }
+      routedResources?.cancel(id)
+      routedResources?.cancel(id)
+    }
+
+    private func cancelResourceAtTerminal(_ number: Int) {
+      precondition(resourceIdentifiers[number] != nil)
+      requests.fixtureDidSettle = { [weak self] _, report in
+        guard let self else { return }
+        self.requests.fixtureDidSettle = nil
+        let reply = try! report.result.get()
+        self.cancelResource(number)
+        self.emit("resourceTransportTerminal", ["number": number, "sends": report.requestSends,
+                                                "status": reply.response.statusCode, "bytes": reply.body.count])
+        // The queue callback is already enqueued, and may queue a second consumer-delivery turn.
+        self.queue.async { self.queue.async { self.emit("resourceDeliveryDrained", ["number": number]) } }
+      }
+    }
+
+    private func checkResourceContext(_ context: ResourceContext) {
+      guard let route else { preconditionFailure("missing fixture route") }
+      let operationID = route.scope.operationId
+      let alternateQueue = DispatchQueue(label: "TripPaintingNativeMapResourceWrongQueueFixture")
+      let startQueue: DispatchQueue
+      let resourceRoute: TripPaintingMapOperationRoute
+      if let otherID = context.otherOperationID {
+        startQueue = queue
+        resourceRoute = TripPaintingMapOperationRoute(
+          scopeJSON: input.scope.replacingOccurrences(of: operationID, with: otherID), styleJSON: input.style,
+          metadataJSON: input.saved.replacingOccurrences(of: operationID, with: otherID))!
+      } else {
+        startQueue = alternateQueue
+        resourceRoute = route
+      }
+      let resource = TripPaintingMapQueuedResource(route: resourceRoute, requests: requests,
+                                                  queue: startQueue, maximumBodyBytes: 256)
+      let request = request(for: context.address)
+      precondition(resourceRoute.providerRequest(for: request) != nil)
+      let completion: TripPaintingMapQueuedResource.Completion = { [weak self] _ in
+        self?.emit("unexpectedResourceResult", [:])
+      }
+      let start = { resource.start(request, completion: completion) }
+      let id = startQueue === queue ? start() : alternateQueue.sync(execute: start)
+      emit("resourceContext", ["accepted": id != nil])
     }
 
     func fetchStyle(_ address: URL) async {

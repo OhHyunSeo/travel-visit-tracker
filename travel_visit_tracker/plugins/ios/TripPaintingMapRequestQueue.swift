@@ -29,12 +29,16 @@ final class TripPaintingMapRequestQueue: @unchecked Sendable {
 
   private let budget: TripPaintingMapRequestBudget
   private let destination: TripPaintingMapHTTPExchange.Destination
-  private let queue: DispatchQueue
+  let scope: TripPaintingMapRequestScope
+  let queue: DispatchQueue
   private let timeout: TimeInterval
   private var pending: [Pending] = []
   private var active: [UUID: Active] = [:]
   private var closed = false
   private var draining = false
+  #if TP_MAP_TRANSPORT_FIXTURE
+  var fixtureDidSettle: ((UUID, TripPaintingMapHTTPExchange.Report) -> Void)?
+  #endif
 
   init?(scope: TripPaintingMapRequestScope, directory: URL, opening: TripPaintingMapRequestBudget.Opening,
         destination: TripPaintingMapHTTPExchange.Destination, queue: DispatchQueue, timeout: TimeInterval) {
@@ -43,6 +47,7 @@ final class TripPaintingMapRequestQueue: @unchecked Sendable {
     else { return nil }
     self.budget = budget
     self.destination = destination
+    self.scope = scope
     self.queue = queue
     self.timeout = timeout
   }
@@ -113,6 +118,9 @@ final class TripPaintingMapRequestQueue: @unchecked Sendable {
                                                  queue: queue, timeout: timeout) { [self] report in
         guard let finished = active.removeValue(forKey: work.id) else { return }
         deliver(finished.cancelled ? .failure(.cancelled) : .success(report), to: work)
+        #if TP_MAP_TRANSPORT_FIXTURE
+        fixtureDidSettle?(work.id, report)
+        #endif
         // The exchange has returned its claimed slot after its terminal callback.
         drain()
       }

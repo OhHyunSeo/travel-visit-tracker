@@ -66,6 +66,7 @@ class MapNativeRequestQueueTests(unittest.TestCase):
             str(sources / "TripPaintingMapHTTPResponse.swift"),
             str(sources / "TripPaintingMapHTTPExchange.swift"),
             str(sources / "TripPaintingMapRequestQueue.swift"),
+            str(sources / "TripPaintingMapQueuedResource.swift"),
             str(sources / "TripPaintingOfflineMapRequestGuard.swift"),
             str(HERE / "test-map-native-request-queue.swift"),
             "-framework", "Network", "-framework", "Security", "-o", str(cls.binary),
@@ -133,6 +134,74 @@ class MapNativeRequestQueueTests(unittest.TestCase):
     def charges(self, ledger):
         with sqlite3.connect(ledger) as database:
             return database.execute("SELECT tile_attempts, reserved_bytes FROM request_budget").fetchone()
+
+    def resource_requests(self, *numbers):
+        scope = json.loads(self.payload["scope"])
+        prefix = (f"https://offline-style.trip-painting.invalid/v2/{scope['operationId']}/"
+                  f"{scope['localStyleSha256']}/resource")
+        return [{"number": number, "address": prefix + urlsplit(self.payload["tiles"][number - 1]).path}
+                for number in numbers]
+
+    def resource_starts(self, probe, requests, charges, accepted=True):
+        probe.send({"startResources": requests})
+        for request in requests:
+            self.assertEqual(probe.receive(), {"event": "resourceStart", "number": request["number"],
+                                               "accepted": accepted})
+        self.assertEqual(probe.receive(), {"event": "checkpoint", "charges": charges})
+
+    def resource_result(self, request):
+        return {"event": "resourceResult", **request, "status": 200, "length": "4", "body": "test"}
+
+    def test_queued_resource_returns_at_its_alias_and_rejects_another_context(self):
+        scope = json.loads(self.payload["scope"])
+        provider_url = self.payload["tiles"][0]
+        valid = self.resource_requests(1)[0]
+        other_id = "7729af8d-20ac-42db-ae59-3773944d5530"
+        wrong_scope_url = valid["address"].replace(scope["operationId"], other_id)
+        with self.fixture() as (probe, server, ledger):
+            self.resource_starts(probe, [{"number": 2, "address": provider_url},
+                                         {"number": 3, "address": wrong_scope_url}], [0, 0], accepted=False)
+            for context in ({"address": valid["address"]},
+                            {"address": wrong_scope_url, "otherOperationID": other_id}):
+                probe.send({"checkResourceContext": context})
+                self.assertEqual(probe.receive(), {"event": "resourceContext", "accepted": False})
+                self.assertEqual(probe.receive(), {"event": "checkpoint", "charges": [0, 0]})
+            self.wait_server(server, 0, 0)
+
+            self.resource_starts(probe, [valid], [1, 256])
+            self.assertEqual(self.wire_path(self.wait_server(server, 1, 1)[0]), urlsplit(provider_url).path)
+            server.release.set()
+            self.assertEqual(probe.receive(), self.resource_result(valid))
+            self.wait_server(server, 1, 0)
+            self.assertEqual(self.charges(ledger), (1, 256))
+
+    def test_queued_resource_cancels_pending_and_live_without_consumer_callbacks(self):
+        addresses = self.resource_requests(1, 2, 3, 4, 5, 6)
+        with self.fixture() as (probe, server, ledger):
+            self.resource_starts(probe, addresses, [4, 1024])
+            self.wait_server(server, 4, 4)
+            self.checkpoint(probe, [4, 1024], cancelResource=5)
+            self.checkpoint(probe, [4, 1024], cancelResource=1)
+            requests = self.wait_server(server, 5, 4)
+            self.assertCountEqual(map(self.wire_path, requests),
+                                  [urlsplit(self.payload["tiles"][index]).path for index in (0, 1, 2, 3, 5)])
+            server.release.set()
+            self.assertCountEqual([probe.receive() for _ in range(4)],
+                                  [self.resource_result(addresses[index]) for index in (1, 2, 3, 5)])
+            self.wait_server(server, 5, 0)
+            self.assertEqual(self.charges(ledger), (5, 1280))
+
+    def test_queued_resource_suppresses_a_success_cancelled_after_native_terminal(self):
+        with self.fixture() as (probe, server, ledger):
+            self.resource_starts(probe, self.resource_requests(1), [1, 256])
+            self.wait_server(server, 1, 1)
+            self.checkpoint(probe, [1, 256], cancelResourceAtTerminal=1)
+            server.release.set()
+            self.assertEqual(probe.receive(), {"event": "resourceTransportTerminal", "number": 1,
+                                               "sends": 1, "status": 200, "bytes": 4})
+            self.assertEqual(probe.receive(), {"event": "resourceDeliveryDrained", "number": 1})
+            self.wait_server(server, 1, 0)
+            self.assertEqual(self.charges(ledger), (1, 256))
 
     def test_urlsession_guard_serves_only_the_registered_operation_style(self):
         scope = json.loads(self.payload["scope"])
