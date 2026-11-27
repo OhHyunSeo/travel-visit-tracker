@@ -1,5 +1,11 @@
 # Trip Painting development rules
 
+## 공유 5시간 한도와 저장
+
+- 2026-11-16부터 공통·iOS와 Android는 각 항목을 시작하거나 저장할 때 공유 5시간 한도를 확인합니다. `get_usage_limits`의 300분 창에서 `100 - usedPercent`로 잔여량을 계산합니다.
+- 잔여 10% 미만(`usedPercent > 90`)이거나 사용자가 중지를 요청하면 진행 중인 항목만 정리합니다. 확인한 결과, 미완료·미실행 범위, 저장한 Git 지점과 다음에 할 일을 Android 진행 기록에 남기고 체크리스트 채팅에 상태를 전달합니다.
+- 중지한 뒤에는 사용자가 다시 진행을 요청할 때 재개합니다.
+
 ## Start here
 
 - Read `README.md`, `PROGRESS.md`, `PROJECT_PLAN.md`, `docs/CHECKLIST_STATUS.md`, and `docs/RESUME.md` before changing behavior. Newer dated updates take precedence over older reports.

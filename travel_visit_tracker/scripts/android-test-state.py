@@ -4,6 +4,7 @@ import argparse
 import io
 import json
 import os
+import re
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -45,6 +46,18 @@ with tempfile.TemporaryDirectory(prefix="trip-painting-test-state-") as director
     candidate = connection.execute(
         "SELECT started_at,last_observed_at,confirmed_at FROM candidates WHERE owner_id='guest'"
     ).fetchone()
+    photo_files = {"verified": 0, "missing": 0, "unverified": 0}
+    for (uri,) in connection.execute("SELECT uri FROM photos WHERE owner_id='guest'"):
+        # Never pass arbitrary database content to a device shell or read other paths.
+        if not re.fullmatch(r"visit-photos/[A-Za-z0-9-]+\.(jpg|jpeg|png|heic|webp)", uri):
+            photo_files["unverified"] += 1
+            continue
+        check = subprocess.run(
+            [str(sdk / "platform-tools/adb"), "-s", args.serial, "shell", "run-as",
+             "app.trippainting.mobile", "test", "-f", "files/" + uri],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        photo_files["verified" if check.returncode == 0 else "missing"] += 1
     state = {
         "capturedAt": int(time.time() * 1000),
         "virtualDevice": True,
@@ -66,6 +79,14 @@ with tempfile.TemporaryDirectory(prefix="trip-painting-test-state-") as director
             "SELECT started_at,confirmed_at FROM visits WHERE owner_id='guest' AND source='gps' AND deleted_at IS NULL ORDER BY confirmed_at"
         )],
         "photos": connection.execute("SELECT count(*) FROM photos WHERE owner_id='guest'").fetchone()[0],
+        "photoFiles": photo_files,
+        "orphanPhotoAssociations": connection.execute(
+            "SELECT count(*) FROM photos p LEFT JOIN visits v "
+            "ON p.visit_id=v.id AND p.owner_id=v.owner_id WHERE p.owner_id='guest' AND v.id IS NULL"
+        ).fetchone()[0],
+        "activeVisits": connection.execute(
+            "SELECT count(*) FROM visits WHERE owner_id='guest' AND deleted_at IS NULL"
+        ).fetchone()[0],
         "pendingOutbox": connection.execute("SELECT count(*) FROM outbox WHERE owner_id='guest'").fetchone()[0],
     }
     connection.close()
