@@ -237,3 +237,19 @@ acceptance checks still apply. Replay with `--row-pan --midpoint-return` to
 require a midpoint plan and recheck both bounds. The shorter plan also checks
 `pan-start/gesture.json` against its frozen input. The prior 180px midpoint plan
 remains independently replayable with its original start result.
+
+`--rn-small-pan --rn-horizontal-small-pan` selects a separate observation plan
+on the same 720×1280 zoom-9 fixture. Replay with `--small-pan --horizontal-small-pan`.
+After the 168px preparation swipe, run a no-input control, the left/right 12px
+and 16px swipes for 500ms, a repeat in reverse order, then a second no-input
+control. Each step records its input, three settled `saved` observations before
+and after it, and three settled `zoom9` observations after zoom reassertion.
+The original vertical plan and its records are unchanged.
+
+The diagnostic only considers correction candidates when the no-input and
+zoom-reassertion drift stay within 0.25px per axis. Each direction and distance
+needs two responses with the intended sign, at least 0.5px of movement, and no
+more than 2px spread. The reported range combines both readings and the drift
+allowance to estimate which initial errors could land within ±4px. It is a
+candidate range for a new trial. The start, return and tile overlap checks still
+need to pass on a fresh execution, with persistence checked separately.

@@ -72,7 +72,7 @@ def boot_marker_exists(marker):
 def boot(root, sdk, *, probe_adb=False, fixture_apk=None, render_inputs=None, raster_tile=False,
          offline_pack=False, expected_hash=FIXTURE_APK_SHA256, reopen_inputs=None, expire_pack=False,
          sdk_offline=False, online_recovery=False, verify_refreshed_pack=False, rn_recovery=None, rn_reopen=False,
-         rn_product_map=False, rn_product_tab=False, rn_source_bounds=False, rn_zoom=8, rn_multi_zoom=False, rn_adjacent_tiles=False, rn_row_tiles=False, rn_row_pan=False, rn_small_pan=False, rn_midpoint_return=False):
+         rn_product_map=False, rn_product_tab=False, rn_source_bounds=False, rn_zoom=8, rn_multi_zoom=False, rn_adjacent_tiles=False, rn_row_tiles=False, rn_row_pan=False, rn_small_pan=False, rn_midpoint_return=False, rn_horizontal_small_pan=False):
     launcher = pinned(sdk / 'emulator/emulator', EMULATOR_SHA256)
     headless = pinned(sdk / 'emulator/qemu/darwin-aarch64/qemu-system-aarch64-headless', HEADLESS_SHA256)
     name = 'TripPaintingMapTransportQA_' + uuid.uuid4().hex[:12]
@@ -192,7 +192,8 @@ def boot(root, sdk, *, probe_adb=False, fixture_apk=None, render_inputs=None, ra
             try:
                 result['rnRecovery'] = capture_recovery(adb_key, fixture_apk, *rn_recovery, expected_hash,
                                                        reopening=rn_reopen, product_map=rn_product_map,
-                                                       product_tab=rn_product_tab, source_bounds=rn_source_bounds, zoom=rn_zoom, multi_zoom=rn_multi_zoom, adjacent_tiles=rn_adjacent_tiles, row_tiles=rn_row_tiles, row_pan=rn_row_pan, small_pan=rn_small_pan, midpoint_return=rn_midpoint_return)
+                                                       product_tab=rn_product_tab, source_bounds=rn_source_bounds, zoom=rn_zoom, multi_zoom=rn_multi_zoom, adjacent_tiles=rn_adjacent_tiles, row_tiles=rn_row_tiles, row_pan=rn_row_pan, small_pan=rn_small_pan,
+                                                       midpoint_return=rn_midpoint_return, horizontal_small_pan=rn_horizontal_small_pan)
             except (EOFError, OSError, ValueError, sqlite3.Error, subprocess.TimeoutExpired) as error:
                 result['rnRecoveryError'] = str(error)
         with log_path.open('rb') as stream:
@@ -247,6 +248,7 @@ if __name__ == '__main__':
     parser.add_argument('--rn-row-pan', action='store_true', help='Observe the same cached row map after vertical gestures')
     parser.add_argument('--rn-midpoint-return', action='store_true', help='Require the predeclared midpoint start and observed return range')
     parser.add_argument('--rn-small-pan', action='store_true', help='Measure fixed small inputs with passive and zoom-reasserted snapshots')
+    parser.add_argument('--rn-horizontal-small-pan', action='store_true', help='Measure repeated horizontal 12px and 16px inputs')
     args = parser.parse_args()
     if args.fixture_apk and not args.probe_adb:
         parser.error('--fixture-apk requires --probe-adb')
@@ -272,6 +274,8 @@ if __name__ == '__main__':
         parser.error('--rn-midpoint-return requires --rn-row-pan')
     if args.rn_small_pan and (not args.rn_row_tiles or args.rn_row_pan):
         parser.error('--rn-small-pan requires --rn-row-tiles and excludes --rn-row-pan')
+    if args.rn_horizontal_small_pan and not args.rn_small_pan:
+        parser.error('--rn-horizontal-small-pan requires --rn-small-pan')
     if args.rn_row_tiles and (not args.rn_source_bounds or args.rn_multi_zoom or args.rn_adjacent_tiles or args.rn_zoom != 8):
         parser.error('--rn-row-tiles requires --rn-source-bounds and excludes other tile modes')
     if args.rn_adjacent_tiles and (not args.rn_source_bounds or args.rn_multi_zoom or args.rn_zoom != 8):
@@ -308,7 +312,8 @@ if __name__ == '__main__':
             expire_pack=args.expire_pack, sdk_offline=args.sdk_offline, online_recovery=args.online_recovery,
             verify_refreshed_pack=args.verify_refreshed_pack, rn_recovery=args.rn_recovery, rn_reopen=args.rn_reopen,
             rn_product_map=args.rn_product_map, rn_product_tab=args.rn_product_tab, rn_source_bounds=args.rn_source_bounds,
-            rn_zoom=args.rn_zoom, rn_multi_zoom=args.rn_multi_zoom, rn_adjacent_tiles=args.rn_adjacent_tiles, rn_row_tiles=args.rn_row_tiles, rn_row_pan=args.rn_row_pan, rn_small_pan=args.rn_small_pan, rn_midpoint_return=args.rn_midpoint_return))
+            rn_zoom=args.rn_zoom, rn_multi_zoom=args.rn_multi_zoom, rn_adjacent_tiles=args.rn_adjacent_tiles, rn_row_tiles=args.rn_row_tiles, rn_row_pan=args.rn_row_pan, rn_small_pan=args.rn_small_pan,
+            rn_midpoint_return=args.rn_midpoint_return, rn_horizontal_small_pan=args.rn_horizontal_small_pan))
         print(json.dumps(result, sort_keys=True))
         check = result['volumeCheck']
         passed = boot_completed(check)

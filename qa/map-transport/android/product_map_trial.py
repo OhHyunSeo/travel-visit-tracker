@@ -44,7 +44,7 @@ def verify_map_log(data, pid, *, product_tab=False):
         raise ValueError('Product map phase order, SDK connectivity or transport count differs')
 
 
-def verify_product_map(directory, pid, *, product_tab=False, package=None, zoom=8, multi_zoom=False, adjacent_tiles=False, row_tiles=False, row_pan=False, small_pan=False, midpoint_return=False):
+def verify_product_map(directory, pid, *, product_tab=False, package=None, zoom=8, multi_zoom=False, adjacent_tiles=False, row_tiles=False, row_pan=False, small_pan=False, midpoint_return=False, horizontal_small_pan=False):
     verify_map_log(read_bounded(directory/'map.log',LOG_LIMIT),pid,product_tab=product_tab)
     if small_pan:
         verify_map_log(read_bounded(directory/'map-log-before-small-pan.log',LOG_LIMIT),pid,product_tab=product_tab)
@@ -62,7 +62,7 @@ def verify_product_map(directory, pid, *, product_tab=False, package=None, zoom=
         result['rowPan'] = verify_row_pan(directory, pid, require_midpoint=midpoint_return)
     if small_pan:
         from small_pan_trial import verify_small_pan
-        result['smallPan'] = verify_small_pan(directory,pid)
+        result['smallPan'] = verify_small_pan(directory, pid, horizontal=horizontal_small_pan)
     return {'pid': pid, 'phases': list(phases), 'transportCalls': 0, **result}
 
 
@@ -111,7 +111,7 @@ def toggle_center(data, package, dimensions, *, title=None):
     return (left + right) // 2, (top + bottom) // 2
 
 
-def capture_product_map(command, destination, package, activity, pid, *, product_tab=False, source_bounds=False, zoom=8, multi_zoom=False, adjacent_tiles=False, row_tiles=False, row_pan=False, small_pan=False, midpoint_return=False):
+def capture_product_map(command, destination, package, activity, pid, *, product_tab=False, source_bounds=False, zoom=8, multi_zoom=False, adjacent_tiles=False, row_tiles=False, row_pan=False, small_pan=False, midpoint_return=False, horizontal_small_pan=False):
     display_zoom = 9 if multi_zoom or adjacent_tiles or row_tiles else zoom
     # Capture the log even when a frame or UI query fails so the saved data can
     # distinguish a spinner, an unhandled toggle and a transport attempt.
@@ -161,7 +161,7 @@ def capture_product_map(command, destination, package, activity, pid, *, product
             early=capture_map_log(command,pid)
             write_capture(destination/'map-log-before-small-pan.log',early)
             verify_map_log(early,pid,product_tab=product_tab)
-            capture_small_pan(command,destination,package,activity,pid)
+            capture_small_pan(command, destination, package, activity, pid, horizontal=horizontal_small_pan)
     finally:
         if product_tab:
             try:
@@ -171,4 +171,5 @@ def capture_product_map(command, destination, package, activity, pid, *, product
             except Exception as error:
                 write_capture(destination / 'visit-storage-error.txt', str(error).encode()[:LOG_LIMIT])
         write_capture(destination / 'map.log', capture_map_log(command,pid))
-    return verify_product_map(destination, pid, product_tab=product_tab, package=package, zoom=zoom, multi_zoom=multi_zoom, adjacent_tiles=adjacent_tiles, row_tiles=row_tiles, row_pan=row_pan, small_pan=small_pan, midpoint_return=midpoint_return)
+    return verify_product_map(destination, pid, product_tab=product_tab, package=package, zoom=zoom, multi_zoom=multi_zoom, adjacent_tiles=adjacent_tiles, row_tiles=row_tiles, row_pan=row_pan, small_pan=small_pan,
+                              midpoint_return=midpoint_return, horizontal_small_pan=horizontal_small_pan)

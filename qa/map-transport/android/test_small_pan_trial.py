@@ -10,7 +10,7 @@ from unittest.mock import patch
 from row_pan_trial import capture_settled
 from product_map_trial import verify_map_log
 from row_return_trial import world
-from small_pan_trial import PLAN, STEPS, gesture, verify_small_pan
+from small_pan_trial import PLAN, STEPS, gesture, horizontal_corrections, verify_small_pan
 from test_row_pan_trial import capture
 
 
@@ -46,6 +46,19 @@ def fixture(root):
 
 
 class SmallPanTest(unittest.TestCase):
+    def test_horizontal_candidates_require_same_direction_repeats_and_stable_observers(self):
+        def reading(finger, travel, drift=0):
+            return {'fingerX': finger, 'passiveScreenDelta': [travel, 0], 'reassertScreenDelta': [drift, 0]}
+
+        rows = [reading(0, 0), reading(12, 3), reading(12, 3.5),
+                reading(-12, -3), reading(-12, 1), reading(16, 5), reading(16, 8), reading(-16, -7)]
+        self.assertEqual(gesture((720, 1280), -12, horizontal=True), [360, 614, 348, 614, 500])
+        self.assertEqual(gesture((720, 1280), 16, horizontal=True), [360, 614, 376, 614, 500])
+        self.assertEqual(horizontal_corrections(rows), [
+            {'fingerX': 12, 'measuredResponsePixels': [3, 3.5], 'applicableErrorMagnitudePixels': [4, 6.75]}])
+        self.assertEqual(horizontal_corrections([*rows, reading(0, .3)]), [])
+        self.assertEqual(horizontal_corrections([*rows, reading(0, 0, .3)]), [])
+
     def test_missing_startup_and_extra_transport_are_still_rejected(self):
         prefix='11-24 09:30:49.445  900  901 I TripProductMapQa: '
         offline=prefix+'MAP_OFFLINE connected=false\n';route=prefix+'MAP_ROUTE /(tabs)/index\n'
@@ -101,3 +114,7 @@ class SmallPanTest(unittest.TestCase):
         run=subprocess.run([sys.executable,'-B',str(script),'--sdk-root','/missing-sdk', '--rn-small-pan'],capture_output=True,text=True)
         self.assertEqual(run.returncode,2)
         self.assertIn('--rn-small-pan requires --rn-row-tiles',run.stderr)
+        horizontal=subprocess.run([sys.executable,'-B',str(script),'--sdk-root','/missing-sdk','--rn-horizontal-small-pan'],
+                                  capture_output=True,text=True)
+        self.assertEqual(horizontal.returncode,2)
+        self.assertIn('--rn-horizontal-small-pan requires --rn-small-pan',horizontal.stderr)
