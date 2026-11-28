@@ -21,7 +21,6 @@ export async function attachPhoto(visitId: string): Promise<boolean> {
       ?.toLowerCase()
       .match(/^(jpg|jpeg|png|heic|webp)$/)?.[0] ?? 'jpg';
   const file = new File(directory, `${id}.${extension}`);
-  new File(asset.uri).copy(file);
   // iOS may change its container path during an update. Persist the relative path.
   const photo: Photo = {
     id,
@@ -29,10 +28,14 @@ export async function attachPhoto(visitId: string): Promise<boolean> {
     uri: `visit-photos/${id}.${extension}`,
     createdAt: Date.now(),
   };
+  let owned = false;
   try {
+    file.create();
+    owned = true;
+    await new File(asset.uri).copy(file, { overwrite: true });
     await (await getRepository()).addPhoto(photo);
   } catch (error) {
-    if (file.exists) file.delete();
+    if (owned && file.exists) file.delete();
     throw error;
   }
   return true;
